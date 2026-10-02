@@ -19,6 +19,7 @@ Coordinates are **meters in the map frame** (+z up; after "Level the floor", the
 
 | Action | What it does |
 | --- | --- |
+| `open_recording` | open a recording (path from Desktop's `GET /recordings`) in the page; the page follows |
 | `get_status` | the open map: recording, stage, voxel count, bounds, floors, annotation counts, running job, unsaved?, recent history |
 | `get_view` | the user's camera, the bounds of the visible voxels, and a **screenshot** of the 3D view with a labelled 1 m grid, axes and annotation labels (`topDown: true` for a plan-like shot) |
 | `set_view` | move the user's camera to look at a point |
@@ -33,6 +34,7 @@ Coordinates are **meters in the map frame** (+z up; after "Level the floor", the
 | `generate_floor_plans` | 2D plans per storey |
 | `get_floor_plan` | a plan as an image plus its origin / resolution (pixel → meters) and its named points and areas |
 | `add_plan_point`, `add_area` | named spots and areas (`kind: "no-go"` for navigation to avoid) on a floor |
+| `save_view` | save a named 2D view (a storey and a height band over its floor) for the 2D tab |
 | `add_polygon` | a polygon on a storey standing up from the local floor (`height`, default 1 m): a prism in 3D |
 | `erase` | brush away what stands on a storey's floor along a path (`radius`, up to `zEnd` over the floor or the whole column); the floor under it is patched |
 | `draw` | add voxels along a path (`width`) from the local floor up to `height` (default 1 m) |

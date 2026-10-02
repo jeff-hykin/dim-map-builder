@@ -66,6 +66,7 @@ fn tools() -> Value {
         tool("get_floor_plan", "A floor plan as an image (white free, black occupied, grey unknown; +y up) with its origin and resolution so pixels map to meters, plus that floor's named points and areas.", json!({ "floor": { "type": "integer" } }), &["floor"]),
         tool("add_plan_point", "Name a spot on a floor plan (map-frame x, y in meters), e.g. a dock or a door.", json!({ "floor": { "type": "integer" }, "name": { "type": "string" }, "position": { "type": "array", "items": { "type": "number" } } }), &["floor", "name", "position"]),
         tool("add_area", "Add a named area on a floor plan: kind \"no-go\" (navigation must avoid it), \"zone\" (a named room/region), or another word. polygon = [[x, y], ...] map-frame meters, at least 3 corners.", json!({ "floor": { "type": "integer" }, "name": { "type": "string" }, "kind": { "type": "string" }, "polygon": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } } }), &["floor", "name", "kind", "polygon"]),
+        tool("save_view", "Save a 2D view of the map under a name (it shows in the 2D tab's saved views): a storey and a height band over its local floor (default 0.1 to 1.8 m, what a floor plan shows), optionally centered on [x, y].", json!({ "name": { "type": "string" }, "floor": { "type": "integer" }, "zMin": { "type": "number" }, "zMax": { "type": "number" }, "center": { "type": "array", "items": { "type": "number" } } }), &["name"]),
         tool("add_polygon", "Add a polygon annotation on a storey: corners [[x, y], ...] (map-frame meters, at least 3), standing up from the local floor by height (default 1 m; base overrides the floor). Shows in 2D as an outline and in 3D as a prism.", json!({ "floor": { "type": "integer" }, "label": { "type": "string" }, "polygon": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } }, "height": { "type": "number" }, "base": { "type": "number" } }), &["floor", "label", "polygon"]),
         tool("erase", "Erase (undoable) what stands on a storey's floor along a brush path [[x, y], ...] of the given radius: every voxel from one voxel over the local floor up to zEnd (m over the floor when relative, default true; or fullColumn=true for everything up to the next storey), then patches the floor under it from the floor around. For couches, people, clutter.", json!({ "floor": { "type": "integer" }, "path": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } }, "radius": { "type": "number" }, "zEnd": { "type": "number" }, "relative": { "type": "boolean" }, "fullColumn": { "type": "boolean" } }), &["floor", "path", "radius"]),
         tool("draw", "Add voxels (undoable) along a path [[x, y], ...] of the given width on a storey, from the local floor up to height (m, default 1): a wall or obstacle the robot should see.", json!({ "floor": { "type": "integer" }, "path": { "type": "array", "items": { "type": "array", "items": { "type": "number" } } }, "width": { "type": "number" }, "height": { "type": "number" } }), &["floor", "path"]),
@@ -299,6 +300,19 @@ pub async fn call(app: &Arc<App>, name: &str, args: Value) -> Result<Vec<Value>>
                 object.remove("session");
             }
             let annotation: NewAnnotation = serde_json::from_value(body).context("arguments")?;
+            text(json!({ "id": edit(Box::new(move |w| Ok(json!(add(w, annotation, "agent")?)))).await? }))
+        }
+        "save_view" => {
+            let view = json!({
+                "type": "view",
+                "name": args["name"].as_str().context("name")?,
+                "floor": args["floor"].as_u64().unwrap_or(0),
+                "follow": true,
+                "zMin": args["zMin"].as_f64().unwrap_or(0.1),
+                "zMax": args["zMax"].as_f64().unwrap_or(1.8),
+                "center": args.get("center").filter(|c| c.is_array()),
+            });
+            let annotation: NewAnnotation = serde_json::from_value(view).context("arguments")?;
             text(json!({ "id": edit(Box::new(move |w| Ok(json!(add(w, annotation, "agent")?)))).await? }))
         }
         "add_plane" | "add_point" | "add_plan_point" | "add_area" => {
