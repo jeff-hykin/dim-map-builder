@@ -162,6 +162,9 @@ impl App {
         if self.jobs.lock().unwrap().get(id).is_some_and(|job| job.state == "running" && job.kind != "preview") {
             bail!("wait for the running job to finish (or cancel it)");
         }
+        if workspace.discarded {
+            bail!("no session {id} (discarded)");
+        }
         let before = workspace.session.revision;
         let result = change(&mut workspace)?;
         if workspace.session.revision != before {
@@ -178,6 +181,9 @@ impl App {
     pub fn set_view(&self, id: &str, view: Value) -> Result<()> {
         let workspace = self.require(id)?;
         let mut workspace = workspace.lock().unwrap();
+        if workspace.discarded {
+            return Ok(());
+        }
         workspace.session.view = view;
         self.store.save(&workspace.session)?;
         *self.active.lock().unwrap() = Some(id.to_string());
@@ -302,6 +308,9 @@ impl App {
             };
             let workspace = app.require(&session_of(&path))?;
             let mut workspace = workspace.lock().unwrap();
+            if workspace.discarded {
+                return Ok(());
+            }
             app.store.save_map(&workspace.session.id, &map)?;
             workspace.set_map(map);
             let session = &mut workspace.session;
@@ -378,6 +387,9 @@ impl App {
                 report(Progress { stage: "Writing into the recording".into(), stage_index: 0, stage_count: 1, done, total, note: String::new() })
             })?;
             let mut workspace = shared.lock().unwrap();
+            if workspace.discarded {
+                return Ok(());
+            }
             let session = &mut workspace.session;
             session.saved_revision = snapshot.session.revision;
             session.saved_at = Some(now_seconds());
@@ -391,7 +403,10 @@ impl App {
     /// Start over: forget the session (the recording is untouched).
     pub fn discard(&self, id: &str) -> Result<()> {
         self.cancel(id);
-        self.workspaces.lock().unwrap().remove(id);
+        if let Some(workspace) = self.workspaces.lock().unwrap().remove(id) {
+            // anyone still holding it (a request in flight, a save job) sees it's gone and writes nothing
+            workspace.lock().unwrap().discarded = true;
+        }
         self.previews.lock().unwrap().remove(id);
         self.jobs.lock().unwrap().remove(id);
         self.store.delete(id)?;
@@ -434,6 +449,26 @@ fn session_of(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// a view update or edit that arrives after Discard (the page's debounced PUT) must not bring the session back
+    #[test]
+    fn discarded_sessions_stay_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let recording = dir.path().join("r.db");
+        let mut db = dimos_recording::db::Connection::open(&recording).unwrap();
+        dimos_recording::db::write_stream(&mut db, "lidar", "sensor_msgs.PointCloud2", &[]).unwrap();
+        drop(db);
+        let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let held = app.open("r.db", &recording.display().to_string(), "r", true).unwrap();
+        let id = held.lock().unwrap().session.id.clone();
+        app.discard(&id).unwrap();
+        app.set_view(&id, json!({ "late": true })).ok();
+        assert!(held.lock().unwrap().discarded);
+        assert!(app.store.load(&id).unwrap().is_none(), "the late view update recreated the session");
+        assert!(app.store.last_open().is_none());
+        assert!(app.mutate(&id, |w| w.add_point("x", [0.0; 3], "user")).is_err());
+        assert!(app.store.load(&id).unwrap().is_none());
+    }
 
     #[test]
     fn stage_weights_add_up() {

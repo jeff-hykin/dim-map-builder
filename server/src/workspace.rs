@@ -58,6 +58,8 @@ pub struct Workspace {
     normals: Vec<[f32; 3]>,
     /// bumps whenever what the page draws as the map changes (deletions, transform, a new build)
     pub map_version: u64,
+    /// set when the session is discarded: a late write (a view update, an edit in flight) must not recreate it
+    pub discarded: bool,
 }
 
 fn new_id(prefix: &str) -> String {
@@ -83,7 +85,7 @@ fn rotate(value: &Iso, n: [f32; 3]) -> [f32; 3] {
 
 impl Workspace {
     pub fn new(session: Session, map: Option<MapData>) -> Workspace {
-        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64 };
+        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64, discarded: false };
         workspace.refresh_frame();
         workspace
     }
