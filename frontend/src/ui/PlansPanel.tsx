@@ -134,7 +134,8 @@ export function PlanView({ context }: { context: Context }) {
     const floor = Math.min(ui.planFloor, Math.max(0, (session?.annotations.floors.length ?? 1) - 1))
     const plan: PlanInfo | undefined = session?.plans[floor]
 
-    /** pixel bounds (column/row) of the known cells' 1st–99th percentile: sparse far stripes don't set the zoom */
+    /** pixel bounds (column/row) of the free floor's 1st–99th percentile (else every known cell's), padded: sparse far
+     * returns (occupied stripes outside the walls) don't set the zoom */
     const content = useRef<[number, number, number, number] | null>(null)
     useEffect(() => {
         if (!session || !plan) {
@@ -149,18 +150,28 @@ export function PlanView({ context }: { context: Context }) {
             const g = scratch.getContext("2d")!
             g.drawImage(next, 0, 0)
             const pixels = g.getImageData(0, 0, next.width, next.height).data
-            const columns: number[] = []
-            const rows: number[] = []
-            for (let row = 0; row < next.height; row++) {
-                for (let column = 0; column < next.width; column++) {
-                    if (pixels[(row * next.width + column) * 4] !== 128) {
-                        columns.push(column)
-                        rows.push(row)
+            const gather = (keep: (value: number) => boolean) => {
+                const columns: number[] = []
+                const rows: number[] = []
+                for (let row = 0; row < next.height; row++) {
+                    for (let column = 0; column < next.width; column++) {
+                        if (keep(pixels[(row * next.width + column) * 4])) {
+                            columns.push(column)
+                            rows.push(row)
+                        }
                     }
                 }
+                return { columns, rows }
+            }
+            let cells = gather((v) => v === 255)
+            if (cells.columns.length < 50) {
+                cells = gather((v) => v !== 128)
             }
             const pick = (values: number[], q: number) => values.sort((a, b) => a - b)[Math.floor(q * (values.length - 1))] ?? 0
-            content.current = columns.length ? [pick(columns, 0.01), pick(rows, 0.01), pick(columns, 0.99), pick(rows, 0.99)] : null
+            const pad = 20
+            content.current = cells.columns.length
+                ? [pick(cells.columns, 0.01) - pad, pick(cells.rows, 0.01) - pad, pick(cells.columns, 0.99) + pad, pick(cells.rows, 0.99) + pad]
+                : null
             view.current.fitted = ""
             setImage(next)
         }
