@@ -222,7 +222,7 @@ pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [
         (start, end) = grow_support(&line);
     }
     let half = line.half;
-    let window = half + 3.0 * voxel;
+    let window = (width / 2.0).max(half + 3.0 * voxel) + 2.0 * voxel;
     // a free end stops at the wall's last voxel (its core, not fringe)
     let core_along: Vec<f32> = wallish.iter().map(xy).filter(|p| line.across(*p).abs() <= half && (start - voxel..=end + voxel).contains(&line.along(*p))).map(|p| line.along(p)).collect();
     if core_along.is_empty() {

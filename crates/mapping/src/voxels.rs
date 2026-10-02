@@ -217,6 +217,36 @@ pub fn floor_levels(points: &[[f32; 3]], normals: &[[f32; 3]], min_gap: f32) -> 
     floors
 }
 
+/// The walls' main direction, folded into [-45°, 45°): from the horizontal normals of the vertical surfaces, a 1°
+/// histogram of their angle mod 90° (smoothed over ±2°), its peak refined by the mean around it. Turning the map by
+/// minus this lines its walls up with x and y.
+pub fn dominant_wall_angle(normals: &[[f32; 3]]) -> Option<f32> {
+    let mut histogram = [0.0f32; 90];
+    let mut total = 0;
+    for n in normals {
+        let flat = n[0].hypot(n[1]);
+        if n[2].abs() < 0.3 && flat > 0.5 {
+            let degrees = n[1].atan2(n[0]).to_degrees().rem_euclid(90.0);
+            histogram[(degrees as usize).min(89)] += flat;
+            total += 1;
+        }
+    }
+    if total < 50 {
+        return None;
+    }
+    let smooth = |bin: i32| -> f32 { (-2..=2).map(|k| histogram[(bin + k).rem_euclid(90) as usize]).sum() };
+    let peak = (0..90).max_by(|a, b| smooth(*a).total_cmp(&smooth(*b)))?;
+    let (mut sum, mut weight) = (0.0f32, 0.0f32);
+    for k in -3..=3 {
+        let w = histogram[(peak + k).rem_euclid(90) as usize];
+        sum += (peak + k) as f32 * w + 0.5 * w;
+        weight += w;
+    }
+    let degrees = sum / weight.max(1e-6);
+    let folded = if degrees >= 45.0 { degrees - 90.0 } else if degrees < -45.0 { degrees + 90.0 } else { degrees };
+    Some(folded.to_radians())
+}
+
 /// Up-facing points within `thickness` of a floor level.
 pub fn select_floor(points: &[[f32; 3]], normals: &[[f32; 3]], floors: &[f32], thickness: f32, region: Option<&Box3>) -> Vec<u32> {
     (0..points.len() as u32)
@@ -361,6 +391,23 @@ mod tests {
         assert_eq!(only_in.len(), 2);
         let outliers = select_outliers(&points, 8, 2.0, None);
         assert!(outliers.contains(&(points.len() as u32 - 1)), "the lone speck is an outlier");
+    }
+
+    #[test]
+    fn dominant_wall_angle_of_a_turned_room() {
+        for degrees in [0.0f32, 17.0, -30.0, 44.0] {
+            let a = degrees.to_radians();
+            // two walls' normals (and some floor) of a room turned by `degrees`
+            let mut normals = vec![[0.0, 0.0, 1.0]; 500];
+            for k in 0..400 {
+                let wobble = ((k % 7) as f32 - 3.0) * 0.4f32.to_radians();
+                let b = a + wobble + if k % 2 == 0 { 0.0 } else { std::f32::consts::FRAC_PI_2 };
+                normals.push([b.cos(), b.sin(), 0.05]);
+            }
+            let found = dominant_wall_angle(&normals).unwrap().to_degrees();
+            let folded = ((degrees + 45.0).rem_euclid(90.0)) - 45.0;
+            assert!((found - folded).abs() < 1.0, "{degrees}: found {found}");
+        }
     }
 
     #[test]
