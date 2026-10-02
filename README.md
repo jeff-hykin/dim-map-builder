@@ -2,16 +2,24 @@
 
 A [dimOS Desktop](https://github.com/dimensionalOS/dimos-desktop) app that turns a recording into a clean, annotated map:
 
-1. **Open** a recording (`.db` or `.mcap`) from Desktop's shared recordings folder (the Live Viewer records there).
-2. **Build** the global map: every scan placed through the recording's tf, loops closed (ICP + pose graph), ray traced
-   so free space clears what moved. A progress bar with stage, ETA and Cancel; it keeps running if you close the page.
-3. **Clean**: remove floating clusters, outliers, the floor, walls; crop to a box or a height band; turn and level the
-   map. Each tool works on what's in view, a region box, or the whole map, has a preview, and is undoable.
-4. **Annotate** in 3D: labelled boxes, planes and points, placed by clicking and edited with a gizmo.
-5. **Floor plans**: a 2D plan per storey (multi-floor recordings split automatically), annotated with named points and
-   named areas such as no-go zones.
-6. **Save into the recording**: the map, plans and annotations become new streams in the same file
-   ([docs/schema.md](docs/schema.md)), ready for a navigation blueprint to read.
+It's a map viewer first: **[ 3D | Split | 2D ]** at the top (Split = 3D beside a 2D minimap that shows the camera and
+moves it on a click). Opening a recording with a map goes straight to it. Only generating the map is needed first;
+everything else is optional and in any order.
+
+- **Open** a recording (`.db` or `.mcap`) from Desktop's shared recordings folder (the Live Viewer records there).
+- **Generate** (the blue orb): the global map, every scan placed through the recording's tf, loops closed (ICP + pose
+  graph), ray traced so free space clears what moved. Voxel size up front; skip loop closure / ray tracing and every
+  ray-tracer and pose-graph tunable under Advanced. A progress bar with stage, ETA and Cancel.
+- **2D**: a top-down slice of the current voxels between z-start and z-end, over the **local floor** (a per-cell floor
+  height that follows ramps and stairs, `crates/mapping/src/floor.rs`) or absolute; "auto" = floor +0.1 to +1.8 m.
+  Saved views are the 2D maps (a storey + a height band), saved into the recording.
+- **Edit** (the green orb): a palette of tools. **Erase** (brush what stands on the floor away; the floor under it is
+  filled in from around), **Draw** / **Line** (voxels from the floor up to a height), **Straighten wall** (drag along
+  a noisy wall: it becomes one straight wall), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
+  **named points and areas** (no-go zones), **3D boxes, planes and points**, **Clean up** (floating specks, outliers,
+  floor, walls, crop, level), **Saved views**. All undoable.
+- **Save** into the recording: the map, annotations and views become `map/*` streams in the same file
+  ([docs/schema.md](docs/schema.md)), ready for a navigation blueprint to read.
 
 Desktop's chat agent can do all of it too, through the MCP tools at `/mcp` ([docs/agent-tools.md](docs/agent-tools.md)):
 "clean up the floating voxels in this view", "box every chair", "add a no-go area around the stairs".
@@ -47,5 +55,6 @@ One compiled binary at runtime: no Python, no dimos needed to build or edit maps
 
 ## Keyboard
 
-`1`–`6` stages · `⌘Z` / `⇧⌘Z` undo / redo · `⌘S` save · `F` frame the map · `T` top view · `G` / `R` / `S` move / turn /
-resize the selection · `Del` delete it · `Esc` cancel a tool.
+`V` 2D / 3D · `M` split · `E` the edit palette · `X` erase · `D` draw · `L` line · `W` straighten wall · `P` polygon ·
+`N` named points / areas · `B` 3D boxes · `C` clean up · `⌘Z` / `⇧⌘Z` undo / redo · `⌘S` save · `F` frame the map ·
+`T` top view · `G` / `R` / `S` move / turn / resize the selection · `Del` delete it · `Esc` cancel / put the tool down.

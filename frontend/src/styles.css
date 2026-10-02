@@ -196,6 +196,9 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .item .swatch.no-go { background: var(--danger); }
 .item input.text { width: 100%; }
 .item .kind { color: var(--muted); font-size: 10px; }
+.item.stacked { grid-template-columns: 14px 1fr; }
+.item.stacked > .row { grid-column: 2; }
+.item.stacked input.number { width: 64px; }
 
 /* ── overlays on the view ── */
 .view-tools { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }

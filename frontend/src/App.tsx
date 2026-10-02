@@ -308,7 +308,7 @@ export function App() {
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
             const target = event.target as HTMLElement
-            if (target.closest("input, textarea, select")) {
+            if (target.closest?.("input, textarea, select")) {
                 return
             }
             const current = sessionRef.current

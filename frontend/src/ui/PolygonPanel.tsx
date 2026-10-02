@@ -45,7 +45,7 @@ export function PolygonPanel({ context }: { context: Context }) {
             <h3>Polygons ({prisms.length})</h3>
             <ul className="items">
                 {prisms.map((p) => (
-                    <li key={p.id} className={`item ${ui.selected?.id === p.id ? "on" : ""}`} onClick={() => scene.select({ kind: "prism", id: p.id })} data-prism={p.id}>
+                    <li key={p.id} className={`item stacked ${ui.selected?.id === p.id ? "on" : ""}`} onClick={() => scene.select({ kind: "prism", id: p.id })} data-prism={p.id}>
                         <span className={`swatch ${p.source === "agent" ? "agent" : ""}`} />
                         <input
                             className="text"

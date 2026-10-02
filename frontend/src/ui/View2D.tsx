@@ -94,6 +94,9 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         autoFit.current = !ui.view2d
     }
     const stroke = useRef<{ tool: string; path: [number, number][] } | null>(null)
+    /** a press on the view, and a pan in progress (refs: a re-render mid-drag mustn't lose them) */
+    const press = useRef<{ x: number; y: number } | null>(null)
+    const panning = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null)
     const dragVertex = useRef<{ id: string; index: number; polygon: [number, number][] } | null>(null)
     const [, redraw] = useState(0)
 
@@ -402,8 +405,6 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         if (!element || !session || !scene) {
             return
         }
-        let pan: { x: number; y: number; cx: number; cy: number } | null = null
-        let pressed: { x: number; y: number } | null = null
         const local = (event: MouseEvent) => {
             const rect = element.getBoundingClientRect()
             return [event.clientX - rect.left, event.clientY - rect.top] as const
@@ -462,15 +463,15 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         const down = (event: MouseEvent) => {
             const [x, y] = local(event)
             const at = toWorld(x, y)
-            pressed = { x, y }
+            press.current = { x, y }
             if (minimap && event.button === 0) {
                 scene.moveTargetTo(at[0], at[1])
-                pan = null
+                panning.current = null
                 return
             }
             const which = tool()
             if (event.button !== 0 || (which === "select" && !selectedPrism)) {
-                pan = { x, y, cx: view.current!.cx, cy: view.current!.cy }
+                panning.current = { x, y, cx: view.current!.cx, cy: view.current!.cy }
             }
             if (event.button !== 0) {
                 return
@@ -487,14 +488,14 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
                 if (hit >= 0) {
                     dragVertex.current = { id: selectedPrism.id, index: hit, polygon: selectedPrism.polygon.map((c) => [...c] as [number, number]) }
                 } else {
-                    pan = { x, y, cx: view.current!.cx, cy: view.current!.cy }
+                    panning.current = { x, y, cx: view.current!.cx, cy: view.current!.cy }
                 }
             }
         }
         const move = (event: MouseEvent) => {
             const [x, y] = local(event)
             if (minimap) {
-                if (pressed && event.buttons & 1) {
+                if (press.current && event.buttons & 1) {
                     const at = toWorld(x, y)
                     scene.moveTargetTo(at[0], at[1])
                 }
@@ -520,11 +521,11 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
                 redraw((n) => n + 1)
                 return
             }
-            if (pan && event.buttons) {
+            if (panning.current && event.buttons) {
                 autoFit.current = false
                 const v = view.current!
-                v.cx = pan.cx - (x - pan.x) / v.pixelsPerMeter
-                v.cy = pan.cy + (y - pan.y) / v.pixelsPerMeter
+                v.cx = panning.current.cx - (x - panning.current.x) / v.pixelsPerMeter
+                v.cy = panning.current.cy + (y - panning.current.y) / v.pixelsPerMeter
                 redraw((n) => n + 1)
                 persist()
             } else if (planTool.get().tool === "area" && current().ui.tool === "places") {
@@ -534,13 +535,13 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             }
         }
         const up = (event: MouseEvent) => {
-            if (!pressed) {
+            if (!press.current) {
                 return
             }
             const [x, y] = local(event)
-            const moved = Math.hypot(x - pressed.x, y - pressed.y)
-            pressed = null
-            pan = null
+            const moved = Math.hypot(x - press.current.x, y - press.current.y)
+            press.current = null
+            panning.current = null
             if (minimap || event.button !== 0) {
                 return
             }
@@ -592,7 +593,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             persist()
         }
         const key = (event: KeyboardEvent) => {
-            if (minimap || (event.target as HTMLElement).closest("input, textarea, select")) {
+            if (minimap || (event.target as HTMLElement).closest?.("input, textarea, select")) {
                 return
             }
             const plan = planTool.get()
@@ -659,6 +660,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             if (saved.center && saved.pixelsPerMeter) {
                 view.current = { cx: saved.center[0], cy: saved.center[1], pixelsPerMeter: saved.pixelsPerMeter }
                 autoFit.current = false
+                persist()
                 redraw((n) => n + 1)
             }
         }
@@ -668,7 +670,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             window.removeEventListener(FIT_2D, fit)
             window.removeEventListener(APPLY_2D, apply)
         }
-    }, [minimap, setUi])
+    }, [minimap, setUi, persist])
 
     useEffect(() => {
         const box = host.current

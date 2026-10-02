@@ -31,6 +31,10 @@ Coordinates are **meters in the map frame** (+z up; after "Level the floor", the
 | `generate_floor_plans` | 2D plans per storey |
 | `get_floor_plan` | a plan as an image plus its origin / resolution (pixel → meters) and its named points and areas |
 | `add_plan_point`, `add_area` | named spots and areas (`kind: "no-go"` for navigation to avoid) on a floor |
+| `add_polygon` | a polygon on a storey standing up from the local floor (`height`, default 1 m): a prism in 3D |
+| `erase` | brush away what stands on a storey's floor along a path (`radius`, up to `zEnd` over the floor or the whole column); the floor under it is patched |
+| `draw` | add voxels along a path (`width`) from the local floor up to `height` (default 1 m) |
+| `straighten_wall` | replace a noisy wall along `from`→`to` (`width` band) with one straight wall on the fitted line |
 | `undo`, `redo` | anyone's last edit |
 | `build_map`, `save_to_recording` | start the background jobs (poll `get_status`) |
 

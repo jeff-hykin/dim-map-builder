@@ -19,8 +19,8 @@ const LABELS: Record<string, [string, string]> = {
     maxHealth: ["max health", "a voxel's highest score (hits)"],
     grazeCos: ["graze cos", "a miss at a shallower angle than this doesn't clear a surface"],
     raySubsample: ["ray subsample", "trace every Nth ray of a scan"],
-    key_pose_delta_trans: ["keyframe every", "m moved"],
-    key_pose_delta_deg: ["keyframe every", "° turned"],
+    key_pose_delta_trans: ["keyframe every (m)", "a new keyframe after moving this far"],
+    key_pose_delta_deg: ["keyframe every (°)", "a new keyframe after turning this much"],
     loop_search_radius: ["loop search radius", "m"],
     loop_time_thresh: ["loop time gap", "s; only revisits at least this much later"],
     loop_score_thresh: ["loop ICP score", "max mean error to accept a loop"],
@@ -58,9 +58,11 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const [meta, setMeta] = useState<RecordingMetadata | null>(null)
     const [confirming, setConfirming] = useState(false)
     useEffect(() => {
+        // f32 settings arrive as 0.05000000074505806: show them as typed
+        const tidy = (value: Options) => JSON.parse(JSON.stringify(value), (_key, v) => (typeof v === "number" ? +v.toPrecision(6) : v))
         api.buildDefaults().then((base) => {
-            setDefaults(base)
-            setOptions({ ...base, ...(session?.buildOptions ?? {}) })
+            setDefaults(tidy(base))
+            setOptions(tidy({ ...base, ...(session?.buildOptions ?? {}) }))
         })
         if (session?.recordingId) {
             recordings.metadata(session.recordingId).then(setMeta).catch(() => setMeta(null))

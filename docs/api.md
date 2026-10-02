@@ -12,11 +12,14 @@ Through Desktop it's all under `/apps/dim-map-builder/`. JSON unless noted; erro
 | `GET /api/sessions/:id/points.bin` | | f32 little-endian xyz of every visible voxel, map frame |
 | `GET /api/sessions/:id/paths` | | `{ raw, corrected, loops }` in the map frame |
 | `GET /api/sessions/:id/preview.bin` | | the raw recording at a glance; `202 { job }` while it's being read |
+| `GET /api/build-defaults` | | the default `BuildOptions` (voxelSize, loopClosure, rayTracing, every, maxRange, tfTolerance, worldFrame, cloudStream, `ray: {...}`, `pgo: {...}`) |
 | `POST /api/sessions/:id/build` | `BuildOptions` (all optional) | `{ job }` |
 | `DELETE /api/sessions/:id/job` | | `{ cancelled }` |
 | `POST /api/sessions/:id/op` | `{ op, region, params, preview }` | `{ label, changed, remaining, preview? }` |
 | `POST /api/sessions/:id/transform` | `{ kind: "rotate", degrees }` \| `{ kind: "level" }` \| `{ kind: "set", transform }` | `{ ok }` |
-| `POST /api/sessions/:id/annotations` | `{ type: "box" \| "plane" \| "point" \| "planPoint" \| "area", ... }` | `{ id }` |
+| `GET /api/sessions/:id/floor` | | the local floor: `{ cell, origin, width, height, storeys: [{ level, band, heights (null = unknown), measured }] }` |
+| `POST /api/sessions/:id/modify` | `{ tool: "erase", floor, path, radius, zEnd?, relative?, fullColumn? }` \| `{ tool: "draw", floor, path, width, height }` \| `{ tool: "straighten", floor, from, to, width, zEnd?, relative?, fullColumn? }` | `{ label, changed, remaining }` — one undoable edit |
+| `POST /api/sessions/:id/annotations` | `{ type: "box" \| "plane" \| "point" \| "planPoint" \| "area" \| "prism" \| "view", ... }` | `{ id }` |
 | `PATCH /api/sessions/:id/annotations/:aid` | any fields | `{ ok }` |
 | `DELETE /api/sessions/:id/annotations/:aid` | | `{ ok }` |
 | `POST /api/sessions/:id/fit-box` | `{ box }` | `{ box, voxels }` |
