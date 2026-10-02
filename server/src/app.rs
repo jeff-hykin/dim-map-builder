@@ -395,6 +395,11 @@ impl App {
         self.previews.lock().unwrap().remove(id);
         self.jobs.lock().unwrap().remove(id);
         self.store.delete(id)?;
+        let mut active = self.active.lock().unwrap();
+        if active.as_deref() == Some(id) {
+            *active = None;
+        }
+        self.store.clear_last_open(id);
         self.emit(json!({ "type": "discarded", "id": id }));
         Ok(())
     }

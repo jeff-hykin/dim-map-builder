@@ -312,6 +312,12 @@ impl Store {
         std::fs::read_to_string(self.dir.join("open.txt")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
     }
 
+    pub fn clear_last_open(&self, id: &str) {
+        if self.last_open().as_deref() == Some(id) {
+            let _ = std::fs::remove_file(self.dir.join("open.txt"));
+        }
+    }
+
     pub fn set_last_open(&self, id: &str) {
         let _ = std::fs::write(self.dir.join("open.txt"), id);
     }
