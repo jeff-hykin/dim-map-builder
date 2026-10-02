@@ -1,0 +1,383 @@
+[
+ {
+  "id": "white_table_south",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "There's a big white table around x = 1.3, y = -1.4. Put a bounding box around it, labelled 'white table'.",
+  "kind": "box",
+  "truth": [
+   {
+    "center": [
+     1.283,
+     -1.372,
+     0.373
+    ],
+    "size": [
+     2.816,
+     1.69,
+     0.777
+    ],
+    "yaw": 0
+   }
+  ]
+ },
+ {
+  "id": "white_table_north_view",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "The camera is looking at a big white table. Box that table tightly, label 'white table'.",
+  "kind": "box",
+  "truth": [
+   {
+    "center": [
+     1.295,
+     3.155,
+     0.373
+    ],
+    "size": [
+     2.868,
+     1.757,
+     0.776
+    ],
+    "yaw": 0
+   }
+  ],
+  "view": {
+   "target": [
+    1.3,
+    3.15,
+    0.4
+   ],
+   "distance": 4
+  }
+ },
+ {
+  "id": "one_chair",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Put a box labelled 'chair' around the swivel chair at about x = 0.66, y = -0.16.",
+  "kind": "box",
+  "truth": [
+   {
+    "center": [
+     0.658,
+     -0.161,
+     0.467
+    ],
+    "size": [
+     0.812,
+     0.999,
+     1.051
+    ],
+    "yaw": 0
+   }
+  ]
+ },
+ {
+  "id": "chair_in_view",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Box the chair in the middle of the current view (label 'chair').",
+  "kind": "box",
+  "truth": [
+   {
+    "center": [
+     2.181,
+     -0.742,
+     0.492
+    ],
+    "size": [
+     0.782,
+     0.983,
+     1.129
+    ],
+    "yaw": 0
+   }
+  ],
+  "view": {
+   "target": [
+    2.18,
+    -0.74,
+    0.5
+   ],
+   "distance": 2.2
+  }
+ },
+ {
+  "id": "chair_by_coords",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Box the chair closest to x = 2.4, y = 2.3 (label 'chair').",
+  "kind": "box",
+  "truth": [
+   {
+    "center": [
+     2.365,
+     2.276,
+     0.523
+    ],
+    "size": [
+     0.813,
+     1.019,
+     1.138
+    ],
+    "yaw": 0
+   }
+  ]
+ },
+ {
+  "id": "desk_view",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "The camera is looking at a wooden desk. Put a box around that desk, labelled 'desk'.",
+  "kind": "box",
+  "truth": [
+   {
+    "center": [
+     -1.883,
+     -4.86,
+     0.335
+    ],
+    "size": [
+     1.655,
+     2.468,
+     0.731
+    ],
+    "yaw": 0
+   }
+  ],
+  "view": {
+   "target": [
+    -1.87,
+    -4.6,
+    0.35
+   ],
+   "distance": 3.5
+  }
+ },
+ {
+  "id": "north_chairs",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Box every chair around the white table near y = 3 (label each 'chair').",
+  "kind": "boxes",
+  "truth": [
+   {
+    "center": [
+     2.365,
+     2.276,
+     0.523
+    ],
+    "size": [
+     0.813,
+     1.019,
+     1.138
+    ],
+    "yaw": 0
+   },
+   {
+    "center": [
+     0.738,
+     2.279,
+     0.51
+    ],
+    "size": [
+     0.799,
+     1.01,
+     1.117
+    ],
+    "yaw": 0
+   }
+  ]
+ },
+ {
+  "id": "south_chairs",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Box every swivel chair around the white table near x = 1.3, y = -1.4 (label each 'chair').",
+  "kind": "boxes",
+  "truth": [
+   {
+    "center": [
+     0.658,
+     -0.161,
+     0.467
+    ],
+    "size": [
+     0.812,
+     0.999,
+     1.051
+    ],
+    "yaw": 0
+   },
+   {
+    "center": [
+     2.159,
+     -2.052,
+     0.48
+    ],
+    "size": [
+     0.775,
+     1.011,
+     1.085
+    ],
+    "yaw": 0
+   },
+   {
+    "center": [
+     2.181,
+     -0.742,
+     0.492
+    ],
+    "size": [
+     0.782,
+     0.983,
+     1.129
+    ],
+    "yaw": 0
+   },
+   {
+    "center": [
+     0.752,
+     -2.053,
+     0.482
+    ],
+    "size": [
+     0.786,
+     1.01,
+     1.081
+    ],
+    "yaw": 0
+   },
+   {
+    "center": [
+     -0.706,
+     -1.33,
+     0.501
+    ],
+    "size": [
+     1.066,
+     0.854,
+     1.144
+    ],
+    "yaw": 0
+   }
+  ]
+ },
+ {
+  "id": "chairs_in_view",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Box every chair you can see in the current view (label each 'chair').",
+  "kind": "boxes",
+  "truth": [
+   {
+    "center": [
+     2.365,
+     2.276,
+     0.523
+    ],
+    "size": [
+     0.813,
+     1.019,
+     1.138
+    ],
+    "yaw": 0
+   },
+   {
+    "center": [
+     0.738,
+     2.279,
+     0.51
+    ],
+    "size": [
+     0.799,
+     1.01,
+     1.117
+    ],
+    "yaw": 0
+   }
+  ],
+  "view": {
+   "target": [
+    1.55,
+    2.6,
+    0.5
+   ],
+   "distance": 3.2
+  }
+ },
+ {
+  "id": "both_tables",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Box both big white tables (label each 'white table').",
+  "kind": "boxes",
+  "truth": [
+   {
+    "center": [
+     1.283,
+     -1.372,
+     0.373
+    ],
+    "size": [
+     2.816,
+     1.69,
+     0.777
+    ],
+    "yaw": 0
+   },
+   {
+    "center": [
+     1.295,
+     3.155,
+     0.373
+    ],
+    "size": [
+     2.868,
+     1.757,
+     0.776
+    ],
+    "yaw": 0
+   }
+  ]
+ },
+ {
+  "id": "no_go_south_table",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Generate floor plans if there are none, then add a no-go area on floor 0 named 'meeting area' covering the white table near y = -1.4 with about half a meter of margin.",
+  "kind": "area",
+  "truth": [
+   [
+    -0.625,
+    -2.717
+   ],
+   [
+    3.191,
+    -2.717
+   ],
+   [
+    3.191,
+    -0.027000000000000024
+   ],
+   [
+    -0.625,
+    -0.027000000000000024
+   ]
+  ]
+ },
+ {
+  "id": "no_go_desk",
+  "session": "live_viewer_1790926614-09d60870",
+  "prompt": "Add a no-go area on floor 0 named 'desk' around the wooden desk near x = -1.9, y = -4.6, about 30 cm of margin (generate floor plans first if needed).",
+  "kind": "area",
+  "truth": [
+   [
+    -3.0109999999999997,
+    -6.394
+   ],
+   [
+    -0.756,
+    -6.394
+   ],
+   [
+    -0.756,
+    -3.326
+   ],
+   [
+    -3.0109999999999997,
+    -3.326
+   ]
+  ]
+ }
+]

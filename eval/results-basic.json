@@ -1,0 +1,354 @@
+[
+  {
+    "task": "white_table_south",
+    "toolset": "basic",
+    "seconds": 38,
+    "toolCalls": 9,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_status",
+      "set_view",
+      "get_view",
+      "add_box",
+      "get_view",
+      "ToolSearch",
+      "update_annotation",
+      "get_view"
+    ],
+    "meanIou": 0.769,
+    "found": 1,
+    "of": 1,
+    "added": 1,
+    "ious": [
+      0.77
+    ],
+    "answer": "I added a box labelled 'white table' (`box-93eb611`) centred at (1.03, −1.38, 0.39), 3.5 × 1.65 × 0.78 m with no rotation. It matches the table's outline from above, but the 0.78 m height is my estimate of a typical tabletop, not something I measured.",
+    "exit": 0
+  },
+  {
+    "task": "white_table_north_view",
+    "toolset": "basic",
+    "seconds": 28,
+    "toolCalls": 4,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_view",
+      "add_box",
+      "get_view"
+    ],
+    "meanIou": 0.975,
+    "found": 1,
+    "of": 1,
+    "added": 1,
+    "ious": [
+      0.97
+    ],
+    "answer": "I added a 2.9 × 1.7 m box labelled 'white table' at (1.3, 3.15) and checked it from a top-down screenshot; the 0.76 m height is my estimate, not measured from the map.",
+    "exit": 0
+  },
+  {
+    "task": "one_chair",
+    "toolset": "basic",
+    "seconds": 26,
+    "toolCalls": 7,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_status",
+      "set_view",
+      "add_box",
+      "get_view",
+      "ToolSearch",
+      "update_annotation"
+    ],
+    "meanIou": 0.578,
+    "found": 1,
+    "of": 1,
+    "added": 1,
+    "ious": [
+      0.58
+    ],
+    "answer": "I added a box labelled \"chair\" (`box-94d9f53`) at (0.66, -0.13, 0.5), 0.68 × 0.74 × 1.0 m, fitted to the chair in the top-down view; the 1.0 m height is an estimate, not checked from the side.",
+    "exit": 0
+  },
+  {
+    "task": "chair_in_view",
+    "toolset": "basic",
+    "seconds": 50,
+    "toolCalls": 7,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_view",
+      "get_view",
+      "add_box",
+      "get_view",
+      "ToolSearch",
+      "update_annotation"
+    ],
+    "meanIou": 0.294,
+    "found": 0,
+    "of": 1,
+    "added": 1,
+    "ious": [
+      0.29
+    ],
+    "answer": "I added a 'chair' box (box-95a65e4) centred at (2.15, −1.12, 0.5) m, sized 0.85 × 0.65 × 1.0 m, around the curved backrest in the middle of your view; I judged its position from the screenshot, so it may need a small adjustment.",
+    "exit": 0
+  },
+  {
+    "task": "chair_by_coords",
+    "toolset": "basic",
+    "seconds": 56,
+    "toolCalls": 10,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_status",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "add_box",
+      "get_view"
+    ],
+    "meanIou": 0.345,
+    "found": 1,
+    "of": 1,
+    "added": 1,
+    "ious": [
+      0.35
+    ],
+    "answer": "I added one box labelled \"chair\" (box-96b1755) at about (2.35, 2.12, 0.45), sized 0.6 × 0.6 × 0.9 m; in the top-down check it lines up with the visible chair, but the chair's back half sits under the table, so that edge of the box is estimated.",
+    "exit": 0
+  },
+  {
+    "task": "desk_view",
+    "toolset": "basic",
+    "seconds": 40,
+    "toolCalls": 7,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_view",
+      "set_view",
+      "get_view",
+      "add_box",
+      "set_view",
+      "get_view"
+    ],
+    "meanIou": 0.161,
+    "found": 0,
+    "of": 1,
+    "added": 1,
+    "ious": [
+      0.16
+    ],
+    "answer": "I added a box labelled \"desk\" around the object in the camera view, centred at (-1.57, -3.75, 0.58) and measuring 1.4 × 1.7 × 1.16 m; I placed it by eye from the top-down screenshot, so its edges are approximate.",
+    "exit": 0
+  },
+  {
+    "task": "north_chairs",
+    "toolset": "basic",
+    "seconds": 118,
+    "toolCalls": 20,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_status",
+      "list_annotations",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "add_box",
+      "add_box",
+      "add_box",
+      "set_view",
+      "get_view",
+      "ToolSearch",
+      "update_annotation"
+    ],
+    "meanIou": 0.384,
+    "found": 2,
+    "of": 2,
+    "added": 3,
+    "ious": [
+      0.37,
+      0.4
+    ],
+    "answer": "I added three boxes labelled 'chair' at the white table: two along its south edge at about (0.72, 2.05) and (2.34, 2.05), and one at its east end at about (3.22, 3.58), though that third object may not be a chair.",
+    "exit": 0
+  },
+  {
+    "task": "south_chairs",
+    "toolset": "basic",
+    "seconds": 130,
+    "toolCalls": 24,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_status",
+      "list_annotations",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "add_box",
+      "add_box",
+      "add_box",
+      "add_box",
+      "add_box",
+      "set_view",
+      "get_view"
+    ],
+    "meanIou": 0.425,
+    "found": 5,
+    "of": 5,
+    "added": 5,
+    "ious": [
+      0.5,
+      0.38,
+      0.42,
+      0.48,
+      0.35
+    ],
+    "answer": "I added 5 `chair` boxes around the white table, at about (0.66, -0.14), (2.21, -0.60), (0.77, -2.08), (2.05, -2.06) and (-0.80, -1.30). I sized them from top-down views only, so the parts of the seats under the table are estimates. I left out a round green object floating just north of the table nea",
+    "exit": 0
+  },
+  {
+    "task": "chairs_in_view",
+    "toolset": "basic",
+    "seconds": 53,
+    "toolCalls": 12,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_view",
+      "get_status",
+      "list_annotations",
+      "get_view",
+      "add_box",
+      "add_box",
+      "get_view",
+      "ToolSearch",
+      "update_annotation",
+      "update_annotation",
+      "get_view"
+    ],
+    "meanIou": 0.404,
+    "found": 2,
+    "of": 2,
+    "added": 2,
+    "ious": [
+      0.39,
+      0.42
+    ],
+    "answer": "I added two boxes labelled \"chair\" for the two chairs pulled up to the desk, at about (0.77, 2.10) and (2.29, 2.10), each about 0.65 × 0.62 × 0.95 m; those are the only chairs in the current view.",
+    "exit": 0
+  },
+  {
+    "task": "both_tables",
+    "toolset": "basic",
+    "seconds": 52,
+    "toolCalls": 14,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_status",
+      "get_view",
+      "list_annotations",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "add_box",
+      "add_box",
+      "set_view",
+      "get_view"
+    ],
+    "meanIou": 0.792,
+    "found": 2,
+    "of": 2,
+    "added": 2,
+    "ious": [
+      0.7,
+      0.88
+    ],
+    "answer": "I added two boxes labelled \"white table\": one at (0.97, −1.43), 3.4 × 1.6 m, and one at (1.29, 3.1), 2.9 × 1.7 m, both from the floor to 0.8 m, and a top-down check shows each box sits over its table.",
+    "exit": 0
+  },
+  {
+    "task": "no_go_south_table",
+    "toolset": "basic",
+    "seconds": 37,
+    "toolCalls": 8,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_status",
+      "generate_floor_plans",
+      "get_floor_plan",
+      "ToolSearch",
+      "set_view",
+      "get_view",
+      "add_area"
+    ],
+    "iou": 0.849,
+    "added": 1,
+    "kinds": [
+      "no-go"
+    ],
+    "answer": "I generated a floor plan (just one floor, floor 0) and added a no-go area named \"meeting area\" on it, covering x from -1.25 to 3.2 and y from -2.7 to -0.05, which is the white table (about x -0.75 to 2.7, y -2.2 to -0.55) plus about 0.5 m of margin.",
+    "exit": 0
+  },
+  {
+    "task": "no_go_desk",
+    "toolset": "basic",
+    "seconds": 71,
+    "toolCalls": 11,
+    "failedCalls": 0,
+    "calls": [
+      "ToolSearch",
+      "get_status",
+      "get_floor_plan",
+      "ToolSearch",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "set_view",
+      "get_view",
+      "add_area"
+    ],
+    "iou": 0.311,
+    "added": 1,
+    "kinds": [
+      "no-go"
+    ],
+    "answer": "I added a no-go area on floor 0 named \"desk\" (`area-9eac2f14`), x −2.35 to −0.85 and y −4.85 to −3.05, which is the desk plus about 30 cm. I placed it by eye, and the desk I saw in the map is centred near (−1.6, −3.9) rather than at the point you gave, so it's worth a quick check in the view.",
+    "exit": 0
+  }
+]
