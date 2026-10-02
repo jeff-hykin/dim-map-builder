@@ -17,6 +17,50 @@ const planTool = new Store<{ tool: PlanTool; draft: [number, number][]; name: st
 
 const AREA_COLORS: Record<string, string> = { "no-go": "#ff5f6d", zone: "#7fc8f8", slow: "#ffd166" }
 
+/** plan colors: unknown cells stay transparent so the view's own background shows through; walls are drawn as a
+ * bright rim around a dimmer body, so thick clutter reads as outlines instead of solid blocks */
+const PLAN_STYLE = {
+    floor: [21, 33, 50],
+    wallRim: [130, 212, 255],
+    wallBody: [38, 78, 122],
+    glow: "drop-shadow(0 0 4px rgba(80, 170, 255, 0.45))",
+    grid: "rgba(140, 180, 230, 0.07)",
+    gridText: "rgba(140, 180, 230, 0.5)",
+}
+
+/** the grey plan PNG split into a floor layer and a wall layer, each colored with transparent elsewhere */
+function planLayers(pixels: Uint8ClampedArray, width: number, height: number) {
+    const isWall = (column: number, row: number) => column >= 0 && row >= 0 && column < width && row < height && pixels[(row * width + column) * 4] < 128
+    const layer = (color: (column: number, row: number, value: number) => number[] | null) => {
+        const canvas = document.createElement("canvas")
+        canvas.width = width
+        canvas.height = height
+        const context = canvas.getContext("2d")!
+        const out = context.createImageData(width, height)
+        for (let row = 0; row < height; row++) {
+            for (let column = 0; column < width; column++) {
+                const index = row * width + column
+                const rgb = color(column, row, pixels[index * 4])
+                if (rgb) {
+                    out.data.set([...rgb, 255], index * 4)
+                }
+            }
+        }
+        context.putImageData(out, 0, 0)
+        return canvas
+    }
+    return {
+        floor: layer((_c, _r, value) => value !== 128 ? PLAN_STYLE.floor : null),
+        walls: layer((column, row, value) => {
+            if (value >= 128) {
+                return null
+            }
+            const rim = !isWall(column - 1, row) || !isWall(column + 1, row) || !isWall(column, row - 1) || !isWall(column, row + 1)
+            return rim ? PLAN_STYLE.wallRim : PLAN_STYLE.wallBody
+        }),
+    }
+}
+
 export function PlansPanel({ context }: { context: Context }) {
     const { session, run, ui, setUi } = context
     const tool = useStore(planTool)
@@ -33,7 +77,7 @@ export function PlansPanel({ context }: { context: Context }) {
         <div>
             <div className="panel-head">
                 <h2>Floor plans</h2>
-                <p>A 2D plan per storey: black where something stands, white where the floor was seen, grey unknown.</p>
+                <p>A 2D plan per storey: lit walls where something stands, floor where the floor was seen, nothing where unknown.</p>
             </div>
             <div className="row">
                 <label className="row" style={{ margin: 0 }}>
@@ -128,7 +172,7 @@ export function PlanView({ context }: { context: Context }) {
     const canvas = useRef<HTMLCanvasElement>(null)
     const host = useRef<HTMLDivElement>(null)
     const tool = useStore(planTool)
-    const [image, setImage] = useState<HTMLImageElement | null>(null)
+    const [image, setImage] = useState<ReturnType<typeof planLayers> | null>(null)
     const view = useRef({ x: 0, y: 0, zoom: 1, fitted: "" })
     const [, redraw] = useState(0)
     const floor = Math.min(ui.planFloor, Math.max(0, (session?.annotations.floors.length ?? 1) - 1))
@@ -173,7 +217,7 @@ export function PlanView({ context }: { context: Context }) {
                 ? [pick(cells.columns, 0.01) - pad, pick(cells.rows, 0.01) - pad, pick(cells.columns, 0.99) + pad, pick(cells.rows, 0.99) + pad]
                 : null
             view.current.fitted = ""
-            setImage(next)
+            setImage(planLayers(pixels, next.width, next.height))
         }
         next.src = api.planUrl(session.id, floor, session.revision)
     }, [session?.id, session?.revision, floor, plan?.width])
@@ -223,11 +267,17 @@ export function PlanView({ context }: { context: Context }) {
             v.y = box.clientHeight / 2 - ((r0 + r1 + 1) / 2) * v.zoom
             v.fitted = key
         }
-        g.imageSmoothingEnabled = false
-        g.drawImage(image, v.x, v.y, plan.width * v.zoom, plan.height * v.zoom)
+        // smoothed upscaling softens the 5 cm cells; the walls glow
+        const style = PLAN_STYLE
+        g.imageSmoothingEnabled = true
+        g.imageSmoothingQuality = "high"
+        g.drawImage(image.floor, v.x, v.y, plan.width * v.zoom, plan.height * v.zoom)
+        g.filter = style.glow
+        g.drawImage(image.walls, v.x, v.y, plan.width * v.zoom, plan.height * v.zoom)
+        g.filter = "none"
         // a 1 m grid with labels
-        g.strokeStyle = "rgba(122, 240, 168, 0.14)"
-        g.fillStyle = "rgba(122, 240, 168, 0.6)"
+        g.strokeStyle = style.grid
+        g.fillStyle = style.gridText
         g.font = "10px ui-monospace, monospace"
         g.lineWidth = 1
         const [x0, y1] = toWorld(0, 0)
