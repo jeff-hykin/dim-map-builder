@@ -386,12 +386,12 @@ impl Workspace {
         let floor_at = |x: f32, y: f32| model.height_at(storey, x, y);
         let reach = |z: &ZEnd| -> Result<Reach> {
             if z.full_column {
-                // up to the next storey's band, or everything above on the top storey
-                let top = if storey + 1 < model.storeys.len() { band[1] } else { f32::MAX };
-                return Ok(Reach { above_floor: None, top });
+                // up to the next storey's band, or 3 m over the top storey's floor (not its roof)
+                let top = if storey + 1 < model.storeys.len() { band[1] } else { band[0] + 3.25 };
+                return Ok(Reach { above_floor: None, top, bottom: band[0] });
             }
             let end = z.z_end.context("zEnd (or fullColumn) is required")?;
-            Ok(if z.relative { Reach { above_floor: Some(end), top: f32::MAX } } else { Reach { above_floor: None, top: end } })
+            Ok(if z.relative { Reach { above_floor: Some(end), top: f32::MAX, bottom: band[0] } } else { Reach { above_floor: None, top: end, bottom: band[0] } })
         };
         let (label, edit) = match request {
             Modify::Erase { path, radius, reach: z, .. } => {
@@ -409,7 +409,10 @@ impl Workspace {
                 (format!("Draw ({:.2} m wide, {:.2} m tall)", width, height), edit)
             }
             Modify::Straighten { from, to, width, thickness, reach: z, .. } => {
-                let edit = mapping::edit::straighten(&points, &normals, voxel, *from, *to, *width, *thickness, floor_at, reach(z)?);
+                // a wall is rebuilt and cleaned full height, floor to the storey's top, whatever the slice shows
+                let _ = z;
+                let full = reach(&ZEnd { full_column: true, ..Default::default() })?;
+                let edit = mapping::edit::straighten(&points, &normals, voxel, *from, *to, *width, *thickness, floor_at, full);
                 if edit.add.is_empty() {
                     bail!("no wall found along that line (drag along a wall, or widen the band)");
                 }

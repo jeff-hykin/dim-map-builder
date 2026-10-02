@@ -63,6 +63,8 @@ impl Stroke {
 pub struct Reach {
     pub above_floor: Option<f32>,
     pub top: f32,
+    /// nothing under this (absolute z) is touched: the storey's own band, not the one below
+    pub bottom: f32,
 }
 
 impl Reach {
@@ -153,7 +155,7 @@ pub fn erase(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Str
         let mut has_floor = false;
         for index in here {
             let z = points[*index as usize][2];
-            if z > floor + voxel * 0.5 && z <= top {
+            if z > floor + voxel * 0.5 && z <= top && z >= reach.bottom {
                 edit.remove.push(*index);
             } else if (z - floor).abs() <= voxel * 1.5 {
                 has_floor = true;
@@ -239,11 +241,11 @@ mod tests {
     fn erase_leaves_floor() {
         let (points, normals) = room();
         let floor = |_x: f32, _y: f32| Some(at(0));
-        let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.0, 1.0]], radius: 0.3 }, floor, Reach { above_floor: Some(2.0), top: f32::MAX });
+        let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.0, 1.0]], radius: 0.3 }, floor, Reach { above_floor: Some(2.0), top: f32::MAX, bottom: f32::MIN });
         assert_eq!(edit.remove.len(), 6 * 6 * 33, "the whole blob");
         assert!(edit.add.len() >= 36 && edit.add.iter().all(|p| (p[2] - at(0)).abs() < 1e-4), "floor patched under it: {}", edit.add.len());
         // capped at 1 m above the floor, the blob's top stays
-        let capped = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.0, 1.0]], radius: 0.3 }, floor, Reach { above_floor: Some(1.0), top: f32::MAX });
+        let capped = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.0, 1.0]], radius: 0.3 }, floor, Reach { above_floor: Some(1.0), top: f32::MAX, bottom: f32::MIN });
         assert_eq!(capped.remove.len(), 6 * 6 * 20);
     }
 
@@ -265,7 +267,7 @@ mod tests {
             normals.push([1.0, 0.0, 0.0]);
         }
         let model_low = |x: f32, _y: f32| Some(tread((x / 0.05) as i32) - 0.15);
-        let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[0.2, 0.5], [2.8, 0.5]], radius: 0.4 }, model_low, Reach { above_floor: Some(1.8), top: f32::MAX });
+        let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[0.2, 0.5], [2.8, 0.5]], radius: 0.4 }, model_low, Reach { above_floor: Some(1.8), top: f32::MAX, bottom: f32::MIN });
         assert!(edit.remove.iter().all(|i| *i as usize >= treads), "a tread was erased");
         assert_eq!(edit.remove.len(), 29, "the person goes");
     }
@@ -303,7 +305,7 @@ mod tests {
                 normals.push([1.0, 0.0, 0.0]);
             }
         }
-        let edit = straighten(&points, &normals, 0.05, [2.0, 0.1], [2.0, 3.9], 0.3, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        let edit = straighten(&points, &normals, 0.05, [2.0, 0.1], [2.0, 3.9], 0.3, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
         let after = result(&points, &edit);
         let at_y = |y: f32| -> Vec<f32> {
             let mut zs: Vec<f32> = after.iter().filter(|p| (p[1] - y).abs() < 0.03 && p[2] > 0.03).map(|p| p[2]).collect();
@@ -362,7 +364,7 @@ mod tests {
     fn straighten_a_rough_thin_wall() {
         let (points, normals) = rough_wall(1);
         // the brush covers only part of it: the tool finds the rest
-        let edit = straighten(&points, &normals, 0.05, [2.0, 1.2], [2.0, 2.8], 0.4, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        let edit = straighten(&points, &normals, 0.05, [2.0, 1.2], [2.0, 2.8], 0.4, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
         assert_eq!(columns_x(&points, &edit), vec![40], "one voxel thick, on the wall, fringe gone end to end");
         let after = result(&points, &edit);
         assert_eq!(after.iter().filter(|p| p[2] > 0.03).count(), 80 * 40, "every voxel of the wall, nothing else");
@@ -371,9 +373,9 @@ mod tests {
     #[test]
     fn straighten_keeps_a_thick_wall_thick() {
         let (points, normals) = rough_wall(3);
-        let edit = straighten(&points, &normals, 0.05, [2.05, 0.2], [2.05, 3.8], 0.5, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        let edit = straighten(&points, &normals, 0.05, [2.05, 0.2], [2.05, 3.8], 0.5, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
         assert_eq!(columns_x(&points, &edit), vec![40, 41, 42], "three voxels thick, where the wall was");
-        let overridden = straighten(&points, &normals, 0.05, [2.05, 0.2], [2.05, 3.8], 0.5, Some(0.1), |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        let overridden = straighten(&points, &normals, 0.05, [2.05, 0.2], [2.05, 3.8], 0.5, Some(0.1), |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
         assert_eq!(columns_x(&points, &overridden).len(), 2, "a 10 cm override");
         // flat faces: every row along the wall has the same columns
         let mut rows: AHashMap<i32, AHashSet<i32>> = AHashMap::new();
@@ -396,7 +398,7 @@ mod tests {
         }
         let points: Vec<[f32; 3]> = cloud.iter().map(|k| center(*k, 0.05)).collect();
         let normals = vec![[-s, c, 0.0]; points.len()];
-        let edit = straighten(&points, &normals, 0.05, [1.0, 1.0], [1.0 + c * 3.5, 1.0 + s * 3.5], 0.4, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        let edit = straighten(&points, &normals, 0.05, [1.0, 1.0], [1.0 + c * 3.5, 1.0 + s * 3.5], 0.4, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
         // no holes: every layer of every column the wall covers is filled
         let added: AHashSet<Key> = result(&points, &edit).iter().map(|p| key_of(*p, 0.05)).collect();
         let columns: AHashSet<(i32, i32)> = added.iter().map(|k| (k.0, k.1)).collect();

@@ -77,11 +77,7 @@ export function ModifyPanel({ context }: { context: Context }) {
                         </span>
                     </div>
                     <Number_ label="band width" value={state.band} min={0.1} max={1.5} step={0.05} unit="m" onChange={(band) => modifyTool.update({ band })} data="band" />
-                    <label className="row">
-                        <input type="checkbox" checked={state.fullColumn} onChange={(event) => modifyTool.update({ fullColumn: event.target.checked })} />
-                        full column
-                    </label>
-                    <div className="hint">The wall under the stroke (band {(state.band / 2).toFixed(2)} m either side), up to {reachText}, becomes a clean slab; doorways stay open.</div>
+                    <div className="hint">Your stroke picks the wall; the tool fits the whole wall past it, floor to top, keeps its thickness and corners, and clears stray voxels within half a metre of it. Doorways stay open.</div>
                 </>
             )}
             {state.busy && <div className="hint">applying…</div>}
