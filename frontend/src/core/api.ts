@@ -1,4 +1,6 @@
 // Client for this app's backend (server/src/api.rs, at ./api) and Desktop's shared recordings (../../recordings).
+import type { FloorModel } from "./slice.ts"
+
 export interface DesktopRecording {
     id: string
     name: string
@@ -75,6 +77,29 @@ export interface Area {
     polygon: [number, number][]
 }
 
+/** a polygon drawn on a storey, extruded up from `base` by `height` (a box that follows the room's shape) */
+export interface PrismAnnotation {
+    id: string
+    label: string
+    floor: number
+    polygon: [number, number][]
+    base: number
+    height: number
+    source: string
+}
+
+/** a 2D map: a saved perspective on the 3D map (a storey, a height band, where it looks) */
+export interface SavedView {
+    id: string
+    name: string
+    floor: number
+    follow: boolean
+    zMin: number
+    zMax: number
+    center: [number, number] | null
+    pixelsPerMeter: number | null
+}
+
 export interface Annotations {
     boxes: BoxAnnotation[]
     planes: PlaneAnnotation[]
@@ -82,6 +107,8 @@ export interface Annotations {
     floors: Floor[]
     planPoints: PlanPoint[]
     areas: Area[]
+    prisms: PrismAnnotation[]
+    views: SavedView[]
 }
 
 export interface PlanInfo {
@@ -221,10 +248,13 @@ export const api = {
         const header = new Uint32Array(buffer, 0, 2)
         return { points: new Float32Array(buffer, 8, header[0] * 3), path: new Float32Array(buffer, 8 + header[0] * 12, header[1] * 3) }
     },
+    buildDefaults: () => call<Record<string, any>>("api/build-defaults"),
     build: (id: string, options: Partial<BuildOptions>) => call<{ job: Job }>(`api/sessions/${id}/build`, json(options)),
     cancel: (id: string) => call(`api/sessions/${id}/job`, { method: "DELETE" }),
     op: (id: string, op: string, region: Region, params: Record<string, unknown> = {}, preview = false) =>
         call<OpResult>(`api/sessions/${id}/op`, json({ op, region, params, preview })),
+    modify: (id: string, body: Record<string, unknown>) => call<OpResult>(`api/sessions/${id}/modify`, json(body)),
+    floor: (id: string) => call<FloorModel>(`api/sessions/${id}/floor`),
     rotate: (id: string, degrees: number) => call(`api/sessions/${id}/transform`, json({ kind: "rotate", degrees })),
     level: (id: string) => call(`api/sessions/${id}/transform`, json({ kind: "level" })),
     add: (id: string, annotation: Record<string, unknown>) => call<{ id: string }>(`api/sessions/${id}/annotations`, json(annotation)),

@@ -10,6 +10,7 @@ use kiddo::{ImmutableKdTree, SquaredEuclidean};
 use nalgebra::{DVector, Matrix6, Translation3, UnitQuaternion, Vector3, Vector6};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct PgoConfig {
     pub key_pose_delta_trans: f64,
     pub key_pose_delta_deg: f64,

@@ -1,22 +1,45 @@
-// What every panel gets: the open session, the 3D scene, and helpers that run an action with feedback.
+// What every panel gets: the open session, the 3D scene, the local floor, and helpers that run an action with feedback.
 import type { MapScene } from "../core/scene.ts"
 import type { Session } from "../core/api.ts"
+import { AUTO_RANGE, type FloorModel, type SliceRange } from "../core/slice.ts"
 
-export type Stage = "open" | "build" | "clean" | "annotate" | "plans" | "save"
+export type ViewMode = "3d" | "split" | "2d"
 
-export const STAGES: { id: Stage; label: string; key: string }[] = [
-    { id: "open", label: "Open", key: "1" },
-    { id: "build", label: "Build map", key: "2" },
-    { id: "clean", label: "Clean", key: "3" },
-    { id: "annotate", label: "Annotate", key: "4" },
-    { id: "plans", label: "Floor plans", key: "5" },
-    { id: "save", label: "Save", key: "6" },
+/** The edit orb's palette: one tool at a time, each with its own options card. "select" just looks around. */
+export type ToolId = "select" | "clean" | "annotate" | "polygon" | "places" | "erase" | "brush" | "line" | "straighten" | "views"
+
+export const TOOLS: { id: ToolId; icon: string; label: string; key: string; view: "2d" | "3d" | "any" }[] = [
+    { id: "select", icon: "✋", label: "Select / move around", key: "Escape", view: "any" },
+    { id: "erase", icon: "⌫", label: "Erase", key: "x", view: "2d" },
+    { id: "brush", icon: "✎", label: "Draw", key: "d", view: "2d" },
+    { id: "line", icon: "╱", label: "Draw a line", key: "l", view: "2d" },
+    { id: "straighten", icon: "⟋", label: "Straighten a wall", key: "w", view: "2d" },
+    { id: "polygon", icon: "⬠", label: "Polygon (an area with a height)", key: "p", view: "2d" },
+    { id: "places", icon: "⚑", label: "Named points and areas", key: "n", view: "2d" },
+    { id: "annotate", icon: "⬚", label: "Boxes, planes and points in 3D", key: "b", view: "3d" },
+    { id: "clean", icon: "✧", label: "Clean up (floating specks, outliers, floor, walls, crop, level)", key: "c", view: "3d" },
+    { id: "views", icon: "▤", label: "Saved 2D views", key: "", view: "any" },
 ]
+
+/** the 2D view's camera: the world point at its center and its zoom */
+export interface View2d {
+    cx: number
+    cy: number
+    pixelsPerMeter: number
+}
 
 /** UI state the server keeps with the session, so a refresh puts everything back */
 export interface UiState {
-    stage: Stage
+    mode: ViewMode
+    /** the 2D pane's share of the width in split mode */
+    splitShare: number
+    paletteOpen: boolean
+    tool: ToolId
+    /** the storey the 2D view and its tools work on */
     planFloor: number
+    slice: SliceRange
+    view2d: View2d | null
+    floorOverlay: boolean
     showPaths: { corrected: boolean; raw: boolean; loops: boolean }
     look: { style: "voxel" | "disc" | "square" | "splat"; gradient: string; scale: number }
     region: { center: [number, number, number]; size: [number, number, number]; yaw: number } | null
@@ -25,8 +48,14 @@ export interface UiState {
 }
 
 export const DEFAULT_UI: UiState = {
-    stage: "open",
+    mode: "3d",
+    splitShare: 0.38,
+    paletteOpen: false,
+    tool: "select",
     planFloor: 0,
+    slice: AUTO_RANGE,
+    view2d: null,
+    floorOverlay: false,
     showPaths: { corrected: true, raw: false, loops: true },
     look: { style: "voxel", gradient: "memworld", scale: 1 },
     region: null,
@@ -34,11 +63,19 @@ export const DEFAULT_UI: UiState = {
     scope: "view",
 }
 
+/** the modals over the page */
+export type Modal = "open" | "generate" | "save" | null
+
 export interface Context {
     session: Session | null
     scene: MapScene | null
+    /** the local floor of the current map (null until fetched, or with no map) */
+    floor: FloorModel | null
     ui: UiState
     setUi: (patch: Partial<UiState>) => void
+    /** picks a palette tool (switching to a view it works in) */
+    pickTool: (tool: ToolId) => void
+    setModal: (modal: Modal) => void
     /** runs `action`, shows its error (or `done` message) as a toast */
     run: <T>(action: Promise<T>, done?: string | ((value: T) => string)) => Promise<T | undefined>
     refresh: () => Promise<void>

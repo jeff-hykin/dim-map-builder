@@ -1,12 +1,14 @@
-//! "Save into recording": the map and everything drawn on it, written as new streams (.db) / channels (.mcap) next to
-//! the recording's own data, as dimos message types where one fits (schemas: docs/schema.md):
-//!   map_builder_global_map   sensor_msgs.PointCloud2  the cleaned voxel map, frame "map"
-//!   map_builder_path         nav_msgs.Path            the loop-closed sensor path, frame "map"
-//!   map_builder_floor_<n>    nav_msgs.OccupancyGrid   floor n's plan, frame "map", origin z = the floor's height
-//!   map_builder_annotations  std_msgs.String          JSON: map ← world transform, boxes, planes, points, floors,
-//!                                                     named points, areas (no-go zones), build summary
-//! In an .mcap the channels are `/map_builder/...` with message_encoding "lcm". Saving again replaces them.
-//! Opening a recording that has them (and no working session) restores the session from them.
+//! "Save into recording": the map and everything drawn on it, written into the opened file as new streams (.db) /
+//! channels (.mcap, message_encoding "lcm") under `map/`, next to the recording's own data, as dimos message types
+//! where one fits (schemas: docs/schema.md):
+//!   map/voxels       sensor_msgs.PointCloud2  the edited voxel map, frame "map"
+//!   map/path         nav_msgs.Path            the loop-closed sensor path, frame "map"
+//!   map/annotations  std_msgs.String          JSON: map ← world transform, boxes, planes, points, polygons, floors,
+//!                                             named points, areas (no-go zones), saved views, build summary
+//!   map/views        std_msgs.String          JSON: the saved 2D views (each a storey and a height band)
+//!   map/floor_<n>    nav_msgs.OccupancyGrid   storey n's occupancy grid, when exported; origin z = the floor
+//! Saving again replaces them (and drops the `map_builder_*` streams older versions wrote). Opening a recording that
+//! has them (and no working session) restores the session from them; older `map_builder` saves still open.
 use crate::session::{Annotations, BuildSummary, MapData, Session, Transform};
 use crate::workspace::Workspace;
 use anyhow::{bail, Context, Result};
@@ -35,13 +37,20 @@ pub struct SavedState {
     pub build: Option<BuildSummary>,
 }
 
-fn names(format: Format) -> (String, String, String, impl Fn(usize) -> String) {
+pub const PREFIX: &str = "map/";
+
+/// map, path, annotations, views, floor n
+fn names() -> (String, String, String, String, impl Fn(usize) -> String) {
+    (format!("{PREFIX}voxels"), format!("{PREFIX}path"), format!("{PREFIX}annotations"), format!("{PREFIX}views"), |n: usize| format!("{PREFIX}floor_{n}"))
+}
+
+/// what saves before the `map/` prefix were called: map, path, annotations, and the prefix of them all
+fn legacy_names(format: Format) -> (String, String, String, &'static str) {
     let prefix = match format {
         Format::Db => "map_builder_",
         Format::Mcap => "/map_builder/",
     };
-    let floor_prefix = format!("{prefix}floor_");
-    (format!("{prefix}global_map"), format!("{prefix}path"), format!("{prefix}annotations"), move |n: usize| format!("{floor_prefix}{n}"))
+    (format!("{prefix}global_map"), format!("{prefix}path"), format!("{prefix}annotations"), prefix)
 }
 
 /// Writes the session into its recording. `progress(done, total)` for the mcap rewrite.
@@ -49,7 +58,8 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
     let session = &workspace.session;
     let path = Path::new(&session.recording_path);
     let format = dimos_recording::format_of(path)?;
-    let (map_name, path_name, annotations_name, floor_name) = names(format);
+    let (map_name, path_name, annotations_name, views_name, floor_name) = names();
+    let legacy_prefix = legacy_names(format).3;
     let now = crate::workspace::now_seconds();
     let header = Header::at(now, MAP_FRAME);
     let (_, points, _) = workspace.visible_points();
@@ -77,6 +87,7 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
         (map_name, lcm::POINT_CLOUD2_TYPE.into(), map_payload),
         (path_name, lcm::PATH_TYPE.into(), path_payload),
         (annotations_name, lcm::STRING_TYPE.into(), annotations_payload),
+        (views_name, lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.views)?)),
     ];
     writes.extend(floors.into_iter().map(|(name, payload)| (name, lcm::OCCUPANCY_GRID_TYPE.into(), payload)));
     // earlier saves' floors beyond today's count go too
@@ -84,7 +95,7 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
         .streams()?
         .into_iter()
         .map(|s| s.name)
-        .filter(|name| name.starts_with(&floor_name(0)[..floor_name(0).len() - 1]) && !writes.iter().any(|(w, _, _)| w == name))
+        .filter(|name| (name.starts_with(&floor_name(0)[..floor_name(0).len() - 1]) || name.starts_with(legacy_prefix)) && !writes.iter().any(|(w, _, _)| w == name))
         .collect();
     match format {
         Format::Db => {
@@ -130,9 +141,16 @@ fn grid(plan: &FloorPlan, header: &Header) -> OccupancyGrid {
 
 /// A session rebuilt from an earlier save inside the recording, if it has one.
 pub fn load(recording: &Recording, mut session: Session) -> Result<Option<(Session, MapData)>> {
-    let (map_name, path_name, annotations_name, _) = names(recording.format());
-    let Some((_, payload)) = recording.latest(&annotations_name)? else { return Ok(None) };
-    let state: SavedState = serde_json::from_str(&lcm::decode_string(&payload)?).context("reading map_builder_annotations")?;
+    let (map_name, path_name, annotations_name, _, _) = names();
+    let (legacy_map, legacy_path, legacy_annotations, _) = legacy_names(recording.format());
+    let (map_name, path_name, annotations_name, payload) = match recording.latest(&annotations_name)? {
+        Some((_, payload)) => (map_name, path_name, annotations_name, payload),
+        None => match recording.latest(&legacy_annotations)? {
+            Some((_, payload)) => (legacy_map, legacy_path, legacy_annotations, payload),
+            None => return Ok(None),
+        },
+    };
+    let state: SavedState = serde_json::from_str(&lcm::decode_string(&payload)?).with_context(|| format!("reading {annotations_name}"))?;
     if state.schema != SCHEMA {
         bail!("unknown map_builder schema {}", state.schema);
     }
@@ -199,18 +217,22 @@ mod tests {
         ws.add_box("table", Box3::from_bounds([2.0, 3.0, 0.7], [3.2, 3.8, 0.8]), "user").unwrap();
         ws.generate_plans(true, None, Default::default()).unwrap();
         ws.add_area(0, "Stairs", "no-go", vec![[4.0, 4.0], [5.0, 4.0], [5.0, 5.0]]).unwrap();
+        // Modify edits (added voxels), a polygon and a saved view go into the recording too
+        let drawn = ws.modify(&crate::workspace::Modify::Draw { floor: 0, path: vec![[1.0, 1.0], [2.0, 1.0]], width: 0.1, height: 1.0 }).unwrap();
+        assert!(drawn.changed > 100);
+        ws.add_prism(0, "desk", vec![[1.0, 3.0], [2.0, 3.0], [2.0, 4.0]], 0.8, None, "user").unwrap();
+        ws.add_view(crate::session::SavedView { name: "walls".into(), floor: 0, follow: true, z_min: 0.1, z_max: 1.8, ..Default::default() }).unwrap();
         let visible = ws.remaining();
         save(&ws, |_, _| {}).unwrap();
         save(&ws, |_, _| {}).unwrap(); // twice: replaces, never duplicates
 
         let recording = Recording::open(&path).unwrap();
         let streams: Vec<String> = recording.streams().unwrap().into_iter().map(|s| s.name).collect();
-        let prefix = if format == "db" { "map_builder_" } else { "/map_builder/" };
-        for suffix in ["global_map", "path", "annotations", "floor_0"] {
-            assert!(streams.contains(&format!("{prefix}{suffix}")), "{format}: {streams:?}");
+        for suffix in ["voxels", "path", "annotations", "views", "floor_0"] {
+            assert!(streams.contains(&format!("map/{suffix}")), "{format}: {streams:?}");
         }
         assert!(streams.iter().any(|s| s.ends_with("lidar")), "the original data is still there");
-        assert_eq!(streams.len(), 5);
+        assert_eq!(streams.len(), 6);
 
         let (restored, map) = load(&recording, Session::default()).unwrap().unwrap();
         assert_eq!(map.points.len(), visible);

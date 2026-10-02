@@ -49,6 +49,7 @@ kbd { font: 10px var(--mono); padding: 0 4px; border: 1px solid var(--border); b
 .title { font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; white-space: nowrap; }
 .title::before { content: "// "; color: var(--accent); }
 .recording-name { color: var(--muted); max-width: 26vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app { grid-template-rows: auto 1fr; }
 .stages { display: flex; gap: 2px; flex-wrap: wrap; }
 .stage { border: 1px solid transparent; background: none; padding: 4px 9px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; color: var(--muted); border-radius: var(--radius); }
 .stage .num { color: var(--accent); opacity: 0.6; margin-right: 5px; }
@@ -63,25 +64,32 @@ kbd { font: 10px var(--mono); padding: 0 4px; border: 1px solid var(--border); b
 .icon-button:hover:not(:disabled) { border-color: var(--accent); }
 .icon-button:disabled { opacity: 0.35; cursor: default; }
 
-/* ── body: side panel + view ── */
-.workspace { position: relative; display: grid; grid-template-columns: 340px 1fr; min-height: 0; }
-.side { background: var(--panel); border-right: 1px solid var(--border); overflow: auto; padding: 12px 14px 80px; z-index: 3; }
-.view { position: relative; min-width: 0; min-height: 0; background: radial-gradient(120% 90% at 50% 0%, #0d141e, #06090f 60%); }
+/* ── the view: a 3D pane and a 2D pane side by side; the mode slides their widths ── */
+.view { position: relative; min-width: 0; min-height: 0; overflow: hidden; display: flex; background: radial-gradient(120% 90% at 50% 0%, #0d141e, #06090f 60%); }
 body.light .view { background: radial-gradient(120% 90% at 50% 0%, #fbfcfd, #e3e8ee); }
+.pane { position: relative; height: 100%; overflow: hidden; flex: none; transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1); }
+.pane-inner { position: absolute; top: 0; bottom: 0; }
+.pane-3d .pane-inner { left: 0; }
+.pane-2d .pane-inner { right: 0; background: #0a0f17; }
+.pane-2d { box-shadow: -1px 0 0 var(--border); }
+.app.mode-3d .pane-2d { box-shadow: none; }
 .scene { position: absolute; inset: 0; touch-action: none; }
 .scene canvas { display: block; }
 .label-layer { position: absolute; inset: 0; pointer-events: none; }
 .scene-label { font: 600 11px/1.2 var(--mono); padding: 2px 6px; border-radius: 2px; white-space: nowrap; background: rgba(6, 9, 15, 0.78); color: var(--fg); border-left: 2px solid var(--label-color, var(--accent)); transform: translateY(-50%); }
 body.light .scene-label { background: rgba(255, 255, 255, 0.85); }
 .scene-label.covered { opacity: 0; }
-/* the 3D labels (CSS2D sets its own z-index) stay out of the floor plan */
-.app.plans .label-layer { display: none; }
+.app.mode-2d .label-layer { display: none; }
+.split-divider { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: col-resize; z-index: 3; }
+.split-divider:hover { background: linear-gradient(90deg, transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
+.app.sliding .split-divider { display: none; }
 
 .panel-head { border-left: 3px solid var(--accent); padding-left: 10px; margin: 2px 0 12px; }
 .panel-head h2 { margin: 0; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; }
 .panel-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
 h3 { margin: 16px 0 6px; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); opacity: 0.85; font-weight: 650; }
 .hint { color: var(--muted); font-size: 11px; margin: 4px 0; }
+.dim { color: var(--muted); }
 .problem { color: var(--danger); font-size: 11px; margin: 6px 0; white-space: pre-wrap; }
 .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 .row > label { color: var(--muted); min-width: 92px; }
@@ -100,12 +108,65 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .button.armed { background: rgba(255, 95, 109, 0.15); }
 .button.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 .button:disabled { opacity: 0.4; cursor: default; }
+.button.save.unsaved { color: var(--warn); border-color: rgba(255, 209, 102, 0.45); }
+.button.save.saved { color: var(--accent); }
+.icon-button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 .tool-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; margin: 8px 0; background: var(--card); }
 .tool-card .name { font-weight: 650; }
 .tool-card .about { color: var(--muted); font-size: 11px; margin: 2px 0 6px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .seg button { background: none; border: none; padding: 3px 8px; cursor: pointer; color: var(--muted); font-size: 11px; }
 .seg button.on { background: var(--accent-dim); color: var(--accent); }
+.check { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); white-space: nowrap; }
+
+/* ── [ 3D | Split | 2D ]: the highlight slides under the chosen one ── */
+.mode-switch { position: relative; display: inline-grid; grid-template-columns: repeat(3, 76px); border: 1px solid var(--line); border-radius: 16px; padding: 2px; background: var(--card); }
+.mode-switch button { position: relative; z-index: 1; background: none; border: none; padding: 5px 0; cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; transition: color 200ms; }
+.mode-switch button.on { color: #06090f; font-weight: 700; }
+.mode-switch button:disabled { opacity: 0.4; cursor: default; }
+.mode-highlight { position: absolute; top: 2px; left: 2px; width: 76px; bottom: 2px; border-radius: 14px; background: var(--accent); transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* ── the orbs and the edit palette ── */
+.orbs { position: absolute; left: 14px; top: 14px; display: flex; gap: 10px; z-index: 6; }
+.orb { width: 46px; height: 46px; border-radius: 50%; border: 3px solid var(--accent); background: rgba(13, 20, 30, 0.92); color: var(--fg); font-size: 19px; cursor: pointer; box-shadow: 0 0 0 4px rgba(122, 240, 168, 0.12), 0 8px 24px -8px rgba(0, 0, 0, 0.8); transition: transform 150ms, box-shadow 150ms, background 150ms; }
+.orb:hover:not(:disabled) { transform: scale(1.06); }
+.orb.open { background: var(--accent); color: #06090f; }
+.orb:disabled { opacity: 0.35; cursor: default; }
+.orb-generate { border-color: var(--info); box-shadow: 0 0 0 4px rgba(127, 200, 248, 0.12), 0 8px 24px -8px rgba(0, 0, 0, 0.8); }
+.orb-generate.next { animation: orb-pulse 1.6s ease-in-out infinite; }
+.orb-generate.busy { animation: orb-spin 1.4s linear infinite; }
+@keyframes orb-pulse { 50% { box-shadow: 0 0 0 10px rgba(127, 200, 248, 0.25), 0 8px 24px -8px rgba(0, 0, 0, 0.8); } }
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+.palette { position: absolute; left: 17px; top: 72px; display: flex; flex-direction: column; gap: 4px; z-index: 6; padding: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; animation: palette-in 180ms ease-out; }
+@keyframes palette-in { from { opacity: 0; transform: translateY(-8px); } }
+.palette button { width: 34px; height: 34px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--fg); font-size: 16px; cursor: pointer; }
+.palette button:hover { border-color: var(--line); background: var(--raised); }
+.palette button.on { background: var(--accent); color: #06090f; }
+.tool-panel { position: absolute; left: 66px; top: 72px; width: 330px; max-height: calc(100% - 90px); overflow: auto; z-index: 6; background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 8px 12px 12px; box-shadow: 0 12px 36px -10px rgba(0, 0, 0, 0.8); }
+.tool-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 650; letter-spacing: 0.06em; margin-bottom: 6px; }
+
+/* ── modals ── */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(3, 5, 9, 0.6); display: grid; place-items: center; z-index: 20; animation: fade-in 150ms ease-out; }
+@keyframes fade-in { from { opacity: 0; } }
+.modal { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 60px); overflow: auto; background: var(--panel); border: 1px solid var(--border); border-top: 3px solid var(--accent); padding: 14px 18px 18px; box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.9); }
+.modal-head { display: flex; justify-content: space-between; align-items: center; }
+.modal-head h2 { margin: 0; font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; }
+.advanced { border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; margin: 10px 0; background: var(--card); }
+.advanced summary { cursor: pointer; color: var(--fg); }
+.warning { border: 1px solid rgba(255, 209, 102, 0.5); background: rgba(255, 209, 102, 0.08); padding: 10px 12px; margin: 10px 0; line-height: 1.5; }
+
+/* ── the 2D view's slice bar ── */
+.slice-bar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 4; display: flex; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--border); padding: 6px 10px; border-radius: 4px; white-space: nowrap; }
+.app.mode-2d .slice-bar { left: calc(50% + 40px); }
+.slice-bar input.number { width: 62px; }
+.dual-range { position: relative; width: 170px; height: 22px; }
+.dual-range .track { position: absolute; left: 0; right: 0; top: 9px; height: 4px; background: var(--line); border-radius: 2px; }
+.dual-range .fill { position: absolute; top: 9px; height: 4px; background: var(--accent); border-radius: 2px; }
+.dual-range input[type="range"] { position: absolute; inset: 0; width: 100%; margin: 0; background: none; pointer-events: none; -webkit-appearance: none; appearance: none; }
+.dual-range input[type="range"]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--fg); border: 2px solid var(--accent); cursor: pointer; }
+.dual-range input[type="range"]::-moz-range-thumb { pointer-events: auto; width: 12px; height: 12px; border-radius: 50%; background: var(--fg); border: 2px solid var(--accent); cursor: pointer; }
+.height-legend { position: absolute; left: 12px; bottom: 12px; background: var(--panel); border: 1px solid var(--border); padding: 4px 8px; font-size: 11px; z-index: 2; display: flex; gap: 8px; align-items: center; }
+.height-legend .ramp { display: inline-block; width: 120px; height: 8px; background: linear-gradient(90deg, #3e5fd8, #39a2fc, #24eca6, #a4fc3b, #f3c63a, #fe9b2d); }
 
 /* ── recordings list ── */
 .recordings { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 4px; }
@@ -145,16 +206,17 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .toast.error { border-left-color: var(--danger); }
 .history { color: var(--muted); font-size: 11px; display: grid; gap: 2px; max-height: 180px; overflow: auto; }
 
-/* ── floor plan ── */
-.plan-view { position: absolute; inset: 0; overflow: hidden; z-index: 1; background: #0a0f17; cursor: crosshair; touch-action: none; }
-body.light .plan-view { background: #dfe5eb; }
-.plan-view canvas { position: absolute; inset: 0; }
-.floor-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+/* ── the 2D view ── */
+.plan-view, .minimap-view { position: absolute; inset: 0; overflow: hidden; z-index: 1; background: #0a0f17; touch-action: none; }
+body.light .plan-view, body.light .minimap-view { background: #dfe5eb; }
+.plan-view canvas, .minimap-view canvas { position: absolute; inset: 0; }
 
 .connection { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); background: rgba(255, 95, 109, 0.15); border: 1px solid rgba(255, 95, 109, 0.5); padding: 4px 10px; z-index: 7; }
 
 @media (max-width: 760px) {
-    .workspace { grid-template-columns: 1fr; grid-template-rows: 1fr minmax(180px, 42%); }
-    .side { grid-row: 2; border-right: none; border-top: 1px solid var(--border); }
     .recording-name { display: none; }
+    .mode-switch { grid-template-columns: repeat(3, 56px); }
+    .mode-highlight { width: 56px; }
+    .tool-panel { left: 12px; right: 12px; width: auto; top: auto; bottom: 12px; max-height: 45%; }
+    .slice-bar { flex-wrap: wrap; max-width: calc(100% - 24px); }
 }

@@ -103,6 +103,39 @@ pub struct Area {
     pub polygon: Vec<[f32; 2]>,
 }
 
+/// A polygon drawn on a storey's 2D view, standing up from `base` (map-frame z, the local floor when drawn) by `height`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Prism {
+    pub id: String,
+    pub label: String,
+    pub floor: usize,
+    pub polygon: Vec<[f32; 2]>,
+    pub base: f32,
+    pub height: f32,
+    #[serde(default)]
+    pub source: String,
+}
+
+/// A 2D map: a saved perspective on the 3D map (a storey, a height band over its floor or absolute, where it looks).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedView {
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub floor: usize,
+    /// z_min / z_max are over the local floor (else absolute z)
+    #[serde(default)]
+    pub follow: bool,
+    pub z_min: f32,
+    pub z_max: f32,
+    #[serde(default)]
+    pub center: Option<[f32; 2]>,
+    #[serde(default)]
+    pub pixels_per_meter: Option<f32>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Annotations {
@@ -112,6 +145,8 @@ pub struct Annotations {
     pub floors: Vec<Floor>,
     pub plan_points: Vec<PlanPoint>,
     pub areas: Vec<Area>,
+    pub prisms: Vec<Prism>,
+    pub views: Vec<SavedView>,
 }
 
 /// map ← recording world, as translation + quaternion (x, y, z, w)

@@ -75,6 +75,7 @@ pub fn router(app: Arc<App>) -> Router {
     Router::new()
         .route("/api/state", get(state))
         .route("/api/open", post(open))
+        .route("/api/build-defaults", get(|| async { Json(json!(mapping::build::BuildOptions::default())) }))
         .route("/api/events", get(events))
         .route("/api/captures/{request}", post(capture))
         .route("/api/sessions/{id}", get(get_session).delete(discard))
@@ -294,6 +295,23 @@ pub enum NewAnnotation {
     PlanPoint { floor: usize, name: String, position: [f32; 2] },
     #[serde(rename_all = "camelCase")]
     Area { floor: usize, name: String, kind: String, polygon: Vec<[f32; 2]> },
+    #[serde(rename_all = "camelCase")]
+    Prism {
+        floor: usize,
+        label: String,
+        polygon: Vec<[f32; 2]>,
+        #[serde(default = "one_meter")]
+        height: f32,
+        #[serde(default)]
+        base: Option<f32>,
+        #[serde(default)]
+        source: Option<String>,
+    },
+    View(crate::session::SavedView),
+}
+
+fn one_meter() -> f32 {
+    1.0
 }
 
 pub fn add(workspace: &mut Workspace, annotation: NewAnnotation, default_source: &str) -> anyhow::Result<String> {
@@ -303,6 +321,8 @@ pub fn add(workspace: &mut Workspace, annotation: NewAnnotation, default_source:
         NewAnnotation::Point { label, position, source } => workspace.add_point(&label, position, source.as_deref().unwrap_or(default_source)),
         NewAnnotation::PlanPoint { floor, name, position } => workspace.add_plan_point(floor, &name, position),
         NewAnnotation::Area { floor, name, kind, polygon } => workspace.add_area(floor, &name, &kind, polygon),
+        NewAnnotation::Prism { floor, label, polygon, height, base, source } => workspace.add_prism(floor, &label, polygon, height, base, source.as_deref().unwrap_or(default_source)),
+        NewAnnotation::View(view) => workspace.add_view(view),
     }
 }
 

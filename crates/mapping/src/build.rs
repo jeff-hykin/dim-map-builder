@@ -32,6 +32,32 @@ pub struct BuildOptions {
     pub every: usize,
     pub tf_tolerance: f64,
     pub pgo: PgoConfig,
+    /// ray trace the scans (free space clears what moved); off = every return is kept, just voxelized
+    pub ray_tracing: bool,
+    pub ray: RayOptions,
+}
+
+/// The ray tracer's tunables (dimos's voxel ray tracer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RayOptions {
+    /// how far behind a hit a ray still counts as seeing the surface (m)
+    pub shadow_depth: f32,
+    /// a miss this close in front of a hit doesn't clear it (m)
+    pub grace_depth: f32,
+    /// a voxel's health floor / ceiling: more hits than misses keep it
+    pub min_health: i32,
+    pub max_health: i32,
+    /// a miss at a grazing angle (|ray · normal| below this) doesn't clear a surface
+    pub graze_cos: f32,
+    /// trace every Nth ray of a scan
+    pub ray_subsample: u32,
+}
+
+impl Default for RayOptions {
+    fn default() -> Self {
+        RayOptions { shadow_depth: 0.1, grace_depth: 0.2, min_health: -1, max_health: 5, graze_cos: 0.7, ray_subsample: 1 }
+    }
 }
 
 impl Default for BuildOptions {
@@ -45,6 +71,8 @@ impl Default for BuildOptions {
             every: 1,
             tf_tolerance: 0.5,
             pgo: PgoConfig::default(),
+            ray_tracing: true,
+            ray: RayOptions::default(),
         }
     }
 }
@@ -323,12 +351,12 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
         fine_divisor: 0,
         emit_fine: false,
         max_range: options.max_range,
-        ray_subsample: 1,
-        shadow_depth: 0.1,
-        grace_depth: 0.2,
-        min_health: -1,
-        max_health: 5,
-        graze_cos: 0.7,
+        ray_subsample: options.ray.ray_subsample.max(1),
+        shadow_depth: options.ray.shadow_depth,
+        grace_depth: options.ray.grace_depth,
+        min_health: options.ray.min_health,
+        max_health: options.ray.max_health,
+        graze_cos: options.ray.graze_cos,
         support_min: 4,
         emit_every: 0,
         global_emit_every: 0,
@@ -339,12 +367,15 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
     };
     config.validate()?;
     let mut mapper = Mapper::new(config);
+    let placing = if options.ray_tracing { "Ray tracing the map" } else { "Placing the scans (no ray tracing)" };
+    // without ray tracing, every return lands in a voxel and stays
+    let mut kept: ahash::AHashSet<crate::voxels::Key> = ahash::AHashSet::new();
     let mut index = 0u64;
     let mut last_position: Option<[f32; 3]> = None;
     recording.for_each(&stream, |ts, message, pose| {
         index += 1;
         if index % 16 == 0 {
-            report("Ray tracing the map", stage, index, total, format!("{} scans placed", result.scans_used));
+            report(placing, stage, index, total, format!("{} scans placed", result.scans_used));
             check()?;
         }
         let Message::Cloud(cloud) = message else { return Ok(true) };
@@ -367,14 +398,29 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
         }
         let points: Vec<(f32, f32, f32)> = prepared.sensor_points(&sensor, cloud.points).into_iter().map(|p| (p[0], p[1], p[2])).collect();
         let (t, q) = parts(&corrected);
-        mapper.add_frame(points, Pose { position: (t[0] as f32, t[1] as f32, t[2] as f32), orientation: (q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32) });
+        if options.ray_tracing {
+            mapper.add_frame(points, Pose { position: (t[0] as f32, t[1] as f32, t[2] as f32), orientation: (q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32) });
+        } else {
+            for p in points {
+                let world = corrected * nalgebra::Point3::new(p.0 as f64, p.1 as f64, p.2 as f64);
+                let offset = world - corrected.translation.vector;
+                if offset.coords.norm() <= options.max_range as f64 {
+                    kept.insert(crate::voxels::key_of([world.x as f32, world.y as f32, world.z as f32], options.voxel_size));
+                }
+            }
+        }
         result.scans_used += 1;
         Ok(true)
     })?;
     check()?;
-    let flat = mapper.global_points();
-    result.points = flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
-    report("Ray tracing the map", stage, total, total, format!("{} voxels from {} scans", result.points.len(), result.scans_used));
+    if options.ray_tracing {
+        let flat = mapper.global_points();
+        result.points = flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    } else {
+        let v = options.voxel_size;
+        result.points = kept.iter().map(|k| [(k.0 as f32 + 0.5) * v, (k.1 as f32 + 0.5) * v, (k.2 as f32 + 0.5) * v]).collect();
+    }
+    report(placing, stage, total, total, format!("{} voxels from {} scans", result.points.len(), result.scans_used));
     stage += 1;
 
     // 4. normals
@@ -445,6 +491,10 @@ mod tests {
         assert!(result.points.iter().any(|p| (p[1] - 1.5).abs() < 0.11));
         assert!(result.points.iter().all(|p| p[2] > -0.15), "nothing below the floor");
         assert!(stages.contains(&"Closing loops".to_string()));
+        // without ray tracing or loop closure: every return kept, voxelized
+        let plain = build(&recording, &BuildOptions { voxel_size: 0.1, ray_tracing: false, loop_closure: false, ..Default::default() }, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        assert!(plain.points.len() >= result.points.len() / 2, "{} vs {}", plain.points.len(), result.points.len());
+        assert!(plain.points.iter().any(|p| (p[1] - 1.5).abs() < 0.11));
         // cancel stops it
         let cancelled = build(&recording, &BuildOptions::default(), &mut |_| {}, &AtomicBool::new(true));
         assert!(cancelled.is_err_and(|e| e.is::<Cancelled>()));

@@ -8,8 +8,9 @@ import { applyLook, makePointMaterial, type PointLook, type PointStyle } from ".
 import { FatLines, pushBox } from "../render/lines.ts"
 import { LabelPool } from "../render/labels.ts"
 import type { Annotations, Box3 } from "./api.ts"
+import { Store } from "./store.ts"
 
-export type Selectable = { kind: "box" | "plane" | "point"; id: string } | { kind: "region"; id: "region" }
+export type Selectable = { kind: "box" | "plane" | "point" | "prism"; id: string } | { kind: "region"; id: "region" }
 export type GizmoMode = "translate" | "rotate" | "scale"
 
 export interface MapLook {
@@ -38,6 +39,23 @@ function percentileRange(values: Float32Array, axis: number, low = 0.05, high = 
     const lo = sample[Math.floor(low * (sample.length - 1))]
     const hi = sample[Math.floor(high * (sample.length - 1))]
     return [lo, hi > lo ? hi : lo + 1]
+}
+
+function centroid(polygon: [number, number][]): [number, number] {
+    const n = Math.max(1, polygon.length)
+    return [polygon.reduce((s, p) => s + p[0], 0) / n, polygon.reduce((s, p) => s + p[1], 0) / n]
+}
+
+function insidePolygon(polygon: [number, number][], x: number, y: number) {
+    let hit = false
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const [xi, yi] = polygon[i]
+        const [xj, yj] = polygon[j]
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+            hit = !hit
+        }
+    }
+    return hit
 }
 
 class PointLayer {
@@ -97,6 +115,10 @@ export class MapScene {
     onEdit: (selection: Selectable, change: { center: [number, number, number]; size: [number, number, number]; yaw: number; normal?: [number, number, number] }) => void = () => {}
     onPick: ((point: THREE.Vector3, event: PointerEvent) => void) | null = null
     onViewChange: () => void = () => {}
+    /** called on every camera move, undebounced (the minimap follows it) */
+    readonly cameraListeners = new Set<() => void>()
+    /** bumps when the map's points change */
+    readonly mapRevision = new Store({ revision: 0 })
 
     constructor(host: HTMLElement) {
         this.viewer = new Viewer(host, () => Date.now())
@@ -149,9 +171,16 @@ export class MapScene {
         })
         let viewTimer = 0
         this.viewer.controls.addEventListener("change", () => {
+            this.#cameraMoved()
             clearTimeout(viewTimer)
             viewTimer = window.setTimeout(() => this.onViewChange(), 350)
         })
+    }
+
+    #cameraMoved() {
+        for (const listener of this.cameraListeners) {
+            listener()
+        }
     }
 
     // ---- data ----
@@ -160,6 +189,7 @@ export class MapScene {
         this.voxelSize = voxelSize
         this.map.set(positions)
         this.map.points.visible = positions.length > 0
+        this.mapRevision.set({ revision: this.mapRevision.get().revision + 1 })
         this.applyLook()
         this.viewer.requestRender()
     }
@@ -257,6 +287,21 @@ export class MapScene {
                 pushBox(this.#boxes, matrix, { x: box.size[0], y: box.size[1], z: box.size[2] }, color)
                 this.#labels.place(item.label || "box", new THREE.Vector3(box.center[0], box.center[1], box.center[2] + box.size[2] / 2 + 0.08), `#${color.getHexString()}`)
             }
+            for (const item of annotations.prisms ?? []) {
+                const selected = this.#selected?.kind === "prism" && this.#selected.id === item.id
+                const color = selected ? SELECTED : item.source === "agent" ? AGENT : ACCENT
+                const top = selected && this.#dragging ? this.#proxy.position.z : item.base + item.height
+                const corners = item.polygon
+                for (let index = 0; index < corners.length; index++) {
+                    const [ax, ay] = corners[index]
+                    const [bx, by] = corners[(index + 1) % corners.length]
+                    this.#boxes.push(ax, ay, item.base, bx, by, item.base, color)
+                    this.#boxes.push(ax, ay, top, bx, by, top, color)
+                    this.#boxes.push(ax, ay, item.base, ax, ay, top, color)
+                }
+                const [cx, cy] = centroid(corners)
+                this.#labels.place(`${item.label || "polygon"} · ${(top - item.base).toFixed(2)} m`, new THREE.Vector3(cx, cy, top + 0.08), `#${color.getHexString()}`)
+            }
             for (const item of annotations.points) {
                 keepPoints.add(item.id)
                 let mesh = this.#pointMeshes.get(item.id)
@@ -329,6 +374,10 @@ export class MapScene {
     }
 
     setGizmoMode(mode: GizmoMode) {
+        if (this.#selected?.kind === "prism") {
+            return
+        }
+        this.#gizmo.showZ = true
         this.#gizmo.setMode(mode)
         // boxes and the region only turn about z
         const flat = this.#selected?.kind === "box" || this.#selected?.kind === "region"
@@ -362,6 +411,23 @@ export class MapScene {
             proxy.position.set(...point.position)
             proxy.quaternion.identity()
             proxy.scale.set(1, 1, 1)
+        } else if (selection.kind === "prism") {
+            const prism = annotations?.prisms?.find((p) => p.id === selection.id)
+            if (!prism) {
+                return this.#gizmo.detach()
+            }
+            // a handle on the top face: drag it up or down to set the height
+            const [cx, cy] = centroid(prism.polygon)
+            proxy.position.set(cx, cy, prism.base + prism.height)
+            proxy.quaternion.identity()
+            proxy.scale.set(1, 1, 1)
+            proxy.updateMatrixWorld()
+            this.#gizmo.attach(proxy)
+            this.#gizmo.setMode("translate")
+            this.#gizmo.showX = false
+            this.#gizmo.showY = false
+            this.#gizmo.showZ = true
+            return
         } else if (selection.kind === "plane") {
             const plane = annotations?.planes.find((p) => p.id === selection.id)
             if (!plane) {
@@ -398,6 +464,8 @@ export class MapScene {
             this.#drawRegion()
         } else if (selection.kind === "point") {
             this.#pointMeshes.get(selection.id)?.position.copy(this.#proxy.position)
+        } else if (selection.kind === "prism") {
+            this.#drawAnnotations()
         } else if (selection.kind === "plane") {
             const mesh = this.#planeMeshes.get(selection.id)
             mesh?.position.copy(this.#proxy.position)
@@ -484,6 +552,17 @@ export class MapScene {
                 this.select({ kind: "box", id: box.id })
                 return
             }
+            // a polygon: the ray through its top or bottom face
+            const prism = (this.#annotations.prisms ?? []).find((item) =>
+                [item.base, item.base + item.height].some((z) => {
+                    const hit = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -z), new THREE.Vector3())
+                    return hit && insidePolygon(item.polygon, hit.x, hit.y)
+                }),
+            )
+            if (prism) {
+                this.select({ kind: "prism", id: prism.id })
+                return
+            }
         }
         const point = this.pickMap(ray.ray)
         if (this.onPick) {
@@ -549,6 +628,37 @@ export class MapScene {
         } else {
             this.viewer.frame(point, far)
         }
+    }
+
+    /** Where the camera looks on the horizontal plane at `z`: the camera's x, y, and the view's corners projected onto
+     * the plane (a corner above the horizon is cut off at `far` meters). */
+    footprint(z: number, far = 40): { camera: [number, number]; target: [number, number]; corners: [number, number][] } {
+        const camera = this.viewer.camera
+        camera.updateMatrixWorld()
+        const corners: [number, number][] = []
+        for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+            const toward = new THREE.Vector3(x, y, 0.5).unproject(camera).sub(camera.position).normalize()
+            let distance = toward.z < -1e-4 ? (z - camera.position.z) / toward.z : Infinity
+            const flat = Math.hypot(toward.x, toward.y)
+            if (!(distance > 0) || distance * flat > far) {
+                distance = flat > 1e-6 ? far / flat : 0
+            }
+            corners.push([camera.position.x + toward.x * distance, camera.position.y + toward.y * distance])
+        }
+        const target = this.viewer.controls.target
+        return { camera: [camera.position.x, camera.position.y], target: [target.x, target.y], corners }
+    }
+
+    /** Slides the camera so it looks at (x, y), keeping its height, angle and distance. */
+    moveTargetTo(x: number, y: number) {
+        const target = this.viewer.controls.target
+        const delta = new THREE.Vector3(x - target.x, y - target.y, 0)
+        target.add(delta)
+        this.viewer.camera.position.add(delta)
+        this.viewer.controls.update()
+        this.viewer.requestRender()
+        this.#cameraMoved()
+        this.onViewChange()
     }
 
     /** What's reported to the server (and the agent): the camera, its view-projection matrix, the visible bounds. */

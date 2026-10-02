@@ -1,6 +1,6 @@
 //! One open session's logic, independent of HTTP: the map in the map frame, every edit (undoable), the cleanup
 //! tools, floors and plans. The API and the MCP tools both call these; nothing here knows who asked.
-use crate::session::{Annotations, Area, BoxAnnotation, Floor, MapData, PlaneAnnotation, PlanPoint, PointAnnotation, Session, Transform, UndoEntry};
+use crate::session::{Annotations, Area, BoxAnnotation, Floor, MapData, PlaneAnnotation, PlanPoint, PointAnnotation, Prism, SavedView, Session, Transform, UndoEntry};
 use anyhow::{bail, Context, Result};
 use mapping::edit::{Edit, Reach, Stroke};
 use mapping::floor::{FloorModel, FloorOptions};
@@ -557,7 +557,9 @@ impl Workspace {
                 || patch_list(&mut a.planes, id, patch, |x| &x.id)?
                 || patch_list(&mut a.points, id, patch, |x| &x.id)?
                 || patch_list(&mut a.plan_points, id, patch, |x| &x.id)?
-                || patch_list(&mut a.areas, id, patch, |x| &x.id)?;
+                || patch_list(&mut a.areas, id, patch, |x| &x.id)?
+                || patch_list(&mut a.prisms, id, patch, |x| &x.id)?
+                || patch_list(&mut a.views, id, patch, |x| &x.id)?;
             if !found {
                 bail!("no annotation {id}");
             }
@@ -566,10 +568,11 @@ impl Workspace {
     }
 
     pub fn add_plan_point(&mut self, floor: usize, name: &str, position: [f32; 2]) -> Result<String> {
-        self.require_floor(floor)?;
+        let floors = self.require_floor(floor)?;
         let id = new_id("spot-");
         let point = PlanPoint { id: id.clone(), floor, name: name.into(), position };
         self.edit_annotations(&format!("Name point \"{name}\""), |a| {
+            a.floors = floors;
             a.plan_points.push(point);
             Ok(())
         })?;
@@ -577,25 +580,74 @@ impl Workspace {
     }
 
     pub fn add_area(&mut self, floor: usize, name: &str, kind: &str, polygon: Vec<[f32; 2]>) -> Result<String> {
-        self.require_floor(floor)?;
+        let floors = self.require_floor(floor)?;
         if polygon.len() < 3 {
             bail!("an area needs at least 3 corners");
         }
         let id = new_id("area-");
         let area = Area { id: id.clone(), floor, name: name.into(), kind: kind.into(), polygon };
         self.edit_annotations(&format!("Add {kind} area \"{name}\""), |a| {
+            a.floors = floors;
             a.areas.push(area);
             Ok(())
         })?;
         Ok(id)
     }
 
-    fn require_floor(&self, floor: usize) -> Result<()> {
-        if self.session.annotations.floors.iter().any(|f| f.index == floor) {
-            Ok(())
+    /// The storeys (named once, then kept: plan annotations refer to them by index), checked to have `floor`.
+    fn require_floor(&self, floor: usize) -> Result<Vec<Floor>> {
+        let floors = if self.session.annotations.floors.is_empty() {
+            let levels = self.levels();
+            levels.iter().enumerate().map(|(index, z)| Floor { index, name: if levels.len() == 1 { "Floor".into() } else { format!("Floor {}", index + 1) }, z: *z }).collect()
         } else {
-            bail!("no floor {floor}: generate floor plans first (floors: {:?})", self.session.annotations.floors.iter().map(|f| f.index).collect::<Vec<_>>())
+            self.session.annotations.floors.clone()
+        };
+        if floors.iter().any(|f| f.index == floor) {
+            Ok(floors)
+        } else {
+            bail!("no floor {floor} (floors: {:?})", floors.iter().map(|f| f.index).collect::<Vec<_>>())
         }
+    }
+
+    /// A polygon on a storey, standing up `height` from its local floor (the median floor under its corners and
+    /// center) unless `base` is given.
+    pub fn add_prism(&mut self, floor: usize, label: &str, polygon: Vec<[f32; 2]>, height: f32, base: Option<f32>, source: &str) -> Result<String> {
+        let floors = self.require_floor(floor)?;
+        if polygon.len() < 3 {
+            bail!("a polygon needs at least 3 corners");
+        }
+        let base = match base {
+            Some(base) => base,
+            None => {
+                let model = self.floor_model()?;
+                let n = polygon.len() as f32;
+                let center = [polygon.iter().map(|p| p[0]).sum::<f32>() / n, polygon.iter().map(|p| p[1]).sum::<f32>() / n];
+                let mut under: Vec<f32> = polygon.iter().chain([&center]).filter_map(|p| model.height_at(floor, p[0], p[1])).collect();
+                under.sort_by(|a, b| a.total_cmp(b));
+                under.get(under.len() / 2).copied().unwrap_or(floors[floor].z)
+            }
+        };
+        let id = new_id("poly-");
+        let prism = Prism { id: id.clone(), label: label.into(), floor, polygon, base, height: height.max(0.01), source: source.into() };
+        self.edit_annotations(&format!("Add polygon \"{label}\""), |a| {
+            a.floors = floors;
+            a.prisms.push(prism);
+            Ok(())
+        })?;
+        Ok(id)
+    }
+
+    /// A saved 2D view (a "2D map") of a storey.
+    pub fn add_view(&mut self, mut view: SavedView) -> Result<String> {
+        let floors = self.require_floor(view.floor)?;
+        view.id = new_id("view-");
+        let id = view.id.clone();
+        self.edit_annotations(&format!("Save view \"{}\"", view.name), |a| {
+            a.floors = floors;
+            a.views.push(view);
+            Ok(())
+        })?;
+        Ok(id)
     }
 
     /// Detect floors (or use `levels`), rasterize a plan per floor, as one undoable step.
@@ -723,6 +775,21 @@ fn move_annotations(annotations: &mut Annotations, delta: &Iso) {
             *corner = [moved[0], moved[1]];
         }
     }
+    for p in &mut annotations.prisms {
+        let n = p.polygon.len().max(1) as f32;
+        let center = [p.polygon.iter().map(|c| c[0]).sum::<f32>() / n, p.polygon.iter().map(|c| c[1]).sum::<f32>() / n];
+        p.base = apply(delta, [center[0], center[1], p.base])[2];
+        for corner in &mut p.polygon {
+            let moved = apply(delta, [corner[0], corner[1], 0.0]);
+            *corner = [moved[0], moved[1]];
+        }
+    }
+    for v in &mut annotations.views {
+        if let Some(center) = &mut v.center {
+            let moved = apply(delta, [center[0], center[1], 0.0]);
+            *center = [moved[0], moved[1]];
+        }
+    }
 }
 
 #[cfg(test)]
@@ -805,6 +872,19 @@ pub mod tests {
         ws.undo();
         ws.undo();
         assert_eq!(ws.remaining(), total);
+        // a polygon stands on the local floor, 1 m tall; it moves with the map
+        let id = ws.add_prism(0, "desk", vec![[1.0, 1.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0]], 1.0, None, "user").unwrap();
+        let prism = ws.session.annotations.prisms[0].clone();
+        assert!((prism.base - 0.025).abs() < 0.05, "{}", prism.base);
+        ws.update_annotation(&id, Some(&serde_json::json!({ "height": 1.5 }))).unwrap();
+        assert_eq!(ws.session.annotations.prisms[0].height, 1.5);
+        assert_eq!(ws.session.annotations.floors.len(), 1, "the storeys are named on first use");
+        ws.add_view(SavedView { name: "F1 walls".into(), floor: 0, follow: true, z_min: 0.1, z_max: 1.8, ..Default::default() }).unwrap();
+        ws.undo();
+        assert!(ws.session.annotations.views.is_empty());
+        ws.undo();
+        ws.undo();
+        assert!(ws.session.annotations.prisms.is_empty());
     }
 
     #[test]
@@ -834,7 +914,7 @@ pub mod tests {
     #[test]
     fn plans_and_plan_annotations() {
         let mut ws = Workspace::new(Session { stage: "map".into(), ..Default::default() }, Some(room_map()));
-        assert!(ws.add_area(0, "x", "no-go", vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]).is_err(), "no floors yet");
+        assert!(ws.add_area(5, "x", "no-go", vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]).is_err(), "no floor 5");
         let floors = ws.generate_plans(true, None, PlanOptions::default()).unwrap();
         assert_eq!(floors.len(), 1);
         assert_eq!(ws.session.plans.len(), 1);

@@ -1,4 +1,4 @@
-// Stage 1: pick a recording from Desktop's shared recordings folder (newest first), see its streams, open it.
+// Open: pick a recording from Desktop's shared recordings folder (newest first), see its streams, open it.
 import { useEffect, useState } from "react"
 import { recordings, type DesktopRecording, type RecordingMetadata } from "../core/api.ts"
 import type { Context } from "./context.ts"
@@ -50,7 +50,7 @@ export function OpenPanel({ context }: { context: Context }) {
                 <div className="tool-card">
                     <div className="name">Continue: {context.session.name}</div>
                     <div className="about">{context.session.stage === "map" ? `${context.session.voxels.toLocaleString()} voxels` : "not built yet"} · your work is kept automatically</div>
-                    <button type="button" className="button primary" onClick={() => context.setUi({ stage: context.session?.stage === "map" ? "clean" : "build" })}>
+                    <button type="button" className="button primary" onClick={() => context.setModal(context.session?.stage === "map" ? null : "generate")}>
                         Continue
                     </button>
                 </div>

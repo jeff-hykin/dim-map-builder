@@ -1,4 +1,4 @@
-// Stage 6: write everything into the recording (new streams beside its data), see what will be written, start over.
+// Save: write everything into the opened recording (new map/* streams beside its data), see what's written, start over.
 import { useState } from "react"
 import { api } from "../core/api.ts"
 import { JobCard } from "./JobCard.tsx"
@@ -12,7 +12,7 @@ export function SavePanel({ context }: { context: Context }) {
     }
     const a = session.annotations
     const db = session.recordingPath.endsWith(".db")
-    const name = (suffix: string) => (db ? `map_builder_${suffix}` : `/map_builder/${suffix}`)
+    const name = (suffix: string) => `map/${suffix}`
     const job = session.job?.kind === "save" ? session.job : null
     return (
         <div>
@@ -22,7 +22,7 @@ export function SavePanel({ context }: { context: Context }) {
             </div>
             {!session.writable && <div className="hint">This recording is in a read-only folder: saving first copies it into Desktop's recordings folder (map-builder/) and writes there.</div>}
             <div className="streams">
-                <span>{name("global_map")} · PointCloud2 · {session.voxels.toLocaleString()} voxels</span>
+                <span>{name("voxels")} · PointCloud2 · {session.voxels.toLocaleString()} voxels</span>
                 <span>{name("path")} · Path · the loop-closed path</span>
                 {session.plans.map((plan) => (
                     <span key={plan.index}>
@@ -30,8 +30,9 @@ export function SavePanel({ context }: { context: Context }) {
                     </span>
                 ))}
                 <span>
-                    {name("annotations")} · String (JSON) · {a.boxes.length} boxes, {a.planes.length} planes, {a.points.length} points, {a.planPoints.length} named spots, {a.areas.length} areas ({a.areas.filter((x) => x.kind === "no-go").length} no-go)
+                    {name("annotations")} · String (JSON) · {a.boxes.length} boxes, {a.planes.length} planes, {a.points.length} points, {a.planPoints.length} named spots, {a.areas.length} areas ({a.areas.filter((x) => x.kind === "no-go").length} no-go), {a.prisms?.length ?? 0} polygons
                 </span>
+                <span>{name("views")} · String (JSON) · {a.views?.length ?? 0} saved 2D views</span>
             </div>
             <div className="row">
                 <button type="button" className="button primary" data-action="save" disabled={session.job?.state === "running"} onClick={() => run(api.save(session.id))}>

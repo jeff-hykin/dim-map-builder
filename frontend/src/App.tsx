@@ -1,26 +1,45 @@
-// The Map Builder page: a stage-by-stage side panel over one 3D view. All state lives server-side (the session), so
-// a refresh comes back to the same recording, stage, map, edits, camera and selection; running jobs keep running and
-// the page reattaches to their progress.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+// The Map Builder page: a map viewer, [ 3D | Split | 2D ], with two orbs over it: Generate (the build settings, the only
+// step needed first) and Edit (a palette of tools: erase, draw, straighten walls, polygons, named points and areas,
+// 3D boxes, cleanup, saved 2D views), used in any order. All state lives server-side (the session), so a refresh comes
+// back to the same recording, view, tool, map, edits, cameras and selection; running jobs keep running and the page
+// reattaches to their progress.
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import { api, events, type Job, type Session } from "./core/api.ts"
 import { MapScene } from "./core/scene.ts"
-import { DEFAULT_UI, STAGES, type Context, type Stage, type UiState } from "./ui/context.ts"
+import type { FloorModel } from "./core/slice.ts"
+import { DEFAULT_UI, TOOLS, type Context, type Modal, type ToolId, type UiState, type ViewMode } from "./ui/context.ts"
 import { OpenPanel } from "./ui/OpenPanel.tsx"
-import { BuildPanel } from "./ui/BuildPanel.tsx"
 import { CleanPanel } from "./ui/CleanPanel.tsx"
 import { AnnotatePanel } from "./ui/AnnotatePanel.tsx"
-import { PlansPanel, PlanView } from "./ui/PlansPanel.tsx"
+import { PlacesPanel } from "./ui/PlacesPanel.tsx"
+import { PolygonPanel } from "./ui/PolygonPanel.tsx"
+import { ModifyPanel } from "./ui/ModifyPanel.tsx"
+import { ViewsPanel } from "./ui/ViewsPanel.tsx"
+import { GenerateModal } from "./ui/GenerateModal.tsx"
 import { SavePanel } from "./ui/SavePanel.tsx"
+import { FIT_2D, View2D } from "./ui/View2D.tsx"
+import { SliceBar } from "./ui/SliceBar.tsx"
 import { JobCard } from "./ui/JobCard.tsx"
+
+const MODES: { id: ViewMode; label: string }[] = [
+    { id: "3d", label: "3D" },
+    { id: "split", label: "Split" },
+    { id: "2d", label: "2D" },
+]
+/** the panes' slide, ms (matches .pane's CSS transition) */
+const SLIDE_MS = 300
 
 export function App() {
     const host = useRef<HTMLDivElement>(null)
+    const viewBox = useRef<HTMLElement>(null)
     const [scene, setScene] = useState<MapScene | null>(null)
     const [session, setSession] = useState<Session | null>(null)
     const [ui, setUiState] = useState<UiState>(DEFAULT_UI)
+    const [modal, setModal] = useState<Modal>(null)
     const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null)
     const [connected, setConnected] = useState(true)
     const [stats, setStats] = useState("")
+    const [floor, setFloor] = useState<FloorModel | null>(null)
     const sessionRef = useRef<Session | null>(null)
     const uiRef = useRef(ui)
     uiRef.current = ui
@@ -87,6 +106,25 @@ export function App() {
         [pushView],
     )
 
+    /** picks a palette tool; a 2D tool brings up the 2D view, a 3D one the 3D view */
+    const pickTool = useCallback(
+        (tool: ToolId) => {
+            const spec = TOOLS.find((t) => t.id === tool)
+            const mode = uiRef.current.mode
+            const next: Partial<UiState> = { tool, paletteOpen: true }
+            if (spec?.view === "2d" && mode !== "2d") {
+                next.mode = "2d"
+            } else if (spec?.view === "3d" && mode === "2d") {
+                next.mode = "3d"
+            }
+            if (scene) {
+                scene.onPick = null
+            }
+            setUi(next)
+        },
+        [setUi, scene],
+    )
+
     /** reloads the session summary, and the map / paths when they changed */
     const refresh = useCallback(async () => {
         const current = sessionRef.current
@@ -118,13 +156,14 @@ export function App() {
             scene.setMap(new Float32Array(0), 0.05)
             scene.setPreview(null)
             const saved = (fresh.view?.ui ?? {}) as Partial<UiState>
-            const restoredUi: UiState = { ...DEFAULT_UI, ...saved, stage: saved.stage ?? (fresh.stage === "map" ? "clean" : "build") }
+            const restoredUi: UiState = { ...DEFAULT_UI, ...saved }
             setUiState(restoredUi)
             scene.applyLook(restoredUi.look)
             scene.showPaths(restoredUi.showPaths)
             scene.setRegion(restoredUi.region)
             await refresh()
             if (fresh.stage !== "map") {
+                setModal("generate")
                 const preview = await api.preview(fresh.id).catch(() => null)
                 if (preview) {
                     scene.setRaw(preview.points, preview.path)
@@ -140,7 +179,7 @@ export function App() {
                 scene.frameMap()
             }
             restoredCamera.current = fresh.id
-            if (restoredUi.selected && (restoredUi.selected.kind === "box" || restoredUi.selected.kind === "plane" || restoredUi.selected.kind === "point" || restoredUi.selected.kind === "region")) {
+            if (restoredUi.selected && ["box", "plane", "point", "region", "prism"].includes(restoredUi.selected.kind)) {
                 scene.select(restoredUi.selected as never)
             }
         },
@@ -151,23 +190,38 @@ export function App() {
         async (recording: { id: string; path: string; name: string; writable?: boolean }) => {
             const fresh = await run(api.open(recording))
             if (fresh) {
+                setModal(null)
                 await adopt({ ...fresh, view: fresh.view ?? null })
-                // opening goes on to the next thing to do, whatever stage the session was last left on
-                setUi({ stage: fresh.stage === "map" ? "clean" : "build" })
             }
         },
-        [run, adopt, setUi],
+        [run, adopt],
     )
 
-    // on load: go back to whatever was open
+    // on load: go back to whatever was open (else pick a recording)
     useEffect(() => {
         if (!scene) {
             return
         }
         api.state()
-            .then((state) => state.session && adopt(state.session))
+            .then((state) => (state.session ? adopt(state.session) : setModal("open")))
             .catch((error) => say(String(error), true))
     }, [scene, adopt, say])
+
+    // the local floor follows the map and the storeys
+    const floorKey = session?.stage === "map" ? `${session.id}:${session.mapVersion}:${session.annotations.floors.map((f) => f.z).join(",")}` : ""
+    useEffect(() => {
+        if (!floorKey || !session) {
+            setFloor(null)
+            return
+        }
+        let cancelled = false
+        api.floor(session.id)
+            .then((model) => !cancelled && setFloor(model))
+            .catch(() => {})
+        return () => {
+            cancelled = true
+        }
+    }, [floorKey])
 
     // server events
     useEffect(() => {
@@ -187,10 +241,10 @@ export function App() {
                 const job = event.job as Job
                 setSession((s) => (s ? { ...s, job } : s))
                 if (job.state === "done" && job.kind === "build") {
-                    say("Map built")
+                    say("Map generated")
+                    setModal(null)
                     await refresh()
                     scene.frameMap()
-                    setUi({ stage: "clean" })
                 } else if (job.state === "done" && job.kind === "save") {
                     say("Saved into the recording")
                     await refresh()
@@ -212,7 +266,7 @@ export function App() {
                 scene.lookAt(event.target, event.distance ?? undefined, !!event.topDown)
             } else if (event.type === "discarded" && current && event.id === current.id) {
                 setSession(null)
-                setUi({ stage: "open" })
+                setModal("open")
             }
         })
     }, [scene, refresh, say, setUi])
@@ -240,6 +294,12 @@ export function App() {
                 run(api.patch(current.id, selection.id, { position: change.center }))
             } else if (selection.kind === "plane") {
                 run(api.patch(current.id, selection.id, { center: change.center, normal: change.normal, size: [change.size[0], change.size[1]] }))
+            } else if (selection.kind === "prism") {
+                const prism = current.annotations.prisms?.find((p) => p.id === selection.id)
+                if (prism) {
+                    // the handle sits on the top face: dragging it sets the height
+                    run(api.patch(current.id, selection.id, { height: Math.max(0.05, +(change.center[2] - prism.base).toFixed(3)) }))
+                }
             }
         }
     }, [scene, pushView, run, setUi])
@@ -271,21 +331,35 @@ export function App() {
             if (mod || event.altKey) {
                 return
             }
-            const stage = STAGES.find((s) => s.key === event.key)
-            if (stage) {
-                setUi({ stage: stage.id })
+            const hasMap = current?.stage === "map"
+            const mode = uiRef.current.mode
+            const tool = TOOLS.find((t) => t.key === event.key && t.key.length === 1)
+            if (event.key === "v" && hasMap) {
+                setUi({ mode: mode === "2d" ? "3d" : "2d" })
+            } else if (event.key === "m" && hasMap) {
+                setUi({ mode: mode === "split" ? "3d" : "split" })
+            } else if (event.key === "e" && hasMap) {
+                setUi({ paletteOpen: !uiRef.current.paletteOpen })
+            } else if (tool && hasMap) {
+                pickTool(tool.id)
             } else if (event.key === "f") {
-                scene?.frameMap()
-            } else if (event.key === "t") {
+                if (mode === "2d") {
+                    window.dispatchEvent(new Event(FIT_2D))
+                } else {
+                    scene?.frameMap()
+                }
+            } else if (event.key === "t" && mode !== "2d") {
                 scene?.topDown()
-            } else if (event.key === "g" || event.key === "w") {
-                scene?.setGizmoMode("translate")
-            } else if (event.key === "r" || event.key === "e") {
-                scene?.setGizmoMode("rotate")
-            } else if (event.key === "s") {
-                scene?.setGizmoMode("scale")
+            } else if (mode !== "2d" && (event.key === "g" || event.key === "r" || event.key === "s")) {
+                scene?.setGizmoMode(event.key === "g" ? "translate" : event.key === "r" ? "rotate" : "scale")
             } else if (event.key === "Escape") {
-                scene?.select(null)
+                if (modal) {
+                    setModal(null)
+                } else if (uiRef.current.tool !== "select") {
+                    pickTool("select")
+                } else {
+                    scene?.select(null)
+                }
                 if (scene) {
                     scene.onPick = null
                 }
@@ -297,68 +371,92 @@ export function App() {
         }
         window.addEventListener("keydown", onKey)
         return () => window.removeEventListener("keydown", onKey)
-    }, [scene, run, setUi])
+    }, [scene, run, setUi, pickTool, modal])
 
-    const context: Context = { session, scene, ui, setUi, run, refresh, openRecording }
+    const context: Context = { session, scene, floor, ui, setUi, pickTool, setModal, run, refresh, openRecording }
     const hasMap = session?.stage === "map"
     const job = session?.job
     const running = job?.state === "running" ? job : null
+    const mode: ViewMode = hasMap ? ui.mode : "3d"
+
+    // the panes: 3D on the left, 2D on the right; their widths slide between modes
+    const [width, setWidth] = useState(0)
+    useLayoutEffect(() => {
+        const box = viewBox.current
+        if (!box) {
+            return
+        }
+        const observer = new ResizeObserver(() => setWidth(box.clientWidth))
+        observer.observe(box)
+        setWidth(box.clientWidth)
+        return () => observer.disconnect()
+    }, [])
+    const share = Math.min(0.7, Math.max(0.2, ui.splitShare))
+    const target = mode === "3d" ? [width, 0] : mode === "2d" ? [0, width] : [Math.round(width * (1 - share)), Math.round(width * share)]
+    // during a slide each pane's content keeps the larger of its old and new width (no resize, no blank frame);
+    // it settles to the new width when the slide ends. A hidden pane keeps its last width.
+    const [inner, setInner] = useState<[number, number]>([0, 0])
+    const settled = useRef<[number, number]>([0, 0])
+    const [sliding, setSliding] = useState(false)
+    useLayoutEffect(() => {
+        const previous = settled.current
+        const next: [number, number] = [target[0] || previous[0] || width, target[1] || previous[1] || width]
+        if (previous[0] === 0 && previous[1] === 0) {
+            settled.current = next
+            setInner(next)
+            return
+        }
+        setInner([Math.max(previous[0], next[0]), Math.max(previous[1], next[1])])
+        setSliding(true)
+        const timer = window.setTimeout(() => {
+            settled.current = next
+            setInner(next)
+            setSliding(false)
+        }, SLIDE_MS + 30)
+        return () => window.clearTimeout(timer)
+    }, [target[0], target[1]])
+    const twoDKind = mode === "split" ? "minimap" : "main"
+    const modeIndex = MODES.findIndex((m) => m.id === mode)
+    const toolSpec = TOOLS.find((t) => t.id === ui.tool)
 
     return (
-        <div className={`app ${ui.stage === "plans" ? "plans" : ""}`}>
+        <div className={`app mode-${mode} ${sliding ? "sliding" : ""}`}>
             <header className="topbar">
                 <span className="title">Map Builder</span>
-                {session && <span className="recording-name" title={session.recordingPath}>{session.name}</span>}
-                <nav className="stages">
-                    {STAGES.map((stage) => (
-                        <button
-                            key={stage.id}
-                            type="button"
-                            className={`stage ${ui.stage === stage.id ? "on" : ""}`}
-                            disabled={(!session && stage.id !== "open") || (!hasMap && ["clean", "annotate", "plans", "save"].includes(stage.id))}
-                            onClick={() => setUi({ stage: stage.id })}
-                            title={`${stage.label} (${stage.key})`}
-                        >
-                            <span className="num">{stage.key}</span>
-                            {stage.label}
+                <button type="button" className="icon-button recording-name" title={session ? `${session.recordingPath} (open another)` : "Open a recording"} onClick={() => setModal("open")} data-action="open">
+                    {session ? `▾ ${session.name}` : "Open a recording…"}
+                </button>
+                <span className="spacer" />
+                <div className="mode-switch" role="tablist" aria-label="view" data-mode-switch={mode}>
+                    <span className="mode-highlight" style={{ transform: `translateX(${modeIndex * 100}%)` }} />
+                    {MODES.map((m) => (
+                        <button key={m.id} type="button" role="tab" aria-selected={mode === m.id} className={mode === m.id ? "on" : ""} disabled={!hasMap} onClick={() => setUi({ mode: m.id })} data-mode={m.id} title={m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)"}>
+                            {m.label}
                         </button>
                     ))}
-                </nav>
+                </div>
                 <span className="spacer" />
                 {session && (
                     <>
                         <button type="button" className="icon-button" disabled={!session.undoLabel} title={session.undoLabel ? `Undo: ${session.undoLabel} (⌘Z)` : "Nothing to undo"} onClick={() => run(api.undo(session.id))}>
-                            ↶ Undo
+                            ↶
                         </button>
                         <button type="button" className="icon-button" disabled={!session.redoLabel} title={session.redoLabel ? `Redo: ${session.redoLabel} (⇧⌘Z)` : "Nothing to redo"} onClick={() => run(api.redo(session.id))}>
-                            ↷ Redo
+                            ↷
                         </button>
                         {hasMap && (
-                            <span className={`badge ${session.unsaved ? "unsaved" : "saved"}`} title={session.savedAt ? `last saved ${new Date(session.savedAt * 1000).toLocaleString()}` : "not saved into the recording yet"}>
-                                {session.unsaved ? "● unsaved changes" : "✓ saved in recording"}
-                            </span>
+                            <button type="button" className={`button save ${session.unsaved ? "unsaved" : "saved"}`} onClick={() => setModal("save")} title={session.savedAt ? `last saved ${new Date(session.savedAt * 1000).toLocaleString()}` : "not saved into the recording yet"} data-action="save-menu">
+                                {session.unsaved ? "● Save" : "✓ Saved"}
+                            </button>
                         )}
                     </>
                 )}
             </header>
-            <div className="workspace">
-                <aside className="side">
-                    {ui.stage === "open" && <OpenPanel context={context} />}
-                    {ui.stage === "build" && <BuildPanel context={context} />}
-                    {ui.stage === "clean" && <CleanPanel context={context} />}
-                    {ui.stage === "annotate" && <AnnotatePanel context={context} />}
-                    {ui.stage === "plans" && <PlansPanel context={context} />}
-                    {ui.stage === "save" && <SavePanel context={context} />}
-                </aside>
-                <section className="view">
-                    <div className="scene" ref={host} />
-                    {ui.stage === "plans" && session && <PlanView context={context} />}
-                    {running && ui.stage !== "build" && (
-                        <div className="floating-job">
-                            <JobCard job={running} onCancel={() => session && run(api.cancel(session.id), "Cancelling…")} />
-                        </div>
-                    )}
-                    {ui.stage !== "plans" && (
+            <section className="view" ref={viewBox}>
+                <div className="pane pane-3d" style={{ width: target[0] }}>
+                    <div className="pane-inner" style={{ width: inner[0] }}>
+                        <div className="scene" ref={host} />
+                        {stats && <div className="view-stats">{stats}</div>}
                         <div className="view-tools">
                             <button type="button" className="icon-button" title="Frame the map (F)" onClick={() => scene?.frameMap()}>
                                 ⤢ Frame
@@ -367,14 +465,118 @@ export function App() {
                                 ⊤ Top
                             </button>
                         </div>
-                    )}
-                    {ui.stage !== "plans" && stats && <div className="view-stats">{stats}</div>}
-                    {toast && <div className={`toast ${toast.error ? "error" : ""}`}>{toast.text}</div>}
-                    {!connected && <div className="connection">Reconnecting to the Map Builder server…</div>}
-                </section>
-            </div>
+                    </div>
+                </div>
+                <div className="pane pane-2d" style={{ width: target[1] }}>
+                    <div className="pane-inner" style={{ width: inner[1] }}>
+                        {hasMap && <View2D key={twoDKind} context={context} kind={twoDKind} />}
+                        {hasMap && mode === "2d" && <SliceBar context={context} />}
+                        {hasMap && mode === "2d" && (
+                            <div className="view-tools">
+                                <button type="button" className="icon-button" title="Frame the map (F)" onClick={() => window.dispatchEvent(new Event(FIT_2D))}>
+                                    ⤢ Frame
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+                {mode === "split" && <SplitDivider context={context} width={width} />}
+
+                <div className="orbs">
+                    <button type="button" className={`orb orb-edit ${ui.paletteOpen ? "open" : ""}`} disabled={!hasMap} onClick={() => setUi({ paletteOpen: !ui.paletteOpen })} title={hasMap ? "Edit tools (E)" : "Generate the map first"} data-orb="edit">
+                        ✎
+                    </button>
+                    <button type="button" className={`orb orb-generate ${session && !hasMap ? "next" : ""} ${running?.kind === "build" ? "busy" : ""}`} disabled={!session} onClick={() => setModal("generate")} title={hasMap ? "Map generation settings (regenerate)" : "Generate the map"} data-orb="generate">
+                        ⟳
+                    </button>
+                </div>
+                {hasMap && ui.paletteOpen && (
+                    <div className="palette" role="toolbar" aria-label="edit tools" data-palette>
+                        {TOOLS.map((tool) => (
+                            <button key={tool.id} type="button" className={ui.tool === tool.id ? "on" : ""} onClick={() => pickTool(tool.id)} title={`${tool.label}${tool.key.length === 1 ? ` (${tool.key.toUpperCase()})` : tool.key ? " (Esc)" : ""}`} data-tool={tool.id}>
+                                {tool.icon}
+                            </button>
+                        ))}
+                    </div>
+                )}
+                {hasMap && ui.paletteOpen && ui.tool !== "select" && toolSpec && (
+                    <div className="tool-panel" data-tool-panel={ui.tool}>
+                        <div className="tool-panel-head">
+                            <span>
+                                {toolSpec.icon} {toolSpec.label}
+                            </span>
+                            <button type="button" className="icon-button" onClick={() => pickTool("select")} title="Close (Esc)">
+                                ✕
+                            </button>
+                        </div>
+                        {ui.tool === "clean" && <CleanPanel context={context} />}
+                        {ui.tool === "annotate" && <AnnotatePanel context={context} />}
+                        {ui.tool === "polygon" && <PolygonPanel context={context} />}
+                        {ui.tool === "places" && <PlacesPanel context={context} />}
+                        {["erase", "brush", "line", "straighten"].includes(ui.tool) && <ModifyPanel context={context} />}
+                        {ui.tool === "views" && <ViewsPanel context={context} />}
+                    </div>
+                )}
+                {running && modal !== "generate" && (
+                    <div className="floating-job">
+                        <JobCard job={running} onCancel={() => session && run(api.cancel(session.id), "Cancelling…")} />
+                    </div>
+                )}
+                {toast && <div className={`toast ${toast.error ? "error" : ""}`}>{toast.text}</div>}
+                {!connected && <div className="connection">Reconnecting to the Map Builder server…</div>}
+            </section>
+            {modal === "generate" && session && <GenerateModal context={context} onClose={() => setModal(null)} />}
+            {modal === "open" && (
+                <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && session && setModal(null)}>
+                    <div className="modal" data-modal="open">
+                        {session && (
+                            <div className="modal-head">
+                                <span />
+                                <button type="button" className="icon-button" onClick={() => setModal(null)}>
+                                    ✕
+                                </button>
+                            </div>
+                        )}
+                        <OpenPanel context={context} />
+                    </div>
+                </div>
+            )}
+            {modal === "save" && session && (
+                <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModal(null)}>
+                    <div className="modal" data-modal="save">
+                        <div className="modal-head">
+                            <span />
+                            <button type="button" className="icon-button" onClick={() => setModal(null)}>
+                                ✕
+                            </button>
+                        </div>
+                        <SavePanel context={context} />
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
 
-export type { Stage }
+/** The split's divider: drag it to give the 2D pane more or less of the width. */
+function SplitDivider({ context, width }: { context: Context; width: number }) {
+    const { ui, setUi } = context
+    const share = Math.min(0.7, Math.max(0.2, ui.splitShare))
+    const start = (event: ReactPointerEvent) => {
+        event.preventDefault()
+        const left = (event.currentTarget.parentElement as HTMLElement).getBoundingClientRect().left
+        let latest = share
+        const move = (e: PointerEvent) => {
+            latest = Math.min(0.7, Math.max(0.2, 1 - (e.clientX - left) / width))
+            ;(document.querySelector(".split-divider") as HTMLElement).style.left = `${Math.round(width * (1 - latest))}px`
+        }
+        const up = () => {
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", up)
+            setUi({ splitShare: +latest.toFixed(3) })
+        }
+        window.addEventListener("pointermove", move)
+        window.addEventListener("pointerup", up)
+    }
+    return <div className="split-divider" style={{ left: Math.round(width * (1 - share)) }} onPointerDown={start} title="drag to resize" />
+}
