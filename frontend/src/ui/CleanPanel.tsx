@@ -100,7 +100,7 @@ export function CleanPanel({ context }: { context: Context }) {
                         </div>
                     ))}
                     <div className="row">
-                        <button type="button" className="button" onClick={() => preview(tool.op)}>
+                        <button type="button" className="button" data-preview={tool.op} onClick={() => preview(tool.op)}>
                             Preview
                         </button>
                         <button type="button" className="button primary" data-op={tool.op} onClick={() => apply(tool.op)}>
