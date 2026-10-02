@@ -19,6 +19,8 @@ const PROTOCOL: &str = "2025-06-18";
 const GUIDE: &str = "Map Builder: a 3D voxel map of a robot's recording, in the 'map' frame: meters, +z up, the floor of the main storey near z = 0 once levelled. \
 Coordinates you pass and get back are map-frame meters. Workflow: get_view (where the user is looking + a labelled screenshot) or get_status (map bounds, floors) -> \
 query_region / find_objects to locate things by geometry -> fit_box to get a tight box around what's in a rough region -> add_box with that box. \
+fit_box keeps the connected piece nearest the region's center, so center the rough region on the object you mean (a chair beside a table): \
+a generous region is fine. Trust fit_box's extents over a screenshot: screenshots are for finding things, not measuring them. \
 Cleanup tools remove voxels and are undoable (undo). 'region' can be \"view\" (what the user sees now), \"all\", or a box {center:[x,y,z], size:[dx,dy,dz], yaw}.";
 
 const GUIDE_BASIC: &str = "Map Builder: a 3D voxel map of a robot's recording, in the 'map' frame: meters, +z up. \

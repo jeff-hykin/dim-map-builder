@@ -239,8 +239,11 @@ pub fn select_walls(points: &[[f32; 3]], normals: &[[f32; 3]], floors: &[f32], m
         .collect()
 }
 
-/// The tightest yawed box around the points inside `region` that aren't floor (what "fit a box to this" means):
-/// yaw from the points' principal horizontal axis, extents from their 2nd–98th percentiles.
+/// The tightest box around the object in `region` (what "fit a box to this" means): the non-floor points inside it,
+/// split into connected pieces (12 cm cells: a one-voxel gap still joins); the piece nearest the region's center is the object, so a rough region
+/// that also clips a neighbour (the table next to a chair) still fits the chair. Yaw: the principal horizontal axis,
+/// unless an axis-aligned box is about as tight (within 10% footprint), since most furniture sits square to the room.
+/// Extents are the 2nd–98th percentiles (stray voxels don't inflate it).
 pub fn fit_box(points: &[[f32; 3]], normals: Option<&[[f32; 3]]>, region: &Box3, floors: &[f32]) -> Option<(Box3, usize)> {
     let inside: Vec<[f32; 3]> = points
         .iter()
@@ -254,6 +257,20 @@ pub fn fit_box(points: &[[f32; 3]], normals: Option<&[[f32; 3]]>, region: &Box3,
     if inside.len() < 4 {
         return None;
     }
+    let inside = nearest_piece(&inside, [region.center[0], region.center[1]], 0.12);
+    if inside.len() < 4 {
+        return None;
+    }
+    let percentile = |mut values: Vec<f32>, q: f32| -> f32 {
+        values.sort_by(|a, b| a.total_cmp(b));
+        values[((values.len() - 1) as f32 * q).round() as usize]
+    };
+    let extents = |yaw: f32| {
+        let (s, c) = yaw.sin_cos();
+        let u: Vec<f32> = inside.iter().map(|p| c * p[0] + s * p[1]).collect();
+        let v: Vec<f32> = inside.iter().map(|p| -s * p[0] + c * p[1]).collect();
+        ((percentile(u.clone(), 0.02), percentile(u, 0.98)), (percentile(v.clone(), 0.02), percentile(v, 0.98)))
+    };
     let n = inside.len() as f32;
     let (mx, my) = (inside.iter().map(|p| p[0]).sum::<f32>() / n, inside.iter().map(|p| p[1]).sum::<f32>() / n);
     let (mut sxx, mut sxy, mut syy) = (0.0f32, 0.0f32, 0.0f32);
@@ -263,21 +280,58 @@ pub fn fit_box(points: &[[f32; 3]], normals: Option<&[[f32; 3]]>, region: &Box3,
         sxy += dx * dy;
         syy += dy * dy;
     }
-    let yaw = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+    let principal = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+    let area = |e: &((f32, f32), (f32, f32))| (e.0 .1 - e.0 .0) * (e.1 .1 - e.1 .0);
+    let (aligned, turned) = (extents(0.0), extents(principal));
+    let (yaw, ((u0, u1), (v0, v1))) = if area(&aligned) <= area(&turned) * 1.1 { (0.0, aligned) } else { (principal, turned) };
     let (s, c) = yaw.sin_cos();
-    let percentile = |mut values: Vec<f32>, q: f32| -> f32 {
-        values.sort_by(|a, b| a.total_cmp(b));
-        values[((values.len() - 1) as f32 * q).round() as usize]
-    };
-    let u: Vec<f32> = inside.iter().map(|p| c * p[0] + s * p[1]).collect();
-    let v: Vec<f32> = inside.iter().map(|p| -s * p[0] + c * p[1]).collect();
     let z: Vec<f32> = inside.iter().map(|p| p[2]).collect();
-    let (u0, u1) = (percentile(u.clone(), 0.02), percentile(u, 0.98));
-    let (v0, v1) = (percentile(v.clone(), 0.02), percentile(v, 0.98));
     let (z0, z1) = (percentile(z.clone(), 0.0), percentile(z, 0.98));
     let (cu, cv) = ((u0 + u1) / 2.0, (v0 + v1) / 2.0);
     let center = [c * cu - s * cv, s * cu + c * cv, (z0 + z1) / 2.0];
     Some((Box3 { center, size: [(u1 - u0).max(0.05), (v1 - v0).max(0.05), (z1 - z0).max(0.05)], yaw }, inside.len()))
+}
+
+/// The connected piece (26-neighbour `cell` cells) with a point nearest `center` (x, y).
+fn nearest_piece(points: &[[f32; 3]], center: [f32; 2], cell: f32) -> Vec<[f32; 3]> {
+    let mut by_key: AHashMap<Key, Vec<usize>> = AHashMap::new();
+    for (index, p) in points.iter().enumerate() {
+        by_key.entry(key_of(*p, cell)).or_default().push(index);
+    }
+    let mut seen: AHashSet<Key> = AHashSet::new();
+    let mut best: (f32, Vec<usize>) = (f32::MAX, Vec::new());
+    for start in by_key.keys() {
+        if !seen.insert(*start) {
+            continue;
+        }
+        let mut stack = vec![*start];
+        let mut members = Vec::new();
+        while let Some(k) = stack.pop() {
+            members.extend(by_key[&k].iter().copied());
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        let n = (k.0 + dx, k.1 + dy, k.2 + dz);
+                        if by_key.contains_key(&n) && seen.insert(n) {
+                            stack.push(n);
+                        }
+                    }
+                }
+            }
+        }
+        // tiny specks don't win by being near the center
+        if members.len() < 4 {
+            continue;
+        }
+        let distance = members.iter().map(|i| (points[*i][0] - center[0]).hypot(points[*i][1] - center[1])).fold(f32::MAX, f32::min);
+        if distance < best.0 || (distance == best.0 && members.len() > best.1.len()) {
+            best = (distance, members);
+        }
+    }
+    if best.1.is_empty() {
+        return points.to_vec();
+    }
+    best.1.iter().map(|i| points[*i]).collect()
 }
 
 #[cfg(test)]
