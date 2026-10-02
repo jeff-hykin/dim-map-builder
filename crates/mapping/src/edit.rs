@@ -101,20 +101,39 @@ fn by_column(points: &[[f32; 3]], voxel: f32, columns: &AHashSet<(i32, i32)>) ->
     found
 }
 
-/// A column's floor: the floor model's estimate, raised to the column's own top up-facing voxel just above it (the
-/// model's 25 cm cells blur stair treads; a column knows its own tread). A couch seat is too high to count.
-fn column_floor(points: &[[f32; 3]], normals: &[[f32; 3]], members: &[u32], estimate: f32) -> f32 {
-    let top = members
-        .iter()
-        .filter(|i| normals[**i as usize][2] > 0.8)
-        .map(|i| points[*i as usize][2])
-        .filter(|z| *z >= estimate - 0.1 && *z <= estimate + 0.22)
-        .fold(f32::NEG_INFINITY, f32::max);
-    if top.is_finite() {
-        top
-    } else {
-        estimate
+/// The up-facing voxels around some columns (one column of margin), for `column_floor`.
+fn surfaces(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, columns: &AHashSet<(i32, i32)>) -> AHashSet<Key> {
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for c in columns {
+        x0 = x0.min(c.0 - 1);
+        y0 = y0.min(c.1 - 1);
+        x1 = x1.max(c.0 + 1);
+        y1 = y1.max(c.1 + 1);
     }
+    points
+        .iter()
+        .zip(normals)
+        .filter(|(_, n)| n[2] > 0.8)
+        .map(|(p, _)| key_of(*p, voxel))
+        .filter(|k| (x0..=x1).contains(&k.0) && (y0..=y1).contains(&k.1))
+        .collect()
+}
+
+/// A column's floor: the floor model's estimate, raised to the highest up-facing *surface* just above it (the model's
+/// 25 cm cells blur stair treads; a column knows its own tread). A surface means most of the 3 x 3 columns around have
+/// an up-facing voxel at that height, so a wall's ragged foot or a couch seat (too high) doesn't count.
+fn column_floor(surfaces: &AHashSet<Key>, column: (i32, i32), voxel: f32, estimate: f32) -> f32 {
+    let (low, high) = (((estimate - 0.1) / voxel).floor() as i32, ((estimate + 0.22) / voxel).floor() as i32);
+    for layer in (low..=high).rev() {
+        let around = (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dy| (dx, dy)))
+            .filter(|(dx, dy)| surfaces.contains(&(column.0 + dx, column.1 + dy, layer)))
+            .count();
+        if around >= 5 {
+            return (layer as f32 + 0.5) * voxel;
+        }
+    }
+    estimate
 }
 
 /// Erase: every voxel in the stroke's columns from one voxel over the local floor up to `reach`, then a floor voxel
@@ -122,13 +141,14 @@ fn column_floor(points: &[[f32; 3]], normals: &[[f32; 3]], members: &[u32], esti
 pub fn erase(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Stroke, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
     let columns: AHashSet<(i32, i32)> = stroke.columns(voxel).into_iter().collect();
     let members = by_column(points, voxel, &columns);
+    let surfaces = surfaces(points, normals, voxel, &columns);
     let mut edit = Edit::default();
     for column in &columns {
         let (x, y) = ((column.0 as f32 + 0.5) * voxel, (column.1 as f32 + 0.5) * voxel);
         let Some(estimate) = floor_at(x, y) else { continue };
         let empty = Vec::new();
         let here = members.get(column).unwrap_or(&empty);
-        let floor = column_floor(points, normals, here, estimate);
+        let floor = column_floor(&surfaces, *column, voxel, estimate);
         let top = reach.top(floor);
         let mut has_floor = false;
         for index in here {
@@ -153,12 +173,12 @@ pub fn draw(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Stro
     let columns: AHashSet<(i32, i32)> = stroke.columns(voxel).into_iter().collect();
     let members = by_column(points, voxel, &columns);
     let occupied: AHashSet<Key> = members.values().flatten().map(|i| key_of(points[*i as usize], voxel)).collect();
+    let surfaces = surfaces(points, normals, voxel, &columns);
     let mut edit = Edit::default();
     for column in &columns {
         let (x, y) = ((column.0 as f32 + 0.5) * voxel, (column.1 as f32 + 0.5) * voxel);
         let Some(estimate) = floor_at(x, y) else { continue };
-        let empty = Vec::new();
-        let floor = column_floor(points, normals, members.get(column).unwrap_or(&empty), estimate);
+        let floor = column_floor(&surfaces, *column, voxel, estimate);
         let (_, direction) = stroke.nearest(x, y);
         let normal = [-direction[1], direction[0], 0.0];
         let bottom = (floor / voxel).floor() as i32 + 1;
@@ -182,12 +202,13 @@ pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [
     let stroke = Stroke { path: vec![from, to], radius: width / 2.0 };
     let columns: AHashSet<(i32, i32)> = stroke.columns(voxel).into_iter().collect();
     let members = by_column(points, voxel, &columns);
+    let surfaces = surfaces(points, normals, voxel, &columns);
     let mut floors: AHashMap<(i32, i32), f32> = AHashMap::new();
     let mut wall: Vec<u32> = Vec::new();
     for (column, here) in &members {
         let (x, y) = ((column.0 as f32 + 0.5) * voxel, (column.1 as f32 + 0.5) * voxel);
         let Some(estimate) = floor_at(x, y) else { continue };
-        let floor = column_floor(points, normals, here, estimate);
+        let floor = column_floor(&surfaces, *column, voxel, estimate);
         floors.insert(*column, floor);
         let top = reach.top(floor);
         wall.extend(here.iter().filter(|i| {
@@ -353,6 +374,29 @@ mod tests {
         // capped at 1 m above the floor, the blob's top stays
         let capped = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.0, 1.0]], radius: 0.3 }, floor, Reach { above_floor: Some(1.0), top: f32::MAX });
         assert_eq!(capped.remove.len(), 6 * 6 * 20);
+    }
+
+    /// on stairs the floor model can be a riser low; erasing must still keep every tread
+    #[test]
+    fn erase_on_stairs_keeps_the_treads() {
+        let (mut points, mut normals) = (Vec::new(), Vec::new());
+        let tread = |i: i32| (i / 6) as f32 * 0.18;
+        for i in 0..60 {
+            for j in 0..20 {
+                points.push([at(i), at(j), crate::floor::tests::snap(tread(i))]);
+                normals.push([0.0, 0.0, 1.0]);
+            }
+        }
+        let treads = points.len();
+        // a person standing on the stairs
+        for k in 1..30 {
+            points.push([at(30), at(10), crate::floor::tests::snap(tread(30)) + k as f32 * 0.05]);
+            normals.push([1.0, 0.0, 0.0]);
+        }
+        let model_low = |x: f32, _y: f32| Some(tread((x / 0.05) as i32) - 0.15);
+        let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[0.2, 0.5], [2.8, 0.5]], radius: 0.4 }, model_low, Reach { above_floor: Some(1.8), top: f32::MAX });
+        assert!(edit.remove.iter().all(|i| *i as usize >= treads), "a tread was erased");
+        assert_eq!(edit.remove.len(), 29, "the person goes");
     }
 
     #[test]

@@ -123,12 +123,16 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .mode-switch { position: relative; display: inline-grid; grid-template-columns: repeat(3, 76px); border: 1px solid var(--line); border-radius: 16px; padding: 2px; background: var(--card); }
 .mode-switch button { position: relative; z-index: 1; background: none; border: none; padding: 5px 0; cursor: pointer; color: var(--muted); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; transition: color 200ms; }
 .mode-switch button.on { color: #06090f; font-weight: 700; }
+/* no browser focus ring on click; keyboard focus gets a ring in the pill's own shape and color */
+button:focus { outline: none; }
+.mode-switch button:focus-visible { box-shadow: inset 0 0 0 2px rgba(122, 240, 168, 0.55); border-radius: 14px; }
+.orb:focus-visible, .palette button:focus-visible, .button:focus-visible, .icon-button:focus-visible, .seg button:focus-visible { box-shadow: 0 0 0 2px rgba(122, 240, 168, 0.55); }
 .mode-switch button:disabled { opacity: 0.4; cursor: default; }
 .mode-highlight { position: absolute; top: 2px; left: 2px; width: 76px; bottom: 2px; border-radius: 14px; background: var(--accent); transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1); }
 
 /* ── the orbs and the edit palette ── */
-.orbs { position: absolute; left: 14px; top: 14px; display: flex; gap: 10px; z-index: 6; }
-.orb { width: 46px; height: 46px; border-radius: 50%; border: 3px solid var(--accent); background: rgba(13, 20, 30, 0.92); color: var(--fg); font-size: 19px; cursor: pointer; box-shadow: 0 0 0 4px rgba(122, 240, 168, 0.12), 0 8px 24px -8px rgba(0, 0, 0, 0.8); transition: transform 150ms, box-shadow 150ms, background 150ms; }
+.orbs { position: absolute; left: 26px; top: 26px; display: flex; gap: 14px; z-index: 6; }
+.orb { width: 68px; height: 68px; border-radius: 50%; border: 3px solid var(--accent); background: rgba(13, 20, 30, 0.92); color: var(--fg); font-size: 26px; cursor: pointer; box-shadow: 0 0 0 4px rgba(122, 240, 168, 0.12), 0 8px 24px -8px rgba(0, 0, 0, 0.8); transition: transform 150ms, box-shadow 150ms, background 150ms; }
 .orb:hover:not(:disabled) { transform: scale(1.06); }
 .orb.open { background: var(--accent); color: #06090f; }
 .orb:disabled { opacity: 0.35; cursor: default; }
@@ -137,12 +141,12 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .orb-generate.busy { animation: orb-spin 1.4s linear infinite; }
 @keyframes orb-pulse { 50% { box-shadow: 0 0 0 10px rgba(127, 200, 248, 0.25), 0 8px 24px -8px rgba(0, 0, 0, 0.8); } }
 @keyframes orb-spin { to { transform: rotate(360deg); } }
-.palette { position: absolute; left: 17px; top: 72px; display: flex; flex-direction: column; gap: 4px; z-index: 6; padding: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; animation: palette-in 180ms ease-out; }
+.palette { position: absolute; left: 36px; top: 108px; display: flex; flex-direction: column; gap: 4px; z-index: 6; padding: 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; animation: palette-in 180ms ease-out; }
 @keyframes palette-in { from { opacity: 0; transform: translateY(-8px); } }
 .palette button { width: 34px; height: 34px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--fg); font-size: 16px; cursor: pointer; }
 .palette button:hover { border-color: var(--line); background: var(--raised); }
 .palette button.on { background: var(--accent); color: #06090f; }
-.tool-panel { position: absolute; left: 66px; top: 72px; width: 330px; max-height: calc(100% - 90px); overflow: auto; z-index: 6; background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 8px 12px 12px; box-shadow: 0 12px 36px -10px rgba(0, 0, 0, 0.8); }
+.tool-panel { position: absolute; left: 92px; top: 108px; width: 330px; max-height: calc(100% - 126px); overflow: auto; z-index: 6; background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); padding: 8px 12px 12px; box-shadow: 0 12px 36px -10px rgba(0, 0, 0, 0.8); }
 .tool-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 650; letter-spacing: 0.06em; margin-bottom: 6px; }
 
 /* ── modals ── */
@@ -157,7 +161,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 
 /* ── the 2D view's slice bar ── */
 .slice-bar { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 4; display: flex; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--border); padding: 6px 10px; border-radius: 4px; white-space: nowrap; }
-.app.mode-2d .slice-bar { left: calc(50% + 40px); }
+.app.mode-2d .slice-bar { left: calc(50% + 60px); }
 .slice-bar input.number { width: 62px; }
 .dual-range { position: relative; width: 170px; height: 22px; }
 .dual-range .track { position: absolute; left: 0; right: 0; top: 9px; height: 4px; background: var(--line); border-radius: 2px; }
@@ -213,6 +217,9 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .plan-view, .minimap-view { position: absolute; inset: 0; overflow: hidden; z-index: 1; background: #0a0f17; touch-action: none; }
 body.light .plan-view, body.light .minimap-view { background: #dfe5eb; }
 .plan-view canvas, .minimap-view canvas { position: absolute; inset: 0; }
+/* the minimap: a rounded frame with a soft vignette */
+.minimap-view { inset: 10px; border-radius: 14px; border: 1px solid rgba(122, 240, 168, 0.22); }
+.minimap-view::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 42px 6px rgba(3, 5, 9, 0.75); }
 
 .connection { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); background: rgba(255, 95, 109, 0.15); border: 1px solid rgba(255, 95, 109, 0.5); padding: 4px 10px; z-index: 7; }
 

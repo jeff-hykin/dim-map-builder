@@ -192,12 +192,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         // frame the content until the user moves the view (always, for the minimap)
         if (!view.current || minimap || autoFit.current) {
             autoFit.current = true
-            let [x0, y0, x1, y1] = raster.content ?? [raster.origin[0], raster.origin[1], raster.origin[0] + raster.width * raster.resolution, raster.origin[1] + raster.height * raster.resolution]
-            // the minimap always shows where the 3D camera stands, even when it's outside the map
-            if (minimap && scene) {
-                const { camera } = scene.footprint(0)
-                ;[x0, y0, x1, y1] = [Math.min(x0, camera[0] - 1), Math.min(y0, camera[1] - 1), Math.max(x1, camera[0] + 1), Math.max(y1, camera[1] + 1)]
-            }
+            const [x0, y0, x1, y1] = raster.content ?? [raster.origin[0], raster.origin[1], raster.origin[0] + raster.width * raster.resolution, raster.origin[1] + raster.height * raster.resolution]
             const pad = minimap ? 8 : 40
             const pixelsPerMeter = Math.min((width - pad * 2) / Math.max(1, x1 - x0), (height - pad * 2) / Math.max(1, y1 - y0))
             view.current = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, pixelsPerMeter }
@@ -363,39 +358,71 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             g.stroke()
             g.lineCap = "butt"
         }
-        // the 3D camera on the minimap: what it sees on this storey's floor, and where it stands
-        if (minimap && scene && floor) {
-            const level = floor.storeys[storey]?.level ?? 0
-            const footprint = scene.footprint(level)
+        // the 3D camera on the minimap, like a game's player marker: a chevron where the camera stands pointing the way
+        // it looks, with a short view-cone wedge (fixed on screen); off the map it sits on the edge, pointing out to it
+        if (minimap && scene) {
+            const { camera, target } = scene.footprint(0)
+            const lens = scene.viewer.camera
+            const halfFov = Math.min(1.3, Math.atan(Math.tan(((lens.fov * Math.PI) / 180) / 2) * lens.aspect))
+            const angle = -Math.atan2(target[1] - camera[1], target[0] - camera[0])
+            const [rx, ry] = toScreen(camera[0], camera[1])
+            const margin = 16
+            const px = Math.min(width - margin, Math.max(margin, rx))
+            const py = Math.min(height - margin, Math.max(margin, ry))
+            const offMap = px !== rx || py !== ry
+            const accent = "122, 240, 168"
+            const [tx, ty] = toScreen(target[0], target[1])
+            if (!offMap) {
+                g.strokeStyle = `rgba(${accent}, 0.55)`
+                g.lineWidth = 1.2
+                g.beginPath()
+                g.arc(tx, ty, 3.5, 0, Math.PI * 2)
+                g.stroke()
+            }
+            g.save()
+            g.translate(px, py)
+            g.rotate(angle)
+            const reach = 74
+            const cone = g.createRadialGradient(0, 0, 6, 0, 0, reach)
+            cone.addColorStop(0, `rgba(${accent}, 0.42)`)
+            cone.addColorStop(1, `rgba(${accent}, 0)`)
+            g.fillStyle = cone
             g.beginPath()
-            footprint.corners.forEach(([x, y], index) => {
-                const [sx, sy] = toScreen(x, y)
-                index ? g.lineTo(sx, sy) : g.moveTo(sx, sy)
-            })
+            g.moveTo(0, 0)
+            g.arc(0, 0, reach, -halfFov, halfFov)
             g.closePath()
-            g.fillStyle = "rgba(255, 209, 102, 0.08)"
             g.fill()
-            g.strokeStyle = "rgba(255, 209, 102, 0.85)"
-            g.lineWidth = 1.2
-            g.stroke()
-            const [cx, cy] = toScreen(...footprint.camera)
-            const [tx, ty] = toScreen(...footprint.target)
-            g.strokeStyle = "#ffd166"
+            g.shadowColor = `rgba(${accent}, 0.9)`
+            g.shadowBlur = 12
+            g.fillStyle = `rgb(${accent})`
+            g.globalAlpha = offMap ? 0.75 : 1
             g.beginPath()
-            g.moveTo(cx, cy)
-            g.lineTo(tx, ty)
-            g.stroke()
-            g.fillStyle = "#ffd166"
-            g.beginPath()
-            g.arc(cx, cy, 4.5, 0, Math.PI * 2)
+            g.moveTo(12, 0)
+            g.lineTo(-8, -8.5)
+            g.lineTo(-3.5, 0)
+            g.lineTo(-8, 8.5)
+            g.closePath()
             g.fill()
+            g.shadowBlur = 0
             g.strokeStyle = "#06090f"
             g.lineWidth = 1.5
             g.stroke()
-            g.beginPath()
-            g.arc(tx, ty, 3, 0, Math.PI * 2)
-            g.strokeStyle = "#ffd166"
-            g.stroke()
+            g.restore()
+            if (offMap) {
+                // a small pointer on the edge, toward where the camera really is
+                const away = Math.atan2(ry - py, rx - px)
+                g.save()
+                g.translate(px + Math.cos(away) * 11, py + Math.sin(away) * 11)
+                g.rotate(away)
+                g.fillStyle = `rgba(${accent}, 0.9)`
+                g.beginPath()
+                g.moveTo(5, 0)
+                g.lineTo(-3, -4)
+                g.lineTo(-3, 4)
+                g.closePath()
+                g.fill()
+                g.restore()
+            }
         }
         if (host.current && slice) {
             host.current.dataset.sliceMs = slice.milliseconds.toFixed(1)
