@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type PrismAnnotation, type SavedView, type Slice } from "../core/api.ts"
 import { Store, useStore } from "../core/store.ts"
-import { computeSlice, floorHeightImage, PLAN_STYLE, sliceLayers, type FloorModel } from "../core/slice.ts"
+import { columnFloors, computeSlice, floorHeightImage, PLAN_STYLE, sliceLayers, type FloorModel } from "../core/slice.ts"
 import type { Context, View2d } from "./context.ts"
 import { modifyTool, planTool, polygonTool } from "./tools.ts"
 
@@ -106,6 +106,18 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
     const yaw = shownSlice?.yaw ?? 0
     const [cosYaw, sinYaw] = [Math.cos(yaw), Math.sin(yaw)]
     const storey = minimap && scene ? storeyAt(floor, scene.viewer.controls.target.z) : Math.min(ui.planFloor, Math.max(0, (floor?.storeys.length ?? 1) - 1))
+    // each column's own walkable floor: once per map version and storey, not per slider move
+    const ownFloors = useMemo(() => {
+        if (!scene || !floor || !floor.storeys.length) {
+            return null
+        }
+        const started = performance.now()
+        const computed = columnFloors(scene.map.positions as Float32Array, floor, storey)
+        if (host.current) {
+            host.current.dataset.columnFloorMs = (performance.now() - started).toFixed(1)
+        }
+        return computed
+    }, [scene, floor, storey, mapRevision])
     // the slice raster, recomputed when the map, the floor or the range change
     const slice = useMemo(() => {
         if (!scene || !floor || !floor.storeys.length) {
@@ -113,12 +125,12 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         }
         const started = performance.now()
         const range = ui.slice
-        const computed = computeSlice(scene.map.positions as Float32Array, floor, storey, range, 0.05, shownSlice)
+        const computed = computeSlice(scene.map.positions as Float32Array, floor, storey, range, 0.05, shownSlice, range.follow ? ownFloors : null)
         const layers = sliceLayers(computed)
         const kindAt = (column: number, row: number) => computed.cells[(computed.height - 1 - row) * computed.width + column]
         const raster: Raster = { ...layers, origin: computed.origin, resolution: computed.resolution, width: computed.width, height: computed.height, content: contentBounds(kindAt, computed.width, computed.height, computed.origin, computed.resolution) }
         return { raster, milliseconds: performance.now() - started }
-    }, [scene, floor, storey, ui.slice.follow, ui.slice.z0, ui.slice.z1, mapRevision, shownSlice])
+    }, [scene, floor, storey, ui.slice.follow, ui.slice.z0, ui.slice.z1, mapRevision, shownSlice, ownFloors])
 
     const heightImage = useMemo(() => (floor && ui.floorOverlay && !minimap ? floorHeightImage(floor, storey) : null), [floor, storey, ui.floorOverlay, minimap])
 

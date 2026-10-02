@@ -71,7 +71,62 @@ export interface Slice {
 
 /** Rasterizes `points` (xyz f32) at `resolution`: a cell is "in the slice" when a voxel there is within the range,
  * "floor" when a voxel there is on the storey's local floor. */
-export function computeSlice(points: Float32Array, model: FloorModel, storey: number, range: SliceRange, resolution = 0.05, clip: MapSlice | null = null): Slice {
+/** Each 5 cm column's own walkable floor on a storey: the highest horizontal surface (a voxel with most of its 3 x 3
+ * neighbours at the same height and little just above) within 0.3 m of the floor model there, so a stair tread or a step the 25 cm model
+ * smooths over counts as floor. NaN where the column has none (the model's floor is used). Computed once per map and
+ * storey; the slice reads it per voxel. */
+export function columnFloors(points: Float32Array, model: FloorModel, storey: number, resolution = 0.05): Float32Array {
+    const origin = model.origin
+    const width = Math.ceil((model.width * model.cell) / resolution)
+    const height = Math.ceil((model.height * model.cell) / resolution)
+    const floors = new Float32Array(width * height).fill(NaN)
+    // occupancy by (column, row, layer)
+    const occupied = new Set<number>()
+    const plane = width * height
+    const keyOf = (column: number, row: number, layer: number) => (layer + 4000) * plane + row * width + column
+    for (let index = 0; index < points.length; index += 3) {
+        const column = Math.floor((points[index] - origin[0]) / resolution)
+        const row = Math.floor((points[index + 1] - origin[1]) / resolution)
+        if (column >= 0 && row >= 0 && column < width && row < height) {
+            occupied.add(keyOf(column, row, Math.floor(points[index + 2] / resolution)))
+        }
+    }
+    for (let index = 0; index < points.length; index += 3) {
+        const [x, y, z] = [points[index], points[index + 1], points[index + 2]]
+        const column = Math.floor((x - origin[0]) / resolution)
+        const row = Math.floor((y - origin[1]) / resolution)
+        if (column < 1 || row < 1 || column >= width - 1 || row >= height - 1) {
+            continue
+        }
+        const pixel = row * width + column
+        if (floors[pixel] >= z) {
+            continue
+        }
+        const grid = floorAt(model, storey, x, y)
+        if (grid === null || Math.abs(z - grid) > 0.3) {
+            continue
+        }
+        const layer = Math.floor(z / resolution)
+        const count = (l: number) => {
+            let n = 0
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (occupied.has(keyOf(column + dx, row + dy, l))) {
+                        n++
+                    }
+                }
+            }
+            return n
+        }
+        // a top surface: 7 of the 3 x 3 here, little just above (a wall isn't one)
+        if (count(layer) >= 7 && count(layer + 1) <= 3) {
+            floors[pixel] = z
+        }
+    }
+    return floors
+}
+
+export function computeSlice(points: Float32Array, model: FloorModel, storey: number, range: SliceRange, resolution = 0.05, clip: MapSlice | null = null, ownFloors: Float32Array | null = null): Slice {
     const [cos, sin] = [Math.cos(clip?.yaw ?? 0), Math.sin(clip?.yaw ?? 0)]
     const started = performance.now()
     const origin: [number, number] = [model.origin[0], model.origin[1]]
@@ -96,8 +151,10 @@ export function computeSlice(points: Float32Array, model: FloorModel, storey: nu
                 continue
             }
         }
-        const floor = floorAt(model, storey, x, y)
         const pixel = row * width + column
+        // the column's own walkable surface when it has one, else the model's floor
+        const own = ownFloors ? ownFloors[pixel] : NaN
+        const floor = own === own ? own : floorAt(model, storey, x, y)
         if (floor !== null && Math.abs(z - floor) <= 0.1) {
             if (cells[pixel] === 0) {
                 cells[pixel] = 1

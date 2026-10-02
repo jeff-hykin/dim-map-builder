@@ -3,7 +3,7 @@
 //! and its ends meet the walls they run into, at any angle: an L corner fills out to the other wall's outer face, a
 //! wall ending on a through-wall (T) stops at its near face. Walls crossing the prism, furniture against it and the
 //! other walls are left alone; specks, fringe and stair-step edges hugging the wall go.
-use crate::edit::{center, column_floor, surfaces, Edit, Reach};
+use crate::edit::{center, Edit, Reach};
 use crate::voxels::{key_of, Key};
 use ahash::{AHashMap, AHashSet};
 
@@ -217,7 +217,7 @@ fn other_wall(points: &[[f32; 2]], line: &Line, voxel: f32) -> Option<(Line, f32
 
 /// See the module docs. `width` is the brush's band; `reach` caps how high the wall is rebuilt and cleaned.
 #[allow(clippy::too_many_arguments)]
-pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [f32; 2], to: [f32; 2], width: f32, thickness: Option<f32>, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
+pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: [f32; 2], to: [f32; 2], width: f32, thickness: Option<f32>, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
     let mut edit = Edit::default();
     let length = (to[0] - from[0]).hypot(to[1] - from[1]);
     if length < voxel {
@@ -234,13 +234,34 @@ pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [
         })
         .collect();
     // the wall-height voxels among them: above their column's floor and under the reach
-    let columns: AHashSet<(i32, i32)> = near.iter().map(|i| ((points[*i as usize][0] / voxel).floor() as i32, (points[*i as usize][1] / voxel).floor() as i32)).collect();
-    let floors_seen = surfaces(points, normals, voxel, &columns);
+    let occupied: AHashSet<Key> = near.iter().map(|i| key_of(points[*i as usize], voxel)).collect();
+    // for finding floors, the wall under the stroke doesn't count (it's about to be rebuilt; its foot isn't floor)
+    let around_floor: AHashSet<Key> = near
+        .iter()
+        .filter(|i| {
+            let p = points[**i as usize];
+            let (t, d) = (drawn.along([p[0], p[1]]), drawn.across([p[0], p[1]]));
+            !((-grow..=length + grow).contains(&t) && d.abs() <= width / 2.0)
+        })
+        .map(|i| key_of(points[*i as usize], voxel))
+        .collect();
     let mut floors: AHashMap<(i32, i32), Option<f32>> = AHashMap::new();
     let mut floor_of = |column: (i32, i32)| -> Option<f32> {
         *floors.entry(column).or_insert_with(|| {
             let (x, y) = ((column.0 as f32 + 0.5) * voxel, (column.1 as f32 + 0.5) * voxel);
-            floor_at(x, y).map(|estimate| column_floor(&floors_seen, column, voxel, estimate))
+            floor_at(x, y).map(|estimate| {
+                // the column's own walkable surface: the highest layer within 0.3 m of the model's floor where most of
+                // the 3 x 3 columns around are occupied and little just above it (a landing or tread the 25 cm model sits a few cm off)
+                let (low, high) = (((estimate - 0.3) / voxel).floor() as i32, ((estimate + 0.3) / voxel).floor() as i32);
+                (low..=high)
+                    .rev()
+                    .find(|layer| {
+                        // a top surface: 7 of the 3 x 3 occupied here, little of it just above (a wall isn't one)
+                        let count = |l: i32| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| around_floor.contains(&(column.0 + dx, column.1 + dy, l))).count();
+                        count(*layer) >= 7 && count(layer + 1) <= 3
+                    })
+                    .map_or(estimate, |layer| (layer as f32 + 0.5) * voxel)
+            })
         })
     };
     let wallish: Vec<u32> = near
@@ -558,7 +579,15 @@ pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [
         let (a, b) = (line.along(from), line.along(to));
         (slab_start.min(a.min(b)), slab_end.max(a.max(b)))
     };
-    let outside: Vec<u32> = wallish.iter().copied().filter(|i| line.across(xy(i)).abs() > half && !belongs_to_other(xy(i))).collect();
+    // the voxel just over a column's floor, in a layer spread around it, is the floor's own thickness: it neither
+    // joins pieces nor goes (a speck there still goes)
+    let floor_layer = |i: &u32| {
+        let p = points[*i as usize];
+        let k = key_of(p, voxel);
+        let spread = |layer: i32| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| occupied.contains(&(k.0 + dx, k.1 + dy, layer))).count();
+        spread(k.2) >= 5 && spread(k.2 + 1) <= 3 && floors.get(&(k.0, k.1)).copied().flatten().is_some_and(|floor| p[2] <= floor + 1.5 * voxel)
+    };
+    let outside: Vec<u32> = wallish.iter().copied().filter(|i| line.across(xy(i)).abs() > half && !belongs_to_other(xy(i)) && !floor_layer(i)).collect();
     let keys: AHashMap<Key, usize> = outside.iter().enumerate().map(|(k, i)| (key_of(points[*i as usize], voxel), k)).collect();
     let mut piece = vec![usize::MAX; outside.len()];
     let mut keep_piece: Vec<bool> = Vec::new();
@@ -616,7 +645,7 @@ pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [
         if t < clean_start || t > clean_end || d.abs() > clear || !inside_cuts(p, 0.5 * voxel) {
             continue;
         }
-        if belongs_to_other(p) || kept_piece.get(i).copied().unwrap_or(false) {
+        if belongs_to_other(p) || kept_piece.get(i).copied().unwrap_or(false) || (line.across(p).abs() > half && floor_layer(i)) {
             continue;
         }
         let key = key_of(points[*i as usize], voxel);
