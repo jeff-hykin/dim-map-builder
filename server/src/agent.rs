@@ -94,7 +94,9 @@ pub async fn manifest() -> Json<Value> {
         .iter()
         .map(|tool| {
             let name = tool["name"].as_str().unwrap_or_default();
-            let mut endpoint = json!({ "method": "POST", "path": format!("agent/{name}"), "description": tool["description"], "params": tool["inputSchema"] });
+            // the guide is the app's description, said once
+            let description = tool["description"].as_str().unwrap_or_default().replace(&format!("{GUIDE}\n\n"), "");
+            let mut endpoint = json!({ "method": "POST", "path": format!("agent/{name}"), "description": description, "params": tool["inputSchema"] });
             if let Some(role) = role(name) {
                 endpoint["role"] = json!(role);
             }
