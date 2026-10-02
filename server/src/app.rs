@@ -84,7 +84,7 @@ impl App {
     }
 
     /// Opens (or resumes) the session for a recording. A recording with an earlier save and no session restores it.
-    pub fn open(&self, recording_id: &str, path: &str, name: &str) -> Result<Arc<Mutex<Workspace>>> {
+    pub fn open(&self, recording_id: &str, path: &str, name: &str, writable: bool) -> Result<Arc<Mutex<Workspace>>> {
         let path = PathBuf::from(path);
         dimos_recording::format_of(&path)?;
         if !path.is_file() {
@@ -99,6 +99,7 @@ impl App {
                     id: id.clone(),
                     recording_id: recording_id.into(),
                     recording_path: path.display().to_string(),
+                    writable,
                     name: if name.is_empty() { path.file_name().unwrap_or_default().to_string_lossy().to_string() } else { name.into() },
                     stage: "raw".into(),
                     history: vec![format!("Opened {}", path.display())],
@@ -346,6 +347,31 @@ impl App {
         let session = id.to_string();
         self.start_job(id, "save", move |app, report, _cancel| {
             let shared = app.require(&session)?;
+            // a recording in a read-only folder is copied into the recordings folder first; the session moves to it
+            let (writable, source) = {
+                let ws = shared.lock().unwrap();
+                (ws.session.writable, ws.session.recording_path.clone())
+            };
+            if !writable {
+                let source = std::path::PathBuf::from(&source);
+                let dir = app.recordings_dir.join("map-builder");
+                std::fs::create_dir_all(&dir)?;
+                let stem = source.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                let extension = source.extension().unwrap_or_default().to_string_lossy().to_string();
+                let mut target = dir.join(format!("{stem}.{extension}"));
+                let mut n = 2;
+                while target.exists() {
+                    target = dir.join(format!("{stem}-{n}.{extension}"));
+                    n += 1;
+                }
+                report(Progress { stage: "Copying the recording into the recordings folder".into(), stage_index: 0, stage_count: 1, done: 0, total: 1, note: target.display().to_string() });
+                std::fs::copy(&source, &target).with_context(|| format!("copying {} to {}", source.display(), target.display()))?;
+                let mut ws = shared.lock().unwrap();
+                ws.session.recording_path = target.display().to_string();
+                ws.session.recording_id = format!("map-builder/{}", target.file_name().unwrap_or_default().to_string_lossy());
+                ws.session.writable = true;
+                ws.session.history.push(format!("{} is read-only: saving into a copy, {}", source.display(), target.display()));
+            }
             // a snapshot, so the page can keep reading while a big mcap is rewritten
             let snapshot = shared.lock().unwrap().clone();
             persist::save(&snapshot, |done, total| {

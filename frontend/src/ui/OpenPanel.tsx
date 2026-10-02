@@ -76,6 +76,7 @@ export function OpenPanel({ context }: { context: Context }) {
                             <div className="meta">
                                 {recording.format} · {size(recording.size)} · {age(recording.modified)}
                                 {recording.id.includes("/") ? ` · ${recording.id.split("/")[0]}` : ""}
+                                {!recording.writable ? " · read-only (saving makes a copy)" : ""}
                             </div>
                         </button>
                         {details?.id === recording.id && (
@@ -96,7 +97,7 @@ export function OpenPanel({ context }: { context: Context }) {
                                     data-open={recording.id}
                                     onClick={async () => {
                                         setOpening(recording.id)
-                                        await context.openRecording({ id: recording.id, path: recording.path, name: recording.name })
+                                        await context.openRecording({ id: recording.id, path: recording.path, name: recording.name, writable: recording.writable })
                                         setOpening(null)
                                     }}
                                 >

@@ -143,6 +143,7 @@ export interface Session {
     id: string
     recordingId: string
     recordingPath: string
+    writable: boolean
     name: string
     stage: "raw" | "map"
     build: BuildSummary | null
@@ -196,7 +197,7 @@ export const recordings = {
 
 export const api = {
     state: () => call<{ active: string | null; session: Session | null; recordingsDir: string }>("api/state"),
-    open: (recording: { id: string; path: string; name: string }) => call<Session>("api/open", json(recording)),
+    open: (recording: { id: string; path: string; name: string; writable?: boolean }) => call<Session>("api/open", json(recording)),
     session: (id: string) => call<Session>(`api/sessions/${id}`),
     discard: (id: string) => call(`api/sessions/${id}`, { method: "DELETE" }),
     points: async (id: string): Promise<Float32Array> => {

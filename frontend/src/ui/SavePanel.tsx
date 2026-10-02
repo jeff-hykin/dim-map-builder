@@ -20,6 +20,7 @@ export function SavePanel({ context }: { context: Context }) {
                 <h2>Save into the recording</h2>
                 <p>Written as new {db ? "streams" : "channels"} in {session.name}, beside its own data (which isn't touched). Saving again replaces them. Your working copy is always kept, saved or not.</p>
             </div>
+            {!session.writable && <div className="hint">This recording is in a read-only folder: saving first copies it into Desktop's recordings folder (map-builder/) and writes there.</div>}
             <div className="streams">
                 <span>{name("global_map")} · PointCloud2 · {session.voxels.toLocaleString()} voxels</span>
                 <span>{name("path")} · Path · the loop-closed path</span>

@@ -148,7 +148,7 @@ export function App() {
     )
 
     const openRecording = useCallback(
-        async (recording: { id: string; path: string; name: string }) => {
+        async (recording: { id: string; path: string; name: string; writable?: boolean }) => {
             const fresh = await run(api.open(recording))
             if (fresh) {
                 await adopt({ ...fresh, view: fresh.view ?? null })

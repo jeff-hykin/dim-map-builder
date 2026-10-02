@@ -42,5 +42,5 @@ export interface Context {
     /** runs `action`, shows its error (or `done` message) as a toast */
     run: <T>(action: Promise<T>, done?: string | ((value: T) => string)) => Promise<T | undefined>
     refresh: () => Promise<void>
-    openRecording: (recording: { id: string; path: string; name: string }) => Promise<void>
+    openRecording: (recording: { id: string; path: string; name: string; writable?: boolean }) => Promise<void>
 }

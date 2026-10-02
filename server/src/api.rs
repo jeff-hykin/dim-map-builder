@@ -115,11 +115,14 @@ struct OpenBody {
     path: String,
     #[serde(default)]
     name: String,
+    /// Desktop's `writable` for the recording (extra folders are read-only)
+    #[serde(default = "yes")]
+    writable: bool,
 }
 
 async fn open(State(app): State<Arc<App>>, Json(body): Json<OpenBody>) -> Result<Json<Value>> {
     let app2 = app.clone();
-    let workspace = tokio::task::spawn_blocking(move || app2.open(&body.id, &body.path, &body.name)).await??;
+    let workspace = tokio::task::spawn_blocking(move || app2.open(&body.id, &body.path, &body.name, body.writable)).await??;
     let value = summary(&app, &workspace.lock().unwrap());
     Ok(Json(value))
 }

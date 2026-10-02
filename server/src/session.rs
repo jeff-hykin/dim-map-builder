@@ -175,6 +175,9 @@ pub struct Session {
     pub id: String,
     pub recording_id: String,
     pub recording_path: String,
+    /// false for recordings in one of Desktop's read-only folders: saving writes a copy into the recordings folder
+    #[serde(default = "yes")]
+    pub writable: bool,
     pub name: String,
     /// "raw" (nothing built yet), "map" (a map to edit)
     pub stage: String,
@@ -204,6 +207,10 @@ pub struct MapData {
     pub raw_path: Vec<[f32; 3]>,
     pub corrected_path: Vec<[f32; 3]>,
     pub loops: Vec<([f32; 3], [f32; 3])>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 pub fn session_id(recording_path: &Path) -> String {
