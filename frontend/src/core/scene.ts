@@ -630,6 +630,13 @@ export class MapScene {
         }
     }
 
+    /** Where a map-frame point is on the page (css pixels), for tests and overlays. */
+    toPage(x: number, y: number, z: number): [number, number] {
+        const rect = this.viewer.renderer.domElement.getBoundingClientRect()
+        const v = new THREE.Vector3(x, y, z).project(this.viewer.camera)
+        return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height]
+    }
+
     /** Where the camera looks on the horizontal plane at `z`: the camera's x, y, and the view's corners projected onto
      * the plane (a corner above the horizon is cut off at `far` meters). */
     footprint(z: number, far = 40): { camera: [number, number]; target: [number, number]; corners: [number, number][] } {

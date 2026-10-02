@@ -75,6 +75,8 @@ export function App() {
         }
         const created = new MapScene(host.current)
         setScene(created)
+        // reachable from the console and the end-to-end tests
+        ;(window as unknown as { mapBuilderScene: MapScene }).mapBuilderScene = created
         const unsubscribe = created.viewer.stats.subscribe(() => {
             const s = created.viewer.stats.get()
             setStats(`${s.fps} fps · ${(s.points / 1e6).toFixed(2)}M voxels`)
