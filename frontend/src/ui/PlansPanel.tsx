@@ -298,8 +298,12 @@ export function PlanView({ context }: { context: Context }) {
             }
         }
         const up = (event: MouseEvent) => {
+            // only a press that started on the plan counts (a mouseup after clicking a panel button doesn't)
+            if (!drag) {
+                return
+            }
             const [x, y] = local(event)
-            const moved = drag ? Math.hypot(x - drag.x, y - drag.y) : 0
+            const moved = Math.hypot(x - drag.x, y - drag.y)
             drag = null
             if (moved > 5) {
                 return
