@@ -26,6 +26,17 @@ impl McapFile {
         Ok(McapFile { map: unsafe { memmap2::Mmap::map(&file) }? })
     }
 
+    /// The compression of the file's chunks: the first chunk's ("" = none). A file with no chunk index (cut short)
+    /// is taken as uncompressed, the Live Viewer recorder's default.
+    pub fn compression(&self) -> Option<mcap::Compression> {
+        let summary = mcap::Summary::read(&self.map).ok().flatten()?;
+        match summary.chunk_indexes.first()?.compression.as_str() {
+            "zstd" => Some(mcap::Compression::Zstd),
+            "lz4" => Some(mcap::Compression::Lz4),
+            _ => None,
+        }
+    }
+
     pub fn bytes(&self) -> &[u8] {
         &self.map
     }
@@ -114,7 +125,8 @@ pub fn rewrite_with(path: &Path, replace_topics: &[String], channels: &[NewChann
     let temp = path.with_extension("mcap.saving");
     {
         let file = std::io::BufWriter::new(std::fs::File::create(&temp).with_context(|| format!("creating {}", temp.display()))?);
-        let mut writer = mcap::WriteOptions::new().compression(Some(mcap::Compression::Zstd)).create(file)?;
+        // the original's chunk compression is kept (an uncompressed recording stays uncompressed)
+        let mut writer = mcap::WriteOptions::new().compression(source.compression()).create(file)?;
         let mut ids: HashMap<u16, u16> = HashMap::new();
         let mut schemas: HashMap<u16, u16> = HashMap::new();
         let mut written = 0u64;
@@ -167,8 +179,9 @@ pub fn rewrite_with(path: &Path, replace_topics: &[String], channels: &[NewChann
 }
 
 /// Writes a small mcap (topic, encoding, kind, time, payload): fixtures for tests here and in dependents.
+/// Uncompressed chunks, like the Live Viewer's recorder by default.
 pub fn write_fixture(path: &Path, messages: &[(&str, &str, &str, f64, Vec<u8>)]) {
-    let mut writer = mcap::Writer::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap())).unwrap();
+    let mut writer = mcap::WriteOptions::new().compression(None).create(std::io::BufWriter::new(std::fs::File::create(path).unwrap())).unwrap();
     let mut channels: HashMap<String, u16> = HashMap::new();
     for (index, (topic, encoding, kind, ts, payload)) in messages.iter().enumerate() {
         let id = *channels.entry(topic.to_string()).or_insert_with(|| {
@@ -212,5 +225,9 @@ mod tests {
         );
         assert_eq!(file.latest("/map_builder/annotations").unwrap(), Some((5.0, b"second".to_vec())));
         assert!(!path.with_extension("mcap.saving").exists());
+        // the fixture is uncompressed; so is the rewrite
+        assert!(file.compression().is_none());
+        let summary = mcap::Summary::read(file.bytes()).unwrap().unwrap();
+        assert!(summary.chunk_indexes.iter().all(|c| c.compression.is_empty()));
     }
 }
