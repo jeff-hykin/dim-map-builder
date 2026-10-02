@@ -640,6 +640,21 @@ impl Workspace {
         Ok(id)
     }
 
+    /// Set or clear the slicer's view (an annotation: undoable, saved with the map; it removes nothing).
+    pub fn set_slice(&mut self, slice: Option<crate::session::Slice>) -> Result<()> {
+        let label = if slice.is_some() { "Slice the map" } else { "Reset the slice" };
+        self.edit_annotations(label, |a| {
+            a.slice = slice;
+            Ok(())
+        })
+    }
+
+    /// The yaw that lines the map's walls up with x and y (minus their dominant direction), radians.
+    pub fn alignment_yaw(&self) -> Option<f32> {
+        let (_, _, normals) = self.visible_points();
+        voxels::dominant_wall_angle(&normals).map(|angle| -angle)
+    }
+
     /// A saved 2D view (a "2D map") of a storey.
     pub fn add_view(&mut self, mut view: SavedView) -> Result<String> {
         let floors = self.require_floor(view.floor)?;

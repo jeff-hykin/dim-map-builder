@@ -20,6 +20,7 @@ import { SavePanel } from "./ui/SavePanel.tsx"
 import { FIT_2D, View2D } from "./ui/View2D.tsx"
 import { SliceBar } from "./ui/SliceBar.tsx"
 import { JobCard } from "./ui/JobCard.tsx"
+import { SlicerWizard } from "./ui/SlicerWizard.tsx"
 
 const MODES: { id: ViewMode; label: string }[] = [
     { id: "3d", label: "3D" },
@@ -38,6 +39,9 @@ export function App() {
     const [session, setSession] = useState<Session | null>(null)
     const [ui, setUiState] = useState<UiState>(DEFAULT_UI)
     const [modal, setModal] = useState<Modal>(null)
+    const [slicing, setSlicing] = useState(false)
+    const slicingRef = useRef(false)
+    slicingRef.current = slicing
     const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null)
     const [connected, setConnected] = useState(true)
     const [stats, setStats] = useState("")
@@ -147,6 +151,10 @@ export function App() {
         }
         loaded.current = { id: fresh.id, mapVersion: fresh.mapVersion }
         scene.setAnnotations(fresh.annotations)
+        // the saved slice (the slicer shows its own draft while it's open)
+        if (!slicingRef.current && JSON.stringify(scene.slice) !== JSON.stringify(fresh.annotations.slice ?? null)) {
+            scene.setSlice(fresh.annotations.slice ?? null)
+        }
     }, [scene])
 
     const adopt = useCallback(
@@ -493,8 +501,30 @@ export function App() {
                     <button type="button" className={`orb orb-generate ${session && !hasMap ? "next" : ""} ${running?.kind === "build" ? "busy" : ""}`} disabled={!session} onMouseDown={keepFocus} onClick={() => setModal("generate")} title={hasMap ? "Map generation settings (regenerate)" : "Generate the map"} data-orb="generate">
                         ⟳
                     </button>
+                    <button
+                        type="button"
+                        className={`orb orb-slicer ${slicing ? "open" : ""} ${hasMap && !session?.annotations.slice && !slicing ? "recommend" : ""}`}
+                        disabled={!hasMap}
+                        onMouseDown={keepFocus}
+                        onClick={() => {
+                            if (!slicing) {
+                                setUi({ mode: "3d", paletteOpen: false })
+                            }
+                            setSlicing(!slicing)
+                        }}
+                        title={hasMap ? "Slicer: height band, alignment and crop (a view, not an edit)" : "Generate the map first"}
+                        data-orb="slicer"
+                    >
+                        ◫
+                    </button>
                 </div>
-                {hasMap && ui.paletteOpen && (
+                {hasMap && !session?.annotations.slice && !slicing && (
+                    <div className="orb-hint" data-slicer-hint>
+                        ◂ Recommended: slice your map
+                    </div>
+                )}
+                {slicing && hasMap && <SlicerWizard context={context} onClose={() => setSlicing(false)} />}
+                {hasMap && ui.paletteOpen && !slicing && (
                     <div className="palette" role="toolbar" aria-label="edit tools" data-palette>
                         {TOOLS.map((tool) => (
                             <button key={tool.id} type="button" className={ui.tool === tool.id ? "on" : ""} onMouseDown={keepFocus} onClick={() => pickTool(tool.id)} title={`${tool.label}${tool.key.length === 1 ? ` (${tool.key.toUpperCase()})` : tool.key ? " (Esc)" : ""}`} data-tool={tool.id}>

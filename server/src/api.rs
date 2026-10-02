@@ -87,6 +87,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/sessions/{id}/op", post(op))
         .route("/api/sessions/{id}/transform", post(transform))
         .route("/api/sessions/{id}/floor", get(floor))
+        .route("/api/sessions/{id}/slice", put(set_slice))
+        .route("/api/sessions/{id}/alignment", get(alignment))
         .route("/api/sessions/{id}/modify", post(modify))
         .route("/api/sessions/{id}/annotations", post(add_annotation))
         .route("/api/sessions/{id}/annotations/{annotation}", axum::routing::patch(patch_annotation).delete(delete_annotation))
@@ -235,6 +237,18 @@ async fn floor(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Js
         })
         .collect();
     Ok(Json(json!({ "mapVersion": version, "cell": model.cell, "origin": model.origin, "width": model.width, "height": model.height, "storeys": storeys })))
+}
+
+async fn set_slice(State(app): State<Arc<App>>, Path(id): Path<String>, Json(body): Json<Option<crate::session::Slice>>) -> Result<Json<Value>> {
+    app.mutate(&id, |w| w.set_slice(body))?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// The suggested yaw (radians) that lines the walls up with x and y.
+async fn alignment(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
+    let workspace = app.require(&id)?;
+    let yaw = tokio::task::spawn_blocking(move || workspace.lock().unwrap().alignment_yaw()).await?;
+    Ok(Json(json!({ "yaw": yaw })))
 }
 
 async fn modify(State(app): State<Arc<App>>, Path(id): Path<String>, Json(body): Json<Modify>) -> Result<Json<OpResult>> {

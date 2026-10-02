@@ -68,6 +68,8 @@ uniform float uNow;
 uniform float uWindow;
 uniform sampler2D uGradient;
 uniform float uKeep;
+uniform vec3 uClipMin;
+uniform vec3 uClipMax;
 attribute float aTime;
 attribute float aIntensity;
 varying vec3 vColor;
@@ -85,6 +87,12 @@ void main() {
     }
 #endif
     vec3 world = (modelMatrix * vec4(position, 1.0)).xyz;
+    // the slicer's box (in the turned frame, i.e. world): outside it, nothing is drawn
+    if (any(lessThan(world, uClipMin)) || any(greaterThan(world, uClipMax))) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        gl_PointSize = 0.0;
+        return;
+    }
     vec3 center = uStyle == 2 ? (floor(world / uSize) + 0.5) * uSize : world;
 #ifdef USE_INTENSITY
     float value = aIntensity;
@@ -224,6 +232,8 @@ export function makePointMaterial(pixelsPerMeter: { value: number }): THREE.Shad
             uFog: { value: new THREE.Vector2(10, 40) },
             uBackground: { value: new THREE.Color(0x06090f) },
             uCubeShade: { value: 0 },
+            uClipMin: { value: new THREE.Vector3(-1e9, -1e9, -1e9) },
+            uClipMax: { value: new THREE.Vector3(1e9, 1e9, 1e9) },
         },
         defines: {},
     })

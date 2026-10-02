@@ -136,6 +136,20 @@ pub struct SavedView {
     pub pixels_per_meter: Option<f32>,
 }
 
+/// The slicer's view of the map (not an edit: no voxel is removed): map-frame z from z_min to z_max, the map turned by
+/// `yaw` (radians about +z, through the origin) so its walls line up with x and y, and x / y cropped in that turned frame.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Slice {
+    pub z_min: f32,
+    pub z_max: f32,
+    pub yaw: f32,
+    pub x_min: f32,
+    pub x_max: f32,
+    pub y_min: f32,
+    pub y_max: f32,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Annotations {
@@ -147,6 +161,7 @@ pub struct Annotations {
     pub areas: Vec<Area>,
     pub prisms: Vec<Prism>,
     pub views: Vec<SavedView>,
+    pub slice: Option<Slice>,
 }
 
 /// map ← recording world, as translation + quaternion (x, y, z, w)

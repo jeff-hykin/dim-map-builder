@@ -7,7 +7,7 @@ import { Viewer } from "../render/viewer.ts"
 import { applyLook, makePointMaterial, type CubeShade, type PointLook, type PointStyle } from "../render/pointMaterial.ts"
 import { FatLines, pushBox } from "../render/lines.ts"
 import { LabelPool } from "../render/labels.ts"
-import type { Annotations, Box3 } from "./api.ts"
+import type { Annotations, Box3, Slice } from "./api.ts"
 import { Store } from "./store.ts"
 
 export type Selectable = { kind: "box" | "plane" | "point" | "prism"; id: string } | { kind: "region"; id: "region" }
@@ -103,6 +103,12 @@ export class MapScene {
     #boxes: FatLines
     #labels = new LabelPool()
     #annotationGroup = new THREE.Group()
+    /** everything in the map frame hangs here; the slicer turns it about z (a view, not an edit) */
+    readonly root = new THREE.Group()
+    /** the slice shown now (saved, or a draft while the slicer is open) */
+    slice: Slice | null = null
+    #xray = false
+    #hidden: THREE.Object3D[] = []
     #annotations: Annotations | null = null
     #pointMeshes = new Map<string, THREE.Mesh>()
     #planeMeshes = new Map<string, THREE.Mesh>()
@@ -121,6 +127,8 @@ export class MapScene {
     readonly cameraListeners = new Set<() => void>()
     /** bumps when the map's points change */
     readonly mapRevision = new Store({ revision: 0 })
+    /** the slice shown, for the 2D views */
+    readonly sliceStore = new Store<{ slice: Slice | null }>({ slice: null })
 
     constructor(host: HTMLElement) {
         this.viewer = new Viewer(host, () => Date.now())
@@ -130,7 +138,8 @@ export class MapScene {
         this.preview = new PointLayer(this.viewer)
         this.preview.points.renderOrder = 3
         const scene = this.viewer.scene
-        scene.add(this.map.points, this.raw.points, this.preview.points)
+        scene.add(this.root)
+        this.root.add(this.map.points, this.raw.points, this.preview.points)
         const resolution = this.viewer.resolution
         this.#paths = new FatLines(resolution, { width: 3, color: 0xff3df2 })
         this.#rawPath = new FatLines(resolution, { width: 1.5, color: 0x8a94a6, opacity: 0.7 })
@@ -141,11 +150,11 @@ export class MapScene {
             lines.material.depthTest = false
             lines.object.renderOrder = 5
         }
-        scene.add(this.#paths.object, this.#rawPath.object, this.#loops.object, this.#boxes.object, this.#regionLines.object, this.#labels.group, this.#annotationGroup)
+        this.root.add(this.#paths.object, this.#rawPath.object, this.#loops.object, this.#boxes.object, this.#regionLines.object, this.#labels.group, this.#annotationGroup)
 
         this.#gizmo = new TransformControls(this.viewer.camera, this.viewer.renderer.domElement)
         this.#gizmo.setSize(0.9)
-        scene.add(this.#proxy)
+        this.root.add(this.#proxy)
         scene.add(this.#gizmo.getHelper())
         this.#gizmo.addEventListener("dragging-changed", (event) => {
             this.#dragging = !!event.value
@@ -249,6 +258,9 @@ export class MapScene {
 
     applyLook(look: Partial<MapLook> = {}) {
         this.look = { ...this.look, ...look }
+        if (this.#xray) {
+            return
+        }
         this.map.look({
             style: this.look.style,
             size: this.voxelSize * this.look.scale,
@@ -523,8 +535,8 @@ export class MapScene {
 
     /** A box around what's in view now, a starting point for the region. */
     regionFromView(): Box3 {
-        const target = this.viewer.controls.target
-        const distance = this.viewer.camera.position.distanceTo(target)
+        const distance = this.viewer.camera.position.distanceTo(this.viewer.controls.target)
+        const target = this.toLocal(this.viewer.controls.target)
         const half = Math.max(0.5, distance * 0.35)
         const z = this.map.range
         return { center: [target.x, target.y, (z[0] + z[1]) / 2], size: [half * 2, half * 2, Math.max(1, z[1] - z[0] + 0.6)], yaw: 0 }
@@ -537,6 +549,8 @@ export class MapScene {
         const ndc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
         const ray = new THREE.Raycaster()
         ray.setFromCamera(ndc, this.viewer.camera)
+        // the map frame's ray (the root may be turned)
+        const local = ray.ray.clone().applyMatrix4(this.#rootInverse())
         // annotations first
         const hits = ray.intersectObjects([...this.#pointMeshes.values(), ...this.#planeMeshes.values()], false)
         if (hits.length && !this.onPick) {
@@ -548,8 +562,7 @@ export class MapScene {
             const box = this.#annotations.boxes.find((item) => {
                 const b = item.box
                 const inverse = new THREE.Matrix4().compose(new THREE.Vector3(...b.center), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), b.yaw ?? 0), new THREE.Vector3(...b.size)).invert()
-                const local = ray.ray.clone().applyMatrix4(inverse)
-                return local.intersectsBox(new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5)))
+                return local.clone().applyMatrix4(inverse).intersectsBox(new THREE.Box3(new THREE.Vector3(-0.5, -0.5, -0.5), new THREE.Vector3(0.5, 0.5, 0.5)))
             })
             if (box) {
                 this.select({ kind: "box", id: box.id })
@@ -558,7 +571,7 @@ export class MapScene {
             // a polygon: the ray through its top or bottom face
             const prism = (this.#annotations.prisms ?? []).find((item) =>
                 [item.base, item.base + item.height].some((z) => {
-                    const hit = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -z), new THREE.Vector3())
+                    const hit = local.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -z), new THREE.Vector3())
                     return hit && insidePolygon(item.polygon, hit.x, hit.y)
                 }),
             )
@@ -567,7 +580,7 @@ export class MapScene {
                 return
             }
         }
-        const point = this.pickMap(ray.ray)
+        const point = this.pickMap(local)
         if (this.onPick) {
             if (point) {
                 this.onPick(point, event)
@@ -577,7 +590,7 @@ export class MapScene {
         this.select(null)
     }
 
-    /** The map voxel nearest the camera along `ray` (within a few voxels of it). */
+    /** The map voxel nearest the camera along `ray` (map frame), within a few voxels of it. */
     pickMap(ray: THREE.Ray): THREE.Vector3 | null {
         const positions = this.map.points.visible ? this.map.positions : this.raw.positions
         const tolerance = Math.max(this.voxelSize * 1.5, 0.05)
@@ -613,8 +626,14 @@ export class MapScene {
         }
         // the bulk of the map (2nd–98th percentile per axis): a few far specks don't zoom the view out
         const ranges = [0, 1, 2].map((axis) => percentileRange(positions, axis, 0.02, 0.98))
-        const center = new THREE.Vector3(...ranges.map(([lo, hi]) => (lo + hi) / 2))
+        const center = this.toWorld(new THREE.Vector3(...ranges.map(([lo, hi]) => (lo + hi) / 2)))
         const size = Math.hypot(...ranges.map(([lo, hi]) => hi - lo))
+        // with a slice, the sliced box is what's framed
+        const box = this.sliceBox()
+        if (box) {
+            this.viewer.frame(box.center, Math.max(3, box.size * 0.75))
+            return
+        }
         this.viewer.frame(center, Math.max(3, size * 0.75))
     }
 
@@ -624,7 +643,7 @@ export class MapScene {
     }
 
     lookAt(target: [number, number, number], distance?: number, topDown = false) {
-        const point = new THREE.Vector3(...target)
+        const point = this.toWorld(new THREE.Vector3(...target))
         const far = distance ?? Math.max(3, this.viewer.camera.position.distanceTo(this.viewer.controls.target))
         if (topDown) {
             this.viewer.topDown(point, far)
@@ -635,9 +654,164 @@ export class MapScene {
 
     /** Where a map-frame point is on the page (css pixels), for tests and overlays. */
     toPage(x: number, y: number, z: number): [number, number] {
+        return this.worldToPage(this.toWorld(new THREE.Vector3(x, y, z)))
+    }
+
+    /** Where a world point (the turned frame) is on the page. */
+    worldToPage(point: THREE.Vector3): [number, number] {
         const rect = this.viewer.renderer.domElement.getBoundingClientRect()
-        const v = new THREE.Vector3(x, y, z).project(this.viewer.camera)
+        const v = point.clone().project(this.viewer.camera)
         return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height]
+    }
+
+    // ---- the map frame vs the world (the slicer's turn) ----
+
+    #rootInverse(): THREE.Matrix4 {
+        this.root.updateMatrixWorld()
+        return this.root.matrixWorld.clone().invert()
+    }
+
+    /** map frame → world */
+    toWorld(point: THREE.Vector3): THREE.Vector3 {
+        this.root.updateMatrixWorld()
+        return point.clone().applyMatrix4(this.root.matrixWorld)
+    }
+
+    /** world → map frame */
+    toLocal(point: THREE.Vector3): THREE.Vector3 {
+        return point.clone().applyMatrix4(this.#rootInverse())
+    }
+
+    /** The world point under a page pixel on the horizontal plane at `z` (null above the horizon). */
+    pageToWorld(px: number, py: number, z: number): THREE.Vector3 | null {
+        const rect = this.viewer.renderer.domElement.getBoundingClientRect()
+        const ndc = new THREE.Vector2(((px - rect.left) / rect.width) * 2 - 1, -((py - rect.top) / rect.height) * 2 + 1)
+        const ray = new THREE.Raycaster()
+        ray.setFromCamera(ndc, this.viewer.camera)
+        return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -z), new THREE.Vector3())
+    }
+
+    // ---- the slicer ----
+
+    /** Shows a slice: turns the map by its yaw and clips it to its box (in the turned frame); null shows everything.
+     * `clipXY` false keeps x / y unclipped (while the crop is being picked). */
+    setSlice(slice: Slice | null, clipXY = true) {
+        this.slice = slice
+        this.root.rotation.z = slice?.yaw ?? 0
+        this.root.updateMatrixWorld()
+        const big = 1e9
+        for (const layer of [this.map, this.raw]) {
+            const uniforms = layer.material.uniforms
+            uniforms.uClipMin.value.set(slice && clipXY ? slice.xMin : -big, slice && clipXY ? slice.yMin : -big, slice ? slice.zMin : -big)
+            uniforms.uClipMax.value.set(slice && clipXY ? slice.xMax : big, slice && clipXY ? slice.yMax : big, slice ? slice.zMax : big)
+        }
+        this.viewer.requestRender()
+        // while the crop is being picked the 2D views aren't cropped either
+        this.sliceStore.set({ slice: slice && !clipXY ? { ...slice, xMin: -big, xMax: big, yMin: -big, yMax: big } : slice })
+    }
+
+    /** The slice's box in the world: its center and diagonal. */
+    sliceBox(): { center: THREE.Vector3; size: number } | null {
+        const s = this.slice
+        if (!s || s.xMax - s.xMin > 1e6) {
+            return null
+        }
+        const center = new THREE.Vector3((s.xMin + s.xMax) / 2, (s.yMin + s.yMax) / 2, (s.zMin + s.zMax) / 2)
+        return { center, size: Math.hypot(s.xMax - s.xMin, s.yMax - s.yMin, s.zMax - s.zMin) }
+    }
+
+    /** The voxels' bounds in the frame turned by `yaw` (1st–99th percentile) within a height band: a crop to start from. */
+    turnedBounds(yaw: number, zMin = -Infinity, zMax = Infinity): [number, number, number, number] {
+        const positions = this.map.positions
+        const [c, s] = [Math.cos(yaw), Math.sin(yaw)]
+        const xs: number[] = []
+        const ys: number[] = []
+        const step = Math.max(1, Math.floor(positions.length / 3 / 60000)) * 3
+        for (let i = 0; i < positions.length; i += step) {
+            const z = positions[i + 2]
+            if (z < zMin || z > zMax) {
+                continue
+            }
+            xs.push(c * positions[i] - s * positions[i + 1])
+            ys.push(s * positions[i] + c * positions[i + 1])
+        }
+        if (!xs.length) {
+            return [-1, -1, 1, 1]
+        }
+        const pick = (v: number[], q: number) => v.sort((a, b) => a - b)[Math.floor(q * (v.length - 1))]
+        return [pick(xs, 0.01), pick(ys, 0.01), pick(xs, 0.99), pick(ys, 0.99)]
+    }
+
+    /** X-ray: every voxel a faint additive square, so seen from above the walls (many voxels deep) glow brightest. */
+    setXray(on: boolean) {
+        // the x-ray shows the voxels alone: annotations, paths and the gizmo step aside (and come back as they were)
+        if (on !== this.#xray) {
+            const others = [...this.root.children.filter((child) => child !== this.map.points), this.#gizmo.getHelper()]
+            if (on) {
+                this.#hidden = others.filter((child) => child.visible)
+                this.#hidden.forEach((child) => (child.visible = false))
+            } else {
+                this.#hidden.forEach((child) => (child.visible = true))
+                this.#hidden = []
+            }
+        }
+        this.#xray = on
+        const material = this.map.material
+        if (on) {
+            applyLook(material, { style: "square", size: this.voxelSize * 1.1, colorMode: "solid", gradient: "memworld", axis: 2, rangeMin: null, rangeMax: null, solid: "#5fd0ff", opacity: 0.09 }, this.map.range)
+            material.transparent = true
+            material.depthWrite = false
+            material.depthTest = false
+            material.blending = THREE.AdditiveBlending
+            material.needsUpdate = true
+        } else {
+            material.depthTest = true
+            this.applyLook()
+        }
+        this.viewer.requestRender()
+    }
+
+    get xray() {
+        return this.#xray
+    }
+
+    /** Flies the camera to `position` looking at `target` (world) over `ms`, easing out. */
+    flyTo(position: THREE.Vector3, target: THREE.Vector3, ms = 700): Promise<void> {
+        const camera = this.viewer.camera
+        const controls = this.viewer.controls
+        const [p0, t0] = [camera.position.clone(), controls.target.clone()]
+        const started = performance.now()
+        return new Promise((resolve) => {
+            const step = () => {
+                const k = Math.min(1, (performance.now() - started) / ms)
+                const e = 1 - Math.pow(1 - k, 3)
+                camera.position.lerpVectors(p0, position, e)
+                controls.target.lerpVectors(t0, target, e)
+                camera.lookAt(controls.target)
+                controls.update()
+                this.viewer.requestRender()
+                this.#cameraMoved()
+                if (k < 1) {
+                    requestAnimationFrame(step)
+                } else {
+                    this.onViewChange()
+                    resolve()
+                }
+            }
+            requestAnimationFrame(step)
+        })
+    }
+
+    /** A camera that sees a world box [x0, y0, z0]–[x1, y1, z1] whole: from above (`topDown`) or at an angle. */
+    viewOf(min: THREE.Vector3, max: THREE.Vector3, topDown: boolean): { position: THREE.Vector3; target: THREE.Vector3 } {
+        const target = min.clone().add(max).multiplyScalar(0.5)
+        const camera = this.viewer.camera
+        const halfFov = THREE.MathUtils.degToRad(camera.fov) / 2
+        const extentY = (max.y - min.y) / 2
+        const extentX = (max.x - min.x) / 2 / camera.aspect
+        const distance = Math.max(3, (Math.max(extentX, extentY) / Math.tan(halfFov)) * 1.15 + (max.z - min.z) / 2)
+        const direction = topDown ? new THREE.Vector3(0, -0.001, 1) : new THREE.Vector3(0.35, -1, 0.95)
+        return { position: target.clone().add(direction.normalize().multiplyScalar(distance)), target }
     }
 
     /** Where the camera looks on the horizontal plane at `z`: the camera's x, y, and the view's corners projected onto
@@ -655,14 +829,20 @@ export class MapScene {
             }
             corners.push([camera.position.x + toward.x * distance, camera.position.y + toward.y * distance])
         }
+        // in the map frame (the root may be turned)
+        const local = (x: number, y: number): [number, number] => {
+            const v = this.toLocal(new THREE.Vector3(x, y, z))
+            return [v.x, v.y]
+        }
         const target = this.viewer.controls.target
-        return { camera: [camera.position.x, camera.position.y], target: [target.x, target.y], corners }
+        return { camera: local(camera.position.x, camera.position.y), target: local(target.x, target.y), corners: corners.map(([x, y]) => local(x, y)) }
     }
 
     /** Slides the camera so it looks at (x, y), keeping its height, angle and distance. */
     moveTargetTo(x: number, y: number) {
         const target = this.viewer.controls.target
-        const delta = new THREE.Vector3(x - target.x, y - target.y, 0)
+        const to = this.toWorld(new THREE.Vector3(x, y, target.z))
+        const delta = new THREE.Vector3(to.x - target.x, to.y - target.y, 0)
         target.add(delta)
         this.viewer.camera.position.add(delta)
         this.viewer.controls.update()
@@ -675,7 +855,9 @@ export class MapScene {
     viewState(): Record<string, unknown> {
         const camera = this.viewer.camera
         camera.updateMatrixWorld()
-        const viewProjection = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+        this.root.updateMatrixWorld()
+        // map frame → clip space, through the root's turn
+        const viewProjection = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).multiply(this.root.matrixWorld)
         const frustum = new THREE.Frustum().setFromProjectionMatrix(viewProjection)
         const positions = this.map.points.visible ? this.map.positions : this.raw.positions
         const step = Math.max(1, Math.floor(positions.length / 3 / 60000)) * 3
@@ -745,7 +927,7 @@ export class MapScene {
     #drawOverlay(context: CanvasRenderingContext2D, width: number, height: number) {
         const camera = this.viewer.camera
         const project = (x: number, y: number, z: number) => {
-            const v = new THREE.Vector3(x, y, z).project(camera)
+            const v = this.toWorld(new THREE.Vector3(x, y, z)).project(camera)
             return { x: (v.x + 1) / 2 * width, y: (1 - v.y) / 2 * height, visible: v.z > -1 && v.z < 1 }
         }
         const target = this.viewer.controls.target

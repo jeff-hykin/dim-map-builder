@@ -6,6 +6,7 @@
 //!   map/annotations  std_msgs.String          JSON: map ← world transform, boxes, planes, points, polygons, floors,
 //!                                             named points, areas (no-go zones), saved views, build summary
 //!   map/views        std_msgs.String          JSON: the saved 2D views (each a storey and a height band)
+//!   map/slice        std_msgs.String          JSON: the slicer's view {zMin, zMax, yaw, xMin, xMax, yMin, yMax} or null
 //!   map/floor_<n>    nav_msgs.OccupancyGrid   storey n's occupancy grid, when exported; origin z = the floor
 //! Saving again replaces them (and drops the `map_builder_*` streams older versions wrote). Opening a recording that
 //! has them (and no working session) restores the session from them; older `map_builder` saves still open.
@@ -40,6 +41,10 @@ pub struct SavedState {
 pub const PREFIX: &str = "map/";
 
 /// map, path, annotations, views, floor n
+fn slice_name() -> String {
+    format!("{PREFIX}slice")
+}
+
 fn names() -> (String, String, String, String, impl Fn(usize) -> String) {
     (format!("{PREFIX}voxels"), format!("{PREFIX}path"), format!("{PREFIX}annotations"), format!("{PREFIX}views"), |n: usize| format!("{PREFIX}floor_{n}"))
 }
@@ -88,6 +93,7 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
         (path_name, lcm::PATH_TYPE.into(), path_payload),
         (annotations_name, lcm::STRING_TYPE.into(), annotations_payload),
         (views_name, lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.views)?)),
+        (slice_name(), lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.slice)?)),
     ];
     writes.extend(floors.into_iter().map(|(name, payload)| (name, lcm::OCCUPANCY_GRID_TYPE.into(), payload)));
     // earlier saves' floors beyond today's count go too
@@ -222,17 +228,18 @@ mod tests {
         assert!(drawn.changed > 100);
         ws.add_prism(0, "desk", vec![[1.0, 3.0], [2.0, 3.0], [2.0, 4.0]], 0.8, None, "user").unwrap();
         ws.add_view(crate::session::SavedView { name: "walls".into(), floor: 0, follow: true, z_min: 0.1, z_max: 1.8, ..Default::default() }).unwrap();
+        ws.set_slice(Some(crate::session::Slice { z_min: -0.2, z_max: 2.0, yaw: 0.3, x_min: 0.0, x_max: 5.0, y_min: 0.5, y_max: 6.0 })).unwrap();
         let visible = ws.remaining();
         save(&ws, |_, _| {}).unwrap();
         save(&ws, |_, _| {}).unwrap(); // twice: replaces, never duplicates
 
         let recording = Recording::open(&path).unwrap();
         let streams: Vec<String> = recording.streams().unwrap().into_iter().map(|s| s.name).collect();
-        for suffix in ["voxels", "path", "annotations", "views", "floor_0"] {
+        for suffix in ["voxels", "path", "annotations", "views", "slice", "floor_0"] {
             assert!(streams.contains(&format!("map/{suffix}")), "{format}: {streams:?}");
         }
         assert!(streams.iter().any(|s| s.ends_with("lidar")), "the original data is still there");
-        assert_eq!(streams.len(), 6);
+        assert_eq!(streams.len(), 7);
 
         let (restored, map) = load(&recording, Session::default()).unwrap().unwrap();
         assert_eq!(map.points.len(), visible);

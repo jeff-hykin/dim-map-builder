@@ -1,6 +1,7 @@
 // The 2D view's raster: a top-down slice of the current voxels between z-start and z-end, either over the local
 // floor (the server's per-cell floor heights, so stairs and ramps stay in the slice) or as absolute heights.
 import { sampleGradient } from "../render/gradients.ts"
+import type { Slice as MapSlice } from "./api.ts"
 
 export interface FloorStorey {
     level: number
@@ -70,7 +71,8 @@ export interface Slice {
 
 /** Rasterizes `points` (xyz f32) at `resolution`: a cell is "in the slice" when a voxel there is within the range,
  * "floor" when a voxel there is on the storey's local floor. */
-export function computeSlice(points: Float32Array, model: FloorModel, storey: number, range: SliceRange, resolution = 0.05): Slice {
+export function computeSlice(points: Float32Array, model: FloorModel, storey: number, range: SliceRange, resolution = 0.05, clip: MapSlice | null = null): Slice {
+    const [cos, sin] = [Math.cos(clip?.yaw ?? 0), Math.sin(clip?.yaw ?? 0)]
     const started = performance.now()
     const origin: [number, number] = [model.origin[0], model.origin[1]]
     const scale = model.cell / resolution
@@ -85,6 +87,14 @@ export function computeSlice(points: Float32Array, model: FloorModel, storey: nu
         const row = Math.floor((y - origin[1]) / resolution)
         if (column < 0 || row < 0 || column >= width || row >= height) {
             continue
+        }
+        // the slicer's box, in its turned frame
+        if (clip) {
+            const tx = cos * x - sin * y
+            const ty = sin * x + cos * y
+            if (z < clip.zMin || z > clip.zMax || tx < clip.xMin || tx > clip.xMax || ty < clip.yMin || ty > clip.yMax) {
+                continue
+            }
         }
         const floor = floorAt(model, storey, x, y)
         const pixel = row * width + column

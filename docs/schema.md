@@ -12,7 +12,13 @@ recording's own world frame into it, so `map ← world` is recoverable for anyth
 | `map/path` | `nav_msgs.Path` | The loop-closed sensor path, `frame_id: "map"` |
 | `map/annotations` | `std_msgs.String` | JSON, below |
 | `map/views` | `std_msgs.String` | JSON: the saved 2D views (the "2D maps"), the same list as `annotations.views` |
+| `map/slice` | `std_msgs.String` | JSON: the slicer's view `{ zMin, zMax, yaw, xMin, xMax, yMin, yMax }` or `null`, the same as `annotations.slice` |
 | `map/floor_<n>` | `nav_msgs.OccupancyGrid` | Only when exported (Saved views → Export occupancy grids): storey `n`'s grid, `-1` unknown, `0` free floor, `100` occupied. `info.origin.position` = the grid's (0,0) corner, with `z` = the floor's height |
+
+Every edit kind lands in these: the voxel edits (cleanup, erase, draw, straightened walls) in `map/voxels`; the map
+transform, boxes, planes, points, polygons, floors, named points, areas, saved views and the slice in `map/annotations`
+(views and slice also in their own streams). Nothing is written beside the recording. The local floor model isn't
+saved: it's recomputed from `map/voxels`. Only the undo history stays in the working session.
 
 Each stream holds one message, stamped with the save time. Read them with dimos (`SqliteStore(path).stream(name)`), the
 `mcap` Python package, Foxglove (the `.mcap`), or this repo's `crates/dimos-recording`.
@@ -37,6 +43,9 @@ Each stream holds one message, stamped with the save time. Read them with dimos 
         prisms: { id, label, floor, polygon: [[x, y], ...], base, height, source }[]  // a polygon standing from z = base up by height
         views: { id, name, floor, follow, zMin, zMax, center: [x, y] | null, pixelsPerMeter | null }[]
             // a 2D map: storey `floor` sliced from zMin to zMax (over the local floor when follow, else absolute z)
+        slice: { zMin, zMax, yaw, xMin, xMax, yMin, yMax } | null
+            // the slicer's view, not an edit (map/voxels holds every voxel): show z in zMin..zMax, turn the map by yaw
+            // (radians about +z through the origin), then x in xMin..xMax and y in yMin..yMax in that turned frame
     }
     floorStreams: string[]          // floor index → the stream / topic holding its OccupancyGrid
     build: { voxelSize, worldFrame, cloudStream, scansUsed, scansSkipped, loops, notes, seconds } | null

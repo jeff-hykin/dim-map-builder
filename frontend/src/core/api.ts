@@ -100,6 +100,17 @@ export interface SavedView {
     pixelsPerMeter: number | null
 }
 
+/** the slicer's view: map-frame z band, the turn that lines the walls up, and the crop in the turned frame */
+export interface Slice {
+    zMin: number
+    zMax: number
+    yaw: number
+    xMin: number
+    xMax: number
+    yMin: number
+    yMax: number
+}
+
 export interface Annotations {
     boxes: BoxAnnotation[]
     planes: PlaneAnnotation[]
@@ -109,6 +120,7 @@ export interface Annotations {
     areas: Area[]
     prisms: PrismAnnotation[]
     views: SavedView[]
+    slice?: Slice | null
 }
 
 export interface PlanInfo {
@@ -254,6 +266,8 @@ export const api = {
     op: (id: string, op: string, region: Region, params: Record<string, unknown> = {}, preview = false) =>
         call<OpResult>(`api/sessions/${id}/op`, json({ op, region, params, preview })),
     modify: (id: string, body: Record<string, unknown>) => call<OpResult>(`api/sessions/${id}/modify`, json(body)),
+    setSlice: (id: string, slice: Slice | null) => call(`api/sessions/${id}/slice`, { method: "PUT", body: JSON.stringify(slice) }),
+    alignment: (id: string) => call<{ yaw: number | null }>(`api/sessions/${id}/alignment`),
     floor: (id: string) => call<FloorModel>(`api/sessions/${id}/floor`),
     rotate: (id: string, degrees: number) => call(`api/sessions/${id}/transform`, json({ kind: "rotate", degrees })),
     level: (id: string) => call(`api/sessions/${id}/transform`, json({ kind: "level" })),

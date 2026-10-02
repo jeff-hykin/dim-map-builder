@@ -13,9 +13,13 @@ everything else is optional and in any order.
 - **2D**: a top-down slice of the current voxels between z-start and z-end, over the **local floor** (a per-cell floor
   height that follows ramps and stairs, `crates/mapping/src/floor.rs`) or absolute; "auto" = floor +0.1 to +1.8 m.
   Saved views are the 2D maps (a storey + a height band), saved into the recording.
+- **Slicer** (the yellow orb, pulsing until a map has a slice): a 4-step view of the map, not an edit. It flies out to
+  the whole map, then cuts it to a height band (live), turns it so the walls line up with x and y (a top-down x-ray
+  over a grid, with an "auto" angle from the walls' directions), crops x / y with a draggable rectangle, and flies back
+  to the result. 3D, 2D and the minimap all show it; it's saved as seven numbers (`map/slice`).
 - **Edit** (the green orb): a palette of tools. **Erase** (brush what stands on the floor away; the floor under it is
   filled in from around), **Draw** / **Line** (voxels from the floor up to a height), **Straighten wall** (drag along
-  a noisy wall: it becomes one straight wall), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
+  a noisy wall: the whole wall becomes one clean slab of its own thickness, its corners meet the walls they run into), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
   **named points and areas** (no-go zones), **3D boxes, planes and points**, **Clean up** (floating specks, outliers,
   floor, walls, crop, level), **Saved views**. All undoable.
 - **Save** into the recording: the map, annotations and views become `map/*` streams in the same file

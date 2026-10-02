@@ -3,7 +3,7 @@
 // pan tool) and zooms (wheel), and its camera is kept with the session; as the minimap it frames the map, shows where
 // the 3D camera is and what it sees, and a click or drag there moves the 3D camera.
 import { useEffect, useMemo, useRef, useState } from "react"
-import { api, type PrismAnnotation, type SavedView } from "../core/api.ts"
+import { api, type PrismAnnotation, type SavedView, type Slice } from "../core/api.ts"
 import { Store, useStore } from "../core/store.ts"
 import { computeSlice, floorHeightImage, PLAN_STYLE, sliceLayers, type FloorModel } from "../core/slice.ts"
 import type { Context, View2d } from "./context.ts"
@@ -12,6 +12,7 @@ import { modifyTool, planTool, polygonTool } from "./tools.ts"
 const AREA_COLORS: Record<string, string> = { "no-go": "#ff5f6d", zone: "#7fc8f8", slow: "#ffd166" }
 const PRISM_COLOR = "#7af0a8"
 const NO_MAP = new Store({ revision: 0 })
+const NO_SLICE = new Store<{ slice: Slice | null }>({ slice: null })
 /** a window event: frame the 2D view on the map again */
 export const FIT_2D = "map-builder:fit-2d"
 /** a window event carrying a saved view: look where it looked */
@@ -100,6 +101,10 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
     const dragVertex = useRef<{ id: string; index: number; polygon: [number, number][] } | null>(null)
     const [, redraw] = useState(0)
 
+    // the slicer's view: the map turned by its yaw, clipped to its box
+    const shownSlice = useStore(scene?.sliceStore ?? NO_SLICE).slice
+    const yaw = shownSlice?.yaw ?? 0
+    const [cosYaw, sinYaw] = [Math.cos(yaw), Math.sin(yaw)]
     const storey = minimap && scene ? storeyAt(floor, scene.viewer.controls.target.z) : Math.min(ui.planFloor, Math.max(0, (floor?.storeys.length ?? 1) - 1))
     // the slice raster, recomputed when the map, the floor or the range change
     const slice = useMemo(() => {
@@ -108,12 +113,12 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         }
         const started = performance.now()
         const range = ui.slice
-        const computed = computeSlice(scene.map.positions as Float32Array, floor, storey, range)
+        const computed = computeSlice(scene.map.positions as Float32Array, floor, storey, range, 0.05, shownSlice)
         const layers = sliceLayers(computed)
         const kindAt = (column: number, row: number) => computed.cells[(computed.height - 1 - row) * computed.width + column]
         const raster: Raster = { ...layers, origin: computed.origin, resolution: computed.resolution, width: computed.width, height: computed.height, content: contentBounds(kindAt, computed.width, computed.height, computed.origin, computed.resolution) }
         return { raster, milliseconds: performance.now() - started }
-    }, [scene, floor, storey, ui.slice.follow, ui.slice.z0, ui.slice.z1, mapRevision])
+    }, [scene, floor, storey, ui.slice.follow, ui.slice.z0, ui.slice.z1, mapRevision, shownSlice])
 
     const heightImage = useMemo(() => (floor && ui.floorOverlay && !minimap ? floorHeightImage(floor, storey) : null), [floor, storey, ui.floorOverlay, minimap])
 
@@ -137,16 +142,40 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
     }, [minimap, scene])
 
     const size = () => ({ width: host.current?.clientWidth ?? 1, height: host.current?.clientHeight ?? 1 })
-    const toScreen = (x: number, y: number): [number, number] => {
+    // the view's camera is in the turned frame (x, y after the slice's yaw); these take and give map-frame x, y
+    const turn = (x: number, y: number): [number, number] => [cosYaw * x - sinYaw * y, sinYaw * x + cosYaw * y]
+    const unturn = (x: number, y: number): [number, number] => [cosYaw * x + sinYaw * y, -sinYaw * x + cosYaw * y]
+    const turnedToScreen = (ax: number, ay: number): [number, number] => {
         const v = view.current!
         const { width, height } = size()
-        return [width / 2 + (x - v.cx) * v.pixelsPerMeter, height / 2 - (y - v.cy) * v.pixelsPerMeter]
+        return [width / 2 + (ax - v.cx) * v.pixelsPerMeter, height / 2 - (ay - v.cy) * v.pixelsPerMeter]
     }
-    const toWorld = (sx: number, sy: number): [number, number] => {
+    const screenToTurned = (sx: number, sy: number): [number, number] => {
         const v = view.current!
         const { width, height } = size()
         return [v.cx + (sx - width / 2) / v.pixelsPerMeter, v.cy - (sy - height / 2) / v.pixelsPerMeter]
     }
+    const toScreen = (x: number, y: number): [number, number] => turnedToScreen(...turn(x, y))
+    const toWorld = (sx: number, sy: number): [number, number] => unturn(...screenToTurned(sx, sy))
+    /** draws a map-frame image (row 0 = highest y) with its corner at `origin`, `size` meters, through the turn */
+    const drawMapImage = (g: CanvasRenderingContext2D, image: CanvasImageSource, origin: [number, number], size: [number, number], ratio: number) => {
+        const v = view.current!
+        const { width, height } = size_()
+        const k = v.pixelsPerMeter
+        g.save()
+        // map (x, Y = -y) → screen: turn, scale, flip y, centre
+        g.setTransform(
+            ratio * k * cosYaw,
+            ratio * -k * sinYaw,
+            ratio * k * sinYaw,
+            ratio * k * cosYaw,
+            ratio * (width / 2 - v.cx * k),
+            ratio * (height / 2 + v.cy * k),
+        )
+        g.drawImage(image, origin[0], -(origin[1] + size[1]), size[0], size[1])
+        g.restore()
+    }
+    const size_ = () => size()
     const persist = useMemo(() => {
         let timer = 0
         return () => {
@@ -192,28 +221,31 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         // frame the content until the user moves the view (always, for the minimap)
         if (!view.current || minimap || autoFit.current) {
             autoFit.current = true
-            const [x0, y0, x1, y1] = raster.content ?? [raster.origin[0], raster.origin[1], raster.origin[0] + raster.width * raster.resolution, raster.origin[1] + raster.height * raster.resolution]
+            const [cx0, cy0, cx1, cy1] = raster.content ?? [raster.origin[0], raster.origin[1], raster.origin[0] + raster.width * raster.resolution, raster.origin[1] + raster.height * raster.resolution]
+            // framed in the turned frame: the crop if there is one, else the content's turned corners
+            const corners = [turn(cx0, cy0), turn(cx1, cy0), turn(cx0, cy1), turn(cx1, cy1)]
+            const cropped = shownSlice && shownSlice.xMax - shownSlice.xMin < 1e6
+            const [x0, y0, x1, y1] = cropped
+                ? [shownSlice.xMin, shownSlice.yMin, shownSlice.xMax, shownSlice.yMax]
+                : [Math.min(...corners.map((c) => c[0])), Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[1]))]
             const pad = minimap ? 8 : 40
             const pixelsPerMeter = Math.min((width - pad * 2) / Math.max(1, x1 - x0), (height - pad * 2) / Math.max(1, y1 - y0))
             view.current = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, pixelsPerMeter }
         }
         const v = view.current!
-        const [left, top] = toScreen(raster.origin[0], raster.origin[1] + raster.height * raster.resolution)
-        const drawWidth = raster.width * raster.resolution * v.pixelsPerMeter
-        const drawHeight = raster.height * raster.resolution * v.pixelsPerMeter
+        const rasterSize: [number, number] = [raster.width * raster.resolution, raster.height * raster.resolution]
         g.imageSmoothingEnabled = v.pixelsPerMeter * raster.resolution < 6
         g.imageSmoothingQuality = "high"
-        g.drawImage(raster.floor, left, top, drawWidth, drawHeight)
+        drawMapImage(g, raster.floor, raster.origin, rasterSize, ratio)
         if (!minimap) {
             g.filter = PLAN_STYLE.glow
         }
-        g.drawImage(raster.walls, left, top, drawWidth, drawHeight)
+        drawMapImage(g, raster.walls, raster.origin, rasterSize, ratio)
         g.filter = "none"
         if (heightImage && floor) {
-            const [hx, hy] = toScreen(floor.origin[0], floor.origin[1] + floor.height * floor.cell)
             g.globalAlpha = 0.85
             g.imageSmoothingEnabled = false
-            g.drawImage(heightImage.canvas, hx, hy, floor.width * floor.cell * v.pixelsPerMeter, floor.height * floor.cell * v.pixelsPerMeter)
+            drawMapImage(g, heightImage.canvas, floor.origin, [floor.width * floor.cell, floor.height * floor.cell], ratio)
             g.globalAlpha = 1
         }
         // a 1 m grid (5 m when zoomed out), labelled
@@ -222,11 +254,12 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             g.fillStyle = PLAN_STYLE.gridText
             g.font = "10px ui-monospace, monospace"
             g.lineWidth = 1
-            const [x0, y1] = toWorld(0, 0)
-            const [x1, y0] = toWorld(width, height)
+            // in the turned frame, so it lines up with the walls once they're aligned
+            const [x0, y1] = screenToTurned(0, 0)
+            const [x1, y0] = screenToTurned(width, height)
             const step = v.pixelsPerMeter < 12 ? 5 : 1
             for (let x = Math.ceil(x0 / step) * step; x <= x1; x += step) {
-                const [sx] = toScreen(x, 0)
+                const [sx] = turnedToScreen(x, 0)
                 g.beginPath()
                 g.moveTo(sx, 0)
                 g.lineTo(sx, height)
@@ -234,7 +267,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
                 g.fillText(`${x}`, sx + 2, 66)
             }
             for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) {
-                const [, sy] = toScreen(0, y)
+                const [, sy] = turnedToScreen(0, y)
                 g.beginPath()
                 g.moveTo(0, sy)
                 g.lineTo(width, sy)
@@ -364,8 +397,9 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             const { camera, target } = scene.footprint(0)
             const lens = scene.viewer.camera
             const halfFov = Math.min(1.3, Math.atan(Math.tan(((lens.fov * Math.PI) / 180) / 2) * lens.aspect))
-            const angle = -Math.atan2(target[1] - camera[1], target[0] - camera[0])
             const [rx, ry] = toScreen(camera[0], camera[1])
+            const [sx, sy] = toScreen(target[0], target[1])
+            const angle = Math.atan2(sy - ry, sx - rx)
             const margin = 16
             const px = Math.min(width - margin, Math.max(margin, rx))
             const py = Math.min(height - margin, Math.max(margin, ry))

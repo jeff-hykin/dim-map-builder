@@ -17,6 +17,8 @@ Through Desktop it's all under `/apps/dim-map-builder/`. JSON unless noted; erro
 | `DELETE /api/sessions/:id/job` | | `{ cancelled }` |
 | `POST /api/sessions/:id/op` | `{ op, region, params, preview }` | `{ label, changed, remaining, preview? }` |
 | `POST /api/sessions/:id/transform` | `{ kind: "rotate", degrees }` \| `{ kind: "level" }` \| `{ kind: "set", transform }` | `{ ok }` |
+| `PUT /api/sessions/:id/slice` | `Slice` or `null` | `{ ok }` — the slicer's view (undoable, saved as `map/slice`) |
+| `GET /api/sessions/:id/alignment` | | `{ yaw }` — the turn (radians) that lines the walls up with x and y |
 | `GET /api/sessions/:id/floor` | | the local floor: `{ cell, origin, width, height, storeys: [{ level, band, heights (null = unknown), measured }] }` |
 | `POST /api/sessions/:id/modify` | `{ tool: "erase", floor, path, radius, zEnd?, relative?, fullColumn? }` \| `{ tool: "draw", floor, path, width, height }` \| `{ tool: "straighten", floor, from, to, width, zEnd?, relative?, fullColumn? }` | `{ label, changed, remaining }` — one undoable edit |
 | `POST /api/sessions/:id/annotations` | `{ type: "box" \| "plane" \| "point" \| "planPoint" \| "area" \| "prism" \| "view", ... }` | `{ id }` |
