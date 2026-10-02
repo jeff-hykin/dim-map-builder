@@ -26,6 +26,8 @@ const MODES: { id: ViewMode; label: string }[] = [
     { id: "split", label: "Split" },
     { id: "2d", label: "2D" },
 ]
+/** a mouse press on a toolbar button doesn't take the keyboard focus (so later shortcut keys don't ring it) */
+const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault()
 /** the panes' slide, ms (matches .pane's CSS transition) */
 const SLIDE_MS = 300
 
@@ -432,7 +434,7 @@ export function App() {
                 <div className="mode-switch" role="tablist" aria-label="view" data-mode-switch={mode}>
                     <span className="mode-highlight" style={{ transform: `translateX(${modeIndex * 100}%)` }} />
                     {MODES.map((m) => (
-                        <button key={m.id} type="button" role="tab" aria-selected={mode === m.id} className={mode === m.id ? "on" : ""} disabled={!hasMap} onClick={() => setUi({ mode: m.id })} data-mode={m.id} title={m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)"}>
+                        <button key={m.id} type="button" role="tab" aria-selected={mode === m.id} className={mode === m.id ? "on" : ""} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ mode: m.id })} data-mode={m.id} title={m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)"}>
                             {m.label}
                         </button>
                     ))}
@@ -485,17 +487,17 @@ export function App() {
                 {mode === "split" && <SplitDivider context={context} width={width} />}
 
                 <div className="orbs">
-                    <button type="button" className={`orb orb-edit ${ui.paletteOpen ? "open" : ""}`} disabled={!hasMap} onClick={() => setUi({ paletteOpen: !ui.paletteOpen })} title={hasMap ? "Edit tools (E)" : "Generate the map first"} data-orb="edit">
+                    <button type="button" className={`orb orb-edit ${ui.paletteOpen ? "open" : ""}`} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ paletteOpen: !ui.paletteOpen })} title={hasMap ? "Edit tools (E)" : "Generate the map first"} data-orb="edit">
                         ✎
                     </button>
-                    <button type="button" className={`orb orb-generate ${session && !hasMap ? "next" : ""} ${running?.kind === "build" ? "busy" : ""}`} disabled={!session} onClick={() => setModal("generate")} title={hasMap ? "Map generation settings (regenerate)" : "Generate the map"} data-orb="generate">
+                    <button type="button" className={`orb orb-generate ${session && !hasMap ? "next" : ""} ${running?.kind === "build" ? "busy" : ""}`} disabled={!session} onMouseDown={keepFocus} onClick={() => setModal("generate")} title={hasMap ? "Map generation settings (regenerate)" : "Generate the map"} data-orb="generate">
                         ⟳
                     </button>
                 </div>
                 {hasMap && ui.paletteOpen && (
                     <div className="palette" role="toolbar" aria-label="edit tools" data-palette>
                         {TOOLS.map((tool) => (
-                            <button key={tool.id} type="button" className={ui.tool === tool.id ? "on" : ""} onClick={() => pickTool(tool.id)} title={`${tool.label}${tool.key.length === 1 ? ` (${tool.key.toUpperCase()})` : tool.key ? " (Esc)" : ""}`} data-tool={tool.id}>
+                            <button key={tool.id} type="button" className={ui.tool === tool.id ? "on" : ""} onMouseDown={keepFocus} onClick={() => pickTool(tool.id)} title={`${tool.label}${tool.key.length === 1 ? ` (${tool.key.toUpperCase()})` : tool.key ? " (Esc)" : ""}`} data-tool={tool.id}>
                                 {tool.icon}
                             </button>
                         ))}
