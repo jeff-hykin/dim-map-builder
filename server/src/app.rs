@@ -134,8 +134,13 @@ impl App {
         if let Some(workspace) = self.workspaces.lock().unwrap().get(id) {
             return Ok(Some(workspace.clone()));
         }
-        let Some(session) = self.store.load(id)? else { return Ok(None) };
+        let Some(mut session) = self.store.load(id)? else { return Ok(None) };
         let map = self.store.load_map(id)?;
+        if map.is_none() && session.stage == "map" {
+            // its map file is gone (deleted by hand, or a crash between writes): back to "not built", annotations kept
+            session.stage = "raw".into();
+            session.history.push("The built map's file was missing: build the map again".into());
+        }
         let workspace = Arc::new(Mutex::new(Workspace::new(session, map)));
         self.workspaces.lock().unwrap().insert(id.into(), workspace.clone());
         Ok(Some(workspace))
