@@ -22,7 +22,7 @@
                         pname = "dim-map-builder-frontend";
                         version = "0.1.0";
                         src = ./frontend;
-                        npmDepsHash = "sha256-nMfPTXcTe9isOLJdYf7KVJLNOjWpVJ5UMabV+vjydvA=";
+                        npmDepsHash = "sha256-Xcui+5T8LHsBXLt75xADOYFqlork3EQ1w8ap+J4UjAs=";
                         installPhase = ''
                             cp -r dist $out
                         '';
