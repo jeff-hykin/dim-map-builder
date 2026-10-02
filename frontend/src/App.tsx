@@ -152,9 +152,8 @@ export function App() {
             const fresh = await run(api.open(recording))
             if (fresh) {
                 await adopt({ ...fresh, view: fresh.view ?? null })
-                if (fresh.stage !== "map") {
-                    setUi({ stage: "build" })
-                }
+                // opening goes on to the next thing to do, whatever stage the session was last left on
+                setUi({ stage: fresh.stage === "map" ? "clean" : "build" })
             }
         },
         [run, adopt, setUi],
