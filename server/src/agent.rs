@@ -1,20 +1,20 @@
-//! The Map Builder's tools for an agent (Desktop's chat, dimcode, or any MCP client), as an MCP server over
-//! streamable HTTP: `POST /mcp` takes JSON-RPC 2.0 and answers with JSON. Tools act on the recording open in the
-//! page unless given `session`. Every edit is the same undoable edit a user makes, and shows up in the page live.
-//! Tool docs: docs/agent-tools.md.
+//! The Map Builder's actions for Desktop's agent, in Desktop's endpoint-manifest model (dimos-desktop docs/agent.md):
+//! `GET /agent.json` lists them (description + JSON Schema params) and `POST /agent/<name>` runs one with a JSON body.
+//! Desktop's one MCP server searches and calls them; this app runs no MCP of its own. Each acts on the recording open
+//! in the page unless given `session`, and every edit is the same undoable edit a user makes, live in the page.
+//! Docs: docs/agent-tools.md.
 use crate::api::{add, NewAnnotation};
 use crate::app::App;
 use crate::workspace::{Region, Workspace};
 use anyhow::{bail, Context, Result};
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use mapping::voxels::Box3;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-const PROTOCOL: &str = "2025-06-18";
 
 const GUIDE: &str = "Map Builder: a 3D voxel map of a robot's recording, in the 'map' frame: meters, +z up, the floor of the main storey near z = 0 once levelled. \
 Coordinates you pass and get back are map-frame meters. Workflow: get_view (where the user is looking + a labelled screenshot) or get_status (map bounds, floors) -> \
@@ -22,10 +22,6 @@ query_region / find_objects to locate things by geometry -> fit_box to get a tig
 fit_box keeps the connected piece nearest the region's center, so center the rough region on the object you mean (a chair beside a table): \
 a generous region is fine. Trust fit_box's extents over a screenshot: screenshots are for finding things, not measuring them. \
 Cleanup tools remove voxels and are undoable (undo). 'region' can be \"view\" (what the user sees now), \"all\", or a box {center:[x,y,z], size:[dx,dy,dz], yaw}.";
-
-const GUIDE_BASIC: &str = "Map Builder: a 3D voxel map of a robot's recording, in the 'map' frame: meters, +z up. \
-Coordinates you pass and get back are map-frame meters. Use get_view to see what the user sees, then add_box etc. \
-Cleanup tools remove voxels and are undoable (undo). 'region' can be \"view\", \"all\", or a box {center:[x,y,z], size:[dx,dy,dz], yaw}.";
 
 fn tools() -> Value {
     let box_schema = json!({
@@ -80,83 +76,66 @@ fn tools() -> Value {
     ])
 }
 
-fn rpc_error(id: Value, code: i64, message: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
-}
-
-/// `?toolset=basic` serves the first version of the tools (no find_objects / fit_box / query_region, plain
-/// screenshots): kept for the agent evaluation's before/after (eval/), not for use.
-#[derive(serde::Deserialize, Default)]
-pub struct Options {
-    #[serde(default)]
-    toolset: String,
-}
-
-pub async fn handle(State(app): State<Arc<App>>, axum::extract::Query(options): axum::extract::Query<Options>, headers: HeaderMap, Json(request): Json<Value>) -> Response {
-    let _ = headers;
-    let basic = options.toolset == "basic";
-    // a batch is answered as one
-    if let Some(batch) = request.as_array() {
-        let mut answers = Vec::new();
-        for item in batch {
-            if let Some(answer) = answer(&app, item.clone(), basic).await {
-                answers.push(answer);
-            }
-        }
-        return Json(Value::Array(answers)).into_response();
-    }
-    match answer(&app, request, basic).await {
-        Some(answer) => {
-            let mut response = Json(answer).into_response();
-            response.headers_mut().insert("mcp-session-id", "map-builder".parse().unwrap());
-            response
-        }
-        None => StatusCode::ACCEPTED.into_response(),
+/// What the page shows ("view": screenshot) and its state ("context": desktop_context while the app is focused).
+fn role(name: &str) -> Option<&'static str> {
+    match name {
+        "get_view" => Some("view"),
+        "get_status" => Some("context"),
+        _ => None,
     }
 }
 
-const ADVANCED: [&str; 3] = ["find_objects", "fit_box", "query_region"];
-
-async fn answer(app: &Arc<App>, request: Value, basic: bool) -> Option<Value> {
-    let id = request.get("id").cloned();
-    let method = request["method"].as_str().unwrap_or_default().to_string();
-    let id = id?; // notifications get no answer
-    Some(match method.as_str() {
-        "initialize" => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "protocolVersion": request["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
-                "capabilities": { "tools": { "listChanged": false } },
-                "serverInfo": { "name": "dim-map-builder", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": if basic { GUIDE_BASIC } else { GUIDE },
+/// `GET /agent.json`: every action as an endpoint `POST agent/<name>`.
+pub async fn manifest() -> Json<Value> {
+    let endpoints: Vec<Value> = tools()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| {
+            let name = tool["name"].as_str().unwrap_or_default();
+            let mut endpoint = json!({ "method": "POST", "path": format!("agent/{name}"), "description": tool["description"], "params": tool["inputSchema"] });
+            if let Some(role) = role(name) {
+                endpoint["role"] = json!(role);
             }
-        }),
-        "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
-        "tools/list" => {
-            let mut list = tools();
-            if basic {
-                list.as_array_mut().unwrap().retain(|tool| !ADVANCED.contains(&tool["name"].as_str().unwrap_or_default()));
-                for tool in list.as_array_mut().unwrap() {
-                    if let Some(text) = tool["description"].as_str() {
-                        tool["description"] = json!(text.replace(GUIDE, GUIDE_BASIC).replace(" with a 1 m grid, axis labels and annotation labels drawn on it", ""));
-                    }
+            endpoint
+        })
+        .collect();
+    Json(json!({ "description": format!("3D voxel map editor for a robot recording: boxes, planes, points, cleanup, floor plans (2D views) with named points, areas and polygons. {GUIDE}"), "endpoints": endpoints }))
+}
+
+/// `POST /agent/<name>`: runs it; text parts come back as JSON, images as `images: [{ mimeType, data }]`.
+pub async fn invoke(State(app): State<Arc<App>>, Path(name): Path<String>, body: Option<Json<Value>>) -> Response {
+    let args = body.map(|Json(body)| body).filter(|b| b.is_object()).unwrap_or_else(|| json!({}));
+    if !tools().as_array().unwrap().iter().any(|tool| tool["name"] == name) {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": format!("no action {name}; GET agent.json lists them") }))).into_response();
+    }
+    match call(&app, &name, args).await {
+        Ok(content) => Json(response(content)).into_response(),
+        Err(error) => (StatusCode::BAD_REQUEST, Json(json!({ "error": format!("{error:#}") }))).into_response(),
+    }
+}
+
+/// Tool content (text parts holding JSON, image parts) as one JSON object.
+fn response(content: Vec<Value>) -> Value {
+    let mut result = json!({});
+    let mut images = Vec::new();
+    for part in content {
+        match part["type"].as_str() {
+            Some("image") => images.push(json!({ "mimeType": part["mimeType"], "data": part["data"] })),
+            _ => {
+                let text = part["text"].as_str().unwrap_or_default();
+                match serde_json::from_str::<Value>(text) {
+                    Ok(Value::Object(fields)) => result.as_object_mut().unwrap().extend(fields),
+                    Ok(other) => result["result"] = other,
+                    Err(_) => result["text"] = json!(text),
                 }
             }
-            json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": list } })
         }
-        "tools/call" => {
-            let name = request["params"]["name"].as_str().unwrap_or_default().to_string();
-            let arguments = request["params"]["arguments"].clone();
-            let outcome = if basic && ADVANCED.contains(&name.as_str()) { Err(anyhow::anyhow!("unknown tool {name}")) } else { call(app, &name, arguments, basic).await };
-            let content = match outcome {
-                Ok(content) => json!({ "content": content, "isError": false }),
-                Err(error) => json!({ "content": [{ "type": "text", "text": format!("error: {error:#}") }], "isError": true }),
-            };
-            json!({ "jsonrpc": "2.0", "id": id, "result": content })
-        }
-        _ => rpc_error(id, -32601, &format!("unknown method {method}")),
-    })
+    }
+    if !images.is_empty() {
+        result["images"] = Value::Array(images);
+    }
+    result
 }
 
 fn text(value: Value) -> Vec<Value> {
@@ -189,7 +168,7 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + '
     tokio::task::spawn_blocking(work).await?
 }
 
-pub async fn call(app: &Arc<App>, name: &str, args: Value, basic: bool) -> Result<Vec<Value>> {
+pub async fn call(app: &Arc<App>, name: &str, args: Value) -> Result<Vec<Value>> {
     let (id, workspace) = app.target(args["session"].as_str())?;
     let app2 = app.clone();
     let id2 = id.clone();
@@ -228,7 +207,7 @@ pub async fn call(app: &Arc<App>, name: &str, args: Value, basic: bool) -> Resul
                 "note": "map-frame meters; the screenshot's grid lines are 1 m apart, labelled at their x/y values",
             }));
             if args["screenshot"].as_bool().unwrap_or(true) {
-                let image = app.capture(json!({ "overlay": !basic, "topDown": args["topDown"].as_bool().unwrap_or(false) })).await?;
+                let image = app.capture(json!({ "overlay": true, "topDown": args["topDown"].as_bool().unwrap_or(false) })).await?;
                 let data = image.split_once(",").map_or(image.as_str(), |(_, data)| data).to_string();
                 content.push(json!({ "type": "image", "data": data, "mimeType": "image/png" }));
             }
@@ -486,4 +465,31 @@ pub fn find_objects(ws: &Workspace, region: &Region, min_voxels: usize, max_heig
     objects.sort_by(|a, b| b["voxels"].as_u64().cmp(&a["voxels"].as_u64()));
     objects.truncate(60);
     objects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn manifest_lists_every_action_as_an_endpoint() {
+        let Json(manifest) = manifest().await;
+        let endpoints = manifest["endpoints"].as_array().unwrap();
+        assert_eq!(endpoints.len(), tools().as_array().unwrap().len());
+        assert!(endpoints.iter().all(|e| e["method"] == "POST" && e["path"].as_str().unwrap().starts_with("agent/")));
+        let view = endpoints.iter().find(|e| e["path"] == "agent/get_view").unwrap();
+        assert_eq!(view["role"], "view");
+        assert_eq!(endpoints.iter().find(|e| e["path"] == "agent/get_status").unwrap()["role"], "context");
+        assert_eq!(view["params"]["type"], "object");
+    }
+
+    #[test]
+    fn content_becomes_one_json_object() {
+        let content = vec![
+            json!({ "type": "text", "text": "{\"camera\": {\"fov\": 50}}" }),
+            json!({ "type": "image", "mimeType": "image/png", "data": "AAAA" }),
+        ];
+        assert_eq!(response(content), json!({ "camera": { "fov": 50 }, "images": [{ "mimeType": "image/png", "data": "AAAA" }] }));
+        assert_eq!(response(vec![json!({ "type": "text", "text": "[1]" })]), json!({ "result": [1] }));
+    }
 }

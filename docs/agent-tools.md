@@ -1,21 +1,23 @@
-# The Map Builder's agent tools (MCP)
+# The Map Builder's agent endpoints
 
-The Map Builder server is an MCP server (streamable HTTP, JSON-RPC 2.0) at **`POST /mcp`**, i.e. through Desktop:
+The Map Builder runs no MCP server of its own. It describes its actions in Desktop's endpoint-manifest model
+(dimos-desktop's docs/agent.md): **`GET /agent.json`** lists them (description + JSON Schema params) and
+**`POST /agent/<name>`** runs one with a JSON body, e.g. through Desktop:
 
-    http://127.0.0.1:7077/apps/dim-map-builder/mcp
+    curl -X POST http://127.0.0.1:7077/apps/dim-map-builder/agent/fit_box -d '{"box": {"center": [1, 2, 0.5], "size": [2, 2, 1]}}'
 
-Hook it into Desktop's chat (dimcode) with
-
-    dimcode connect map-builder http://127.0.0.1:7077/apps/dim-map-builder/mcp
-
-or point any MCP client at it. Tools act on the recording open in the Map Builder page (or `session`), and every edit is
-the same undoable edit a user makes: it shows up in the page immediately, and `undo` / the page's Undo reverts it.
+Desktop's one MCP server (`/mcp`, which Desktop's dimcode uses) finds them with `search_endpoints` and runs them with
+`call_endpoint` (ids like `dim-map-builder:POST agent/fit_box`); `get_view` is the app's `screenshot`, `get_status` its
+state in `desktop_context`. A result is one JSON object; screenshots and plans are in `images: [{ mimeType, data }]`,
+which Desktop hands the model as images. Actions act on the recording open in the Map Builder page (or `session`), and
+every edit is the same undoable edit a user makes: it shows up in the page immediately, and `undo` / the page's Undo
+reverts it.
 
 Coordinates are **meters in the map frame** (+z up; after "Level the floor", the main floor is z = 0). Boxes are
 `{ center: [x, y, z], size: [dx, dy, dz], yaw }` (full extents, yaw in radians about +z). A `region` argument is
 `"view"` (what the user's camera sees now), `"all"`, or a box.
 
-| Tool | What it does |
+| Action | What it does |
 | --- | --- |
 | `get_status` | the open map: recording, stage, voxel count, bounds, floors, annotation counts, running job, unsaved?, recent history |
 | `get_view` | the user's camera, the bounds of the visible voxels, and a **screenshot** of the 3D view with a labelled 1 m grid, axes and annotation labels (`topDown: true` for a plan-like shot) |

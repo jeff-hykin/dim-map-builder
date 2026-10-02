@@ -1,8 +1,8 @@
 //! Map Builder's `dimos-app-server` (dimOS Desktop app contract, docs/apps.md in dimos-desktop): serves the built
-//! page, the editing API (/api), and the agent tools (/mcp). One compiled binary; no Python or dimos at runtime.
+//! page, the editing API (/api), and the agent's endpoints (/agent.json, /agent/<name>). One compiled binary; no Python or dimos at runtime.
 mod api;
 mod app;
-mod mcp;
+mod agent;
 mod persist;
 mod session;
 mod workspace;

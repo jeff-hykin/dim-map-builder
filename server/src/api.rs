@@ -100,7 +100,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/sessions/{id}/redo", post(redo))
         .route("/api/sessions/{id}/view", put(view))
         .route("/api/sessions/{id}/save", post(save))
-        .route("/mcp", post(crate::mcp::handle).get(|| async { (StatusCode::METHOD_NOT_ALLOWED, "POST JSON-RPC 2.0 here (MCP streamable HTTP)") }))
+        .route("/agent.json", get(crate::agent::manifest))
+        .route("/agent/{name}", post(crate::agent::invoke))
         .with_state(app)
 }
 

@@ -1,17 +1,21 @@
-// Agent evaluation of the Map Builder's MCP tools: real agents (`claude -p`, given ONLY the Map Builder's MCP tools
-// and their docs) do boxing / area tasks on real maps; each result is scored against a hand-placed ground truth.
+// Agent evaluation of the Map Builder's agent endpoints: real agents (`claude -p`, given ONLY Desktop's MCP server,
+// which reaches the Map Builder through its agent.json endpoints) do boxing / area tasks on real maps; each result is
+// scored against a hand-placed ground truth. The app runs inside Desktop, so --server is its URL under Desktop.
 //
-//   deno run -A eval/run.ts --server http://127.0.0.1:7190 --tasks eval/tasks.json --toolset basic|full --out eval/results-<toolset>.json
+//   deno run -A eval/run.ts --server http://127.0.0.1:7077/apps/dim-map-builder --tasks eval/tasks.json --out eval/results.json
+//
+// (results-basic.json / results-full*.json are from before the move to Desktop's MCP, when this app served its own
+// /mcp with a `basic` and a `full` toolset.)
 //
 // For each task: the session is opened (the page must be open on the server so `get_view` screenshots work), the
 // camera put where the task says, the agent runs, the annotations it added are scored (3D IoU for boxes, 2D IoU for
 // areas, best match per ground-truth box), then removed so the next task starts clean.
 import { parseArgs } from "jsr:@std/cli@1/parse-args"
 
-const args = parseArgs(Deno.args, { string: ["server", "tasks", "toolset", "out", "model", "only"], default: { toolset: "full", model: "" } })
-const server = args.server ?? "http://127.0.0.1:7190"
+const args = parseArgs(Deno.args, { string: ["server", "tasks", "out", "model", "only"], default: { model: "" } })
+const server = args.server ?? "http://127.0.0.1:7077/apps/dim-map-builder"
+const desktop = new URL(server).origin
 const tasks: Task[] = JSON.parse(await Deno.readTextFile(args.tasks ?? "eval/tasks.json"))
-const toolset = args.toolset
 
 type Box = { center: [number, number, number]; size: [number, number, number]; yaw?: number }
 interface Task {
@@ -56,7 +60,7 @@ function polygonIou(a: [number, number][], b: [number, number][]): number {
 }
 
 const config = await Deno.makeTempFile({ suffix: ".json" })
-await Deno.writeTextFile(config, JSON.stringify({ mcpServers: { map: { type: "http", url: `${server}/mcp${toolset === "basic" ? "?toolset=basic" : ""}` } } }))
+await Deno.writeTextFile(config, JSON.stringify({ mcpServers: { desktop: { type: "http", url: `${desktop}/mcp` } } }))
 
 const results = []
 for (const task of tasks.filter((t) => !args.only || args.only.split(",").includes(t.id))) {
@@ -66,7 +70,7 @@ for (const task of tasks.filter((t) => !args.only || args.only.split(",").includ
     await new Promise((r) => setTimeout(r, 2500))
     if (task.view) {
         // ask the page to look there (the same event set_view sends)
-        await fetch(`${server}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "set_view", arguments: task.view } }) })
+        await fetch(`${server}/agent/set_view`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(task.view) })
         await new Promise((r) => setTimeout(r, 1500))
     }
     const before = await api(`/api/sessions/${task.session}`)
@@ -76,7 +80,7 @@ for (const task of tasks.filter((t) => !args.only || args.only.split(",").includ
         args: [
             "-p", `${task.prompt}\n\n(You are working in the Map Builder through its tools only. When done, reply with one line saying what you added.)`,
             "--mcp-config", config, "--strict-mcp-config",
-            "--allowedTools", "mcp__map",
+            "--allowedTools", "mcp__desktop",
             "--disallowedTools", "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,Task,NotebookEdit,TodoWrite",
             "--output-format", "stream-json", "--verbose",
             ...(args.model ? ["--model", args.model] : []),
@@ -93,7 +97,8 @@ for (const task of tasks.filter((t) => !args.only || args.only.split(",").includ
     let failedCalls = 0
     for (const event of lines) {
         for (const block of event.message?.content ?? []) {
-            if (block.type === "tool_use") calls.push(String(block.name).replace(/^mcp__map__/, ""))
+            // call_endpoint's target is what counts (map builder actions are `dim-map-builder:POST agent/<name>`)
+            if (block.type === "tool_use") calls.push(String(block.input?.id ?? block.name).replace(/^mcp__desktop__/, "").replace(/^.*agent\//, ""))
             if (block.type === "tool_result" && block.is_error) failedCalls++
         }
         if (event.type === "result") final = event.result ?? ""
@@ -117,7 +122,7 @@ for (const task of tasks.filter((t) => !args.only || args.only.split(",").includ
             ious: ious.map((v) => +v.toFixed(2)),
         }
     }
-    const result = { task: task.id, toolset, seconds: Math.round(seconds), toolCalls: calls.length, failedCalls, calls, ...score, answer: final.slice(0, 300), exit: output.code }
+    const result = { task: task.id, seconds: Math.round(seconds), toolCalls: calls.length, failedCalls, calls, ...score, answer: final.slice(0, 300), exit: output.code }
     console.log(JSON.stringify(result))
     results.push(result)
     // clean up what the agent added (boxes, areas, anything else new)

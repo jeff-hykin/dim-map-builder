@@ -1,6 +1,6 @@
 # Map Builder server API
 
-`dimos-app-server` serves the page, this API under `/api`, and the agent tools at `/mcp` ([agent-tools.md](agent-tools.md)).
+`dimos-app-server` serves the page, this API under `/api`, and the agent's endpoints at `/agent.json` and `/agent/<name>` ([agent-tools.md](agent-tools.md)).
 Through Desktop it's all under `/apps/dim-map-builder/`. JSON unless noted; errors are `{ "error": "..." }`.
 
 | Method + path | Body | Response |
