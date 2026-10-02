@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const WORLD_FRAMES: [&str; 3] = ["world", "map", "odom"];
+/// the frame the odometry stream places, for world-frame clouds
+const ODOMETRY_FRAME: &str = "__odometry";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -92,8 +94,9 @@ impl std::error::Error for Cancelled {}
 enum Placement {
     /// tf from the cloud's frame to the world frame
     Tf(TfTree),
-    /// the clouds are already in the world frame; the row's stored pose (if any) is the sensor origin
-    World,
+    /// the clouds are already in the world frame; the sensor origin (for ray tracing) is the row's stored pose, else
+    /// the recording's odometry at that time, else the world origin
+    World(Option<TfTree>),
     /// the row's stored pose is the sensor pose in the world
     StoredPose,
 }
@@ -127,14 +130,16 @@ impl Prepared {
         let stored = pose.map(|p| iso([p[0], p[1], p[2]], [p[3], p[4], p[5], p[6]]));
         match &self.placement {
             Placement::Tf(tree) => tree.lookup(&self.world, frame.trim_start_matches('/'), ts, tolerance).or(stored),
-            Placement::World => stored.or(Some(Iso::identity())),
+            Placement::World(odometry) => stored
+                .or_else(|| odometry.as_ref().and_then(|tree| tree.lookup(&self.world, ODOMETRY_FRAME, ts, tolerance)))
+                .or(Some(Iso::identity())),
             Placement::StoredPose => stored,
         }
     }
 
     /// the scan's points in the sensor frame
     fn sensor_points(&self, sensor: &Iso, points: Vec<[f32; 3]>) -> Vec<[f32; 3]> {
-        if matches!(self.placement, Placement::World) {
+        if matches!(self.placement, Placement::World(_)) {
             let back = sensor.inverse();
             points.iter().map(|p| crate::tf::transform_point(&back, *p)).collect()
         } else {
@@ -174,8 +179,28 @@ fn prepare(recording: &Recording, options: &BuildOptions) -> Result<Prepared> {
         };
     }
     let placement = if cloud_frame == world || cloud_frame.is_empty() {
-        notes.push(format!("clouds are already in {world}"));
-        Placement::World
+        // world-frame clouds: ray trace from where the robot was (its odometry), so free space carves correctly
+        let mut odometry = TfTree::default();
+        for stream in recording.streams()?.into_iter().filter(|s| matches!(s.kind, Kind::Odometry | Kind::PoseStamped)) {
+            recording.for_each(&stream.name, |ts, message, _| {
+                let pose = match message {
+                    Message::Odometry(o) => o.pose,
+                    Message::PoseStamped(p) => p.pose,
+                    _ => return Ok(true),
+                };
+                odometry.add(ts, &world, ODOMETRY_FRAME, iso(pose.position, pose.orientation));
+                Ok(true)
+            })?;
+            if !odometry.is_empty() {
+                notes.push(format!("clouds are already in {world}; scans ray traced from {}", stream.name));
+                break;
+            }
+        }
+        odometry.finish();
+        if odometry.is_empty() {
+            notes.push(format!("clouds are already in {world} (no odometry: ray traced from the origin)"));
+        }
+        Placement::World((!odometry.is_empty()).then_some(odometry))
     } else if tree.lookup(&world, &cloud_frame, first_ts, f64::INFINITY).is_some() {
         notes.push(format!("placing {cloud_frame} clouds in {world} through tf"));
         Placement::Tf(tree)
