@@ -276,6 +276,13 @@ export function App() {
                 api.deliverCapture(event.request, image)
             } else if (event.type === "setView") {
                 scene.lookAt(event.target, event.distance ?? undefined, !!event.topDown)
+            } else if (event.type === "opened" && event.id !== current?.id) {
+                // an agent opened a recording: follow it
+                const state = await api.state().catch(() => null)
+                if (state?.session) {
+                    setModal(null)
+                    await adopt(state.session)
+                }
             } else if (event.type === "discarded" && current && event.id === current.id) {
                 setSession(null)
                 setModal("open")

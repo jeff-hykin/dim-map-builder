@@ -45,6 +45,7 @@ fn tools() -> Value {
         json!({ "name": name, "description": description, "inputSchema": { "type": "object", "properties": properties, "required": required } })
     };
     json!([
+        json!({ "name": "open_recording", "description": "Open a recording (.mcap / .db) in the Map Builder page: the user's page switches to it (its saved map and edits come back). path = absolute file path (Desktop's GET /recordings lists them with their paths).", "inputSchema": { "type": "object", "properties": { "path": { "type": "string" }, "name": { "type": "string" } }, "required": ["path"] } }),
         tool("get_status", &format!("{GUIDE}\n\nThe open map: recording, stage (raw = not built yet / map), voxel count, bounds, floors, annotation counts, running job, what can be undone."), json!({}), &[]),
         tool("get_view", "What the user is looking at: camera position/target, the map-frame bounds of the visible voxels, and (screenshot=true, default) a screenshot of the 3D view with a 1 m grid, axis labels and annotation labels drawn on it.", json!({ "screenshot": { "type": "boolean" }, "topDown": { "type": "boolean", "description": "screenshot from straight above the current target instead of the user's angle (the user's camera is restored after)" } }), &[]),
         tool("set_view", "Move the user's camera to look at a point (map frame).", json!({ "target": { "type": "array", "items": { "type": "number" } }, "distance": { "type": "number" }, "topDown": { "type": "boolean" } }), &["target"]),
@@ -169,6 +170,17 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + '
 }
 
 pub async fn call(app: &Arc<App>, name: &str, args: Value) -> Result<Vec<Value>> {
+    if name == "open_recording" {
+        let path = args["path"].as_str().context("path")?.to_string();
+        let path = if std::path::Path::new(&path).is_absolute() { path } else { app.recordings_dir.join(&path).display().to_string() };
+        let label = args["name"].as_str().unwrap_or_default().to_string();
+        let app2 = app.clone();
+        let opened = path.clone();
+        let workspace = blocking(move || app2.open("", &opened, &label, true)).await?;
+        let summary = crate::api::summary(app, &workspace.lock().unwrap());
+        app.emit(json!({ "type": "opened", "id": summary["id"] }));
+        return Ok(text(json!({ "session": summary["id"], "recording": path, "stage": summary["stage"], "note": "the page now shows it" })));
+    }
     let (id, workspace) = app.target(args["session"].as_str())?;
     let app2 = app.clone();
     let id2 = id.clone();
