@@ -22,8 +22,10 @@ export const modifyTool = new Store<{
     height: number
     /** the straighten band's width (how far from the dragged line wall voxels are taken), m */
     band: number
+    /** the straightened wall's thickness, m; null = the wall's own */
+    thickness: number | null
     busy: boolean
-}>({ radius: 0.3, fullColumn: false, width: 0.1, height: 1.0, band: 0.4, busy: false })
+}>({ thickness: null, radius: 0.3, fullColumn: false, width: 0.1, height: 1.0, band: 0.4, busy: false })
 
 /** a polygon being drawn in 2D (it becomes a prism annotation) */
 export const polygonTool = new Store<{ draft: [number, number][]; hover: [number, number] | null; label: string; height: number }>({

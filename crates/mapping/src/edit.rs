@@ -66,7 +66,7 @@ pub struct Reach {
 }
 
 impl Reach {
-    fn top(&self, floor: f32) -> f32 {
+    pub(crate) fn top(&self, floor: f32) -> f32 {
         self.above_floor.map_or(self.top, |above| (floor + above).min(self.top))
     }
 }
@@ -79,13 +79,13 @@ pub struct Edit {
 }
 
 impl Edit {
-    fn push(&mut self, p: [f32; 3], normal: [f32; 3]) {
+    pub(crate) fn push(&mut self, p: [f32; 3], normal: [f32; 3]) {
         self.add.push(p);
         self.add_normals.push(normal);
     }
 }
 
-fn center(key: Key, voxel: f32) -> [f32; 3] {
+pub(crate) fn center(key: Key, voxel: f32) -> [f32; 3] {
     [(key.0 as f32 + 0.5) * voxel, (key.1 as f32 + 0.5) * voxel, (key.2 as f32 + 0.5) * voxel]
 }
 
@@ -102,7 +102,7 @@ fn by_column(points: &[[f32; 3]], voxel: f32, columns: &AHashSet<(i32, i32)>) ->
 }
 
 /// The up-facing voxels around some columns (one column of margin), for `column_floor`.
-fn surfaces(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, columns: &AHashSet<(i32, i32)>) -> AHashSet<Key> {
+pub(crate) fn surfaces(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, columns: &AHashSet<(i32, i32)>) -> AHashSet<Key> {
     let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
     for c in columns {
         x0 = x0.min(c.0 - 1);
@@ -122,7 +122,7 @@ fn surfaces(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, columns: &AHa
 /// A column's floor: the floor model's estimate, raised to the highest up-facing *surface* just above it (the model's
 /// 25 cm cells blur stair treads; a column knows its own tread). A surface means most of the 3 x 3 columns around have
 /// an up-facing voxel at that height, so a wall's ragged foot or a couch seat (too high) doesn't count.
-fn column_floor(surfaces: &AHashSet<Key>, column: (i32, i32), voxel: f32, estimate: f32) -> f32 {
+pub(crate) fn column_floor(surfaces: &AHashSet<Key>, column: (i32, i32), voxel: f32, estimate: f32) -> f32 {
     let (low, high) = (((estimate - 0.1) / voxel).floor() as i32, ((estimate + 0.22) / voxel).floor() as i32);
     for layer in (low..=high).rev() {
         let around = (-1..=1)
@@ -194,139 +194,10 @@ pub fn draw(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Stro
     edit
 }
 
-/// Straighten a wall: the voxels within `width / 2` of the line from `from` to `to` (above the local floor, up to
-/// `reach`) are replaced by a one-voxel-thick wall on the line fitted through them, from the floor to a level top (the
-/// running median of the observed tops). Gaps and notches are filled, except a doorway: at least 0.6 m along the wall
-/// with nothing within 0.5 m of the floor, which stays open under a level header.
-pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [f32; 2], to: [f32; 2], width: f32, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
-    let stroke = Stroke { path: vec![from, to], radius: width / 2.0 };
-    let columns: AHashSet<(i32, i32)> = stroke.columns(voxel).into_iter().collect();
-    let members = by_column(points, voxel, &columns);
-    let surfaces = surfaces(points, normals, voxel, &columns);
-    let mut floors: AHashMap<(i32, i32), f32> = AHashMap::new();
-    let mut wall: Vec<u32> = Vec::new();
-    for (column, here) in &members {
-        let (x, y) = ((column.0 as f32 + 0.5) * voxel, (column.1 as f32 + 0.5) * voxel);
-        let Some(estimate) = floor_at(x, y) else { continue };
-        let floor = column_floor(&surfaces, *column, voxel, estimate);
-        floors.insert(*column, floor);
-        let top = reach.top(floor);
-        wall.extend(here.iter().filter(|i| {
-            let z = points[**i as usize][2];
-            z > floor + voxel * 0.5 && z <= top
-        }));
-    }
-    let mut edit = Edit::default();
-    if wall.len() < 8 {
-        return edit;
-    }
-    // the line: principal axis of the wall voxels' x, y, refit twice on the closest 60% (noise off the wall drops out)
-    let xy: Vec<[f32; 2]> = wall.iter().map(|i| [points[*i as usize][0], points[*i as usize][1]]).collect();
-    let fit = |chosen: &[[f32; 2]]| -> ([f32; 2], [f32; 2]) {
-        let n = chosen.len() as f32;
-        let (mx, my) = (chosen.iter().map(|p| p[0]).sum::<f32>() / n, chosen.iter().map(|p| p[1]).sum::<f32>() / n);
-        let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
-        for p in chosen {
-            let (dx, dy) = (p[0] - mx, p[1] - my);
-            sxx += dx * dx;
-            sxy += dx * dy;
-            syy += dy * dy;
-        }
-        let angle = 0.5 * (2.0 * sxy).atan2(sxx - syy);
-        ([mx, my], [angle.cos(), angle.sin()])
-    };
-    let (mut origin, mut direction) = fit(&xy);
-    for _ in 0..2 {
-        let mut ranked: Vec<(f32, [f32; 2])> = xy.iter().map(|p| (((p[0] - origin[0]) * -direction[1] + (p[1] - origin[1]) * direction[0]).abs(), *p)).collect();
-        ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let keep: Vec<[f32; 2]> = ranked[..(ranked.len() * 6 / 10).max(4)].iter().map(|r| r.1).collect();
-        (origin, direction) = fit(&keep);
-    }
-    // which heights each voxel-long stretch of the wall had
-    let along = |p: [f32; 2]| (p[0] - origin[0]) * direction[0] + (p[1] - origin[1]) * direction[1];
-    let mut spans: Vec<f32> = xy.iter().map(|p| along(*p)).collect();
-    spans.sort_by(|a, b| a.total_cmp(b));
-    let (start, end) = (spans[spans.len() / 50], spans[spans.len() - 1 - spans.len() / 50]);
-    let bins = ((end - start) / voxel).ceil().max(1.0) as usize;
-    let mut layers: Vec<AHashSet<i32>> = vec![AHashSet::new(); bins];
-    for i in &wall {
-        let p = points[*i as usize];
-        let bin = ((along([p[0], p[1]]) - start) / voxel).floor();
-        if bin >= 0.0 && (bin as usize) < bins {
-            layers[bin as usize].insert((p[2] / voxel).floor() as i32);
-        }
-    }
-    let normal = [-direction[1], direction[0], 0.0];
-    // per stretch: where it is, its floor layer, and the lowest / highest wall voxel seen there
-    let stretches: Vec<Option<([f32; 2], (i32, i32), i32, Option<(i32, i32)>)>> = (0..bins)
-        .map(|bin| {
-            let t = start + (bin as f32 + 0.5) * voxel;
-            let (x, y) = (origin[0] + direction[0] * t, origin[1] + direction[1] * t);
-            let column = ((x / voxel).floor() as i32, (y / voxel).floor() as i32);
-            let floor = floors.get(&column).copied().or_else(|| floor_at(x, y))?;
-            let span = layers[bin].iter().copied().fold(None, |range: Option<(i32, i32)>, l| Some(range.map_or((l, l), |(lo, hi)| (lo.min(l), hi.max(l)))));
-            Some(([x, y], column, (floor / voxel).floor() as i32 + 1, span))
-        })
-        .collect();
-    // a doorway: at least 0.6 m along the wall where nothing comes down to within 0.5 m of the floor
-    let near_floor = (0.5 / voxel).round() as i32;
-    let open: Vec<bool> = stretches.iter().map(|s| s.is_none_or(|(_, _, bottom, span)| span.is_none_or(|(low, _)| low - bottom > near_floor))).collect();
-    let mut doorway = vec![false; bins];
-    let mut run_start = 0;
-    for bin in 0..=bins {
-        if bin < bins && open[bin] {
-            continue;
-        }
-        if (bin - run_start) as f32 * voxel >= 0.6 {
-            doorway[run_start..bin].iter_mut().for_each(|d| *d = true);
-        }
-        run_start = bin + 1;
-    }
-    // the wall's top: the median of the stretch tops within 0.4 m, so a ragged top becomes a level one
-    let window = (0.4 / voxel).round() as usize;
-    let median = |values: &mut Vec<i32>| -> Option<i32> {
-        values.sort_unstable();
-        values.get(values.len() / 2).copied()
-    };
-    let tops: Vec<Option<i32>> = (0..bins)
-        .map(|bin| median(&mut (bin.saturating_sub(window)..(bin + window + 1).min(bins)).filter_map(|b| stretches[b].and_then(|s| s.3).map(|span| span.1)).collect()))
-        .collect();
-    let mut added: AHashSet<Key> = AHashSet::new();
-    let mut bin = 0;
-    while bin < bins {
-        // a doorway keeps its opening and gets a level header if there was wall above it
-        if doorway[bin] {
-            let end = (bin..bins).find(|b| !doorway[*b]).unwrap_or(bins);
-            let header = median(&mut (bin..end).filter_map(|b| stretches[b].and_then(|s| s.3).map(|span| span.0)).collect());
-            if let Some(header) = header {
-                for b in bin..end {
-                    if let (Some((_, column, _, _)), Some(top)) = (stretches[b], tops[b]) {
-                        for layer in header..=top {
-                            let key = (column.0, column.1, layer);
-                            if added.insert(key) {
-                                edit.push(center(key, voxel), normal);
-                            }
-                        }
-                    }
-                }
-            }
-            bin = end;
-            continue;
-        }
-        // wall: from one over the floor up to the level top (small gaps and notches filled)
-        if let (Some((_, column, bottom, _)), Some(top)) = (stretches[bin], tops[bin]) {
-            for layer in bottom..=top {
-                let key = (column.0, column.1, layer);
-                if added.insert(key) {
-                    edit.push(center(key, voxel), normal);
-                }
-            }
-        }
-        bin += 1;
-    }
-    edit.remove = wall;
-    edit.remove.sort_unstable();
-    edit
+/// Straighten a wall along the stroke from `from` to `to` (a band `width` wide): wall.rs.
+#[allow(clippy::too_many_arguments)]
+pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [f32; 2], to: [f32; 2], width: f32, thickness: Option<f32>, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
+    crate::wall::straighten(points, normals, voxel, from, to, width, thickness, floor_at, reach)
 }
 
 #[cfg(test)]
@@ -432,9 +303,10 @@ mod tests {
                 normals.push([1.0, 0.0, 0.0]);
             }
         }
-        let edit = straighten(&points, &normals, 0.05, [2.0, 0.1], [2.0, 3.9], 0.3, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        let edit = straighten(&points, &normals, 0.05, [2.0, 0.1], [2.0, 3.9], 0.3, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        let after = result(&points, &edit);
         let at_y = |y: f32| -> Vec<f32> {
-            let mut zs: Vec<f32> = edit.add.iter().filter(|p| (p[1] - y).abs() < 0.03).map(|p| p[2]).collect();
+            let mut zs: Vec<f32> = after.iter().filter(|p| (p[1] - y).abs() < 0.03 && p[2] > 0.03).map(|p| p[2]).collect();
             zs.sort_by(|a, b| a.total_cmp(b));
             zs
         };
@@ -446,18 +318,88 @@ mod tests {
         assert!(tops.len() <= 2, "a level top, not a comb: {tops:?}");
     }
 
+    /// the map after an edit: what wasn't removed, and what was added
+    fn result(points: &[[f32; 3]], edit: &Edit) -> Vec<[f32; 3]> {
+        let removed: AHashSet<u32> = edit.remove.iter().copied().collect();
+        points.iter().enumerate().filter(|(i, _)| !removed.contains(&(*i as u32))).map(|(_, p)| *p).chain(edit.add.iter().copied()).collect()
+    }
+
+    /// a wall along x = 2 of `thickness` voxels with specks hugging it (±1–2 voxels) and a 2 voxel thick room floor
+    fn rough_wall(thickness: i32) -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
+        let (mut points, mut normals) = (Vec::new(), Vec::new());
+        for i in 0..80 {
+            for j in 0..80 {
+                points.push([at(i), at(j), at(0)]);
+                normals.push([0.0, 0.0, 1.0]);
+            }
+        }
+        for j in 0..80 {
+            for k in 1..41 {
+                for w in 0..thickness {
+                    points.push([at(40 + w), at(j), at(k)]);
+                    normals.push([1.0, 0.0, 0.0]);
+                }
+                // fringe: every few voxels a speck one or two voxels off either face
+                if (j * 7 + k * 3) % 5 == 0 {
+                    let off = if (j + k) % 2 == 0 { -1 - (k % 2) } else { thickness + (k % 2) };
+                    points.push([at(40 + off), at(j), at(k)]);
+                    normals.push([1.0, 0.0, 0.0]);
+                }
+            }
+        }
+        (points, normals)
+    }
+
+    /// the x columns with something above the floor after the edit
+    fn columns_x(points: &[[f32; 3]], edit: &Edit) -> Vec<i32> {
+        let mut xs: Vec<i32> = result(points, edit).iter().filter(|p| p[2] > 0.03).map(|p| (p[0] / 0.05).floor() as i32).collect();
+        xs.sort_unstable();
+        xs.dedup();
+        xs
+    }
+
     #[test]
-    fn straighten_a_wobbly_wall() {
-        let (points, normals) = room();
-        let edit = straighten(&points, &normals, 0.05, [2.0, 0.2], [2.0, 3.8], 0.4, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
-        let xs: AHashSet<i32> = edit.add.iter().map(|p| (p[0] / 0.05).floor() as i32).collect();
-        // the wobble spanned 5 columns; the new wall is one column thick, two where the fitted line crosses a boundary
-        assert!(xs.len() <= 2 && xs.iter().max().unwrap() - xs.iter().min().unwrap() <= 1, "a straight line of columns: {xs:?}");
-        let x = edit.add.iter().map(|p| p[0]).sum::<f32>() / edit.add.len() as f32;
-        assert!((x - 2.0).abs() < 0.1, "on the wall's mean line: {x}");
-        let top = edit.add.iter().map(|p| p[2]).fold(0.0, f32::max);
-        assert!((top - at(40)).abs() < 1e-4, "keeps the wall's height");
-        assert!(edit.remove.len() > 3000, "the old wall goes: {}", edit.remove.len());
-        assert!(edit.add.iter().all(|p| p[2] > at(0)), "the floor is untouched");
+    fn straighten_a_rough_thin_wall() {
+        let (points, normals) = rough_wall(1);
+        // the brush covers only part of it: the tool finds the rest
+        let edit = straighten(&points, &normals, 0.05, [2.0, 1.2], [2.0, 2.8], 0.4, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        assert_eq!(columns_x(&points, &edit), vec![40], "one voxel thick, on the wall, fringe gone end to end");
+        let after = result(&points, &edit);
+        assert_eq!(after.iter().filter(|p| p[2] > 0.03).count(), 80 * 40, "every voxel of the wall, nothing else");
+    }
+
+    #[test]
+    fn straighten_keeps_a_thick_wall_thick() {
+        let (points, normals) = rough_wall(3);
+        let edit = straighten(&points, &normals, 0.05, [2.05, 0.2], [2.05, 3.8], 0.5, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        assert_eq!(columns_x(&points, &edit), vec![40, 41, 42], "three voxels thick, where the wall was");
+        let overridden = straighten(&points, &normals, 0.05, [2.05, 0.2], [2.05, 3.8], 0.5, Some(0.1), |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        assert_eq!(columns_x(&points, &overridden).len(), 2, "a 10 cm override");
+        // flat faces: every row along the wall has the same columns
+        let mut rows: AHashMap<i32, AHashSet<i32>> = AHashMap::new();
+        for p in result(&points, &edit).iter().filter(|p| p[2] > 0.03) {
+            rows.entry((p[1] / 0.05).floor() as i32).or_default().insert((p[0] / 0.05).floor() as i32);
+        }
+        assert!(rows.values().all(|r| r.len() == 3), "flat faces");
+    }
+
+    /// a slanted (30°) wall still becomes one straight slab with no holes
+    #[test]
+    fn straighten_a_slanted_wall() {
+        let (c, s) = (30f32.to_radians().cos(), 30f32.to_radians().sin());
+        let mut cloud: AHashSet<Key> = AHashSet::new();
+        for step in 0..120 {
+            let t = step as f32 * 0.03;
+            for k in 1..30 {
+                cloud.insert(key_of([1.0 + c * t, 1.0 + s * t, at(k)], 0.05));
+            }
+        }
+        let points: Vec<[f32; 3]> = cloud.iter().map(|k| center(*k, 0.05)).collect();
+        let normals = vec![[-s, c, 0.0]; points.len()];
+        let edit = straighten(&points, &normals, 0.05, [1.0, 1.0], [1.0 + c * 3.5, 1.0 + s * 3.5], 0.4, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        // no holes: every layer of every column the wall covers is filled
+        let added: AHashSet<Key> = result(&points, &edit).iter().map(|p| key_of(*p, 0.05)).collect();
+        let columns: AHashSet<(i32, i32)> = added.iter().map(|k| (k.0, k.1)).collect();
+        assert!(columns.iter().all(|c| (1..29).all(|k| added.contains(&(c.0, c.1, k)))), "solid columns");
     }
 }

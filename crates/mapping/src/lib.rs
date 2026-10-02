@@ -12,3 +12,4 @@ pub mod ray {
 }
 pub mod tf;
 pub mod voxels;
+pub mod wall;

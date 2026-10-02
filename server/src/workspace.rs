@@ -97,6 +97,9 @@ pub enum Modify {
         from: [f32; 2],
         to: [f32; 2],
         width: f32,
+        /// the slab's thickness, m; none = the wall's own
+        #[serde(default)]
+        thickness: Option<f32>,
         #[serde(flatten)]
         reach: ZEnd,
     },
@@ -405,8 +408,8 @@ impl Workspace {
                 let edit = mapping::edit::draw(&points, &normals, voxel, &Stroke { path: path.clone(), radius: (width / 2.0).max(voxel / 2.0) }, floor_at, *height);
                 (format!("Draw ({:.2} m wide, {:.2} m tall)", width, height), edit)
             }
-            Modify::Straighten { from, to, width, reach: z, .. } => {
-                let edit = mapping::edit::straighten(&points, &normals, voxel, *from, *to, *width, floor_at, reach(z)?);
+            Modify::Straighten { from, to, width, thickness, reach: z, .. } => {
+                let edit = mapping::edit::straighten(&points, &normals, voxel, *from, *to, *width, *thickness, floor_at, reach(z)?);
                 if edit.add.is_empty() {
                     bail!("no wall found along that line (drag along a wall, or widen the band)");
                 }

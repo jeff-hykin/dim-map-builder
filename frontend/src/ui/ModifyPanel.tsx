@@ -10,7 +10,7 @@ const ABOUT: Record<string, string> = {
     erase: "Brush away what stands on the floor: a couch, a person, clutter. The floor under it is filled in from the floor around.",
     brush: "Brush voxels onto the floor, up to the height below.",
     line: "Drag a straight line of voxels (a wall the robot should see).",
-    straighten: "Drag along a noisy wall: what's in the band becomes one straight wall on the line fitted through it.",
+    straighten: "Drag along a noisy wall. It finds the whole wall (past your stroke), fits a straight slab of the wall's own thickness, and meets the walls at its corners; specks and fringe go.",
 }
 
 function Number_({ label, value, min, max, step, unit, onChange, data }: { label: string; value: number; min: number; max: number; step: number; unit: string; onChange: (value: number) => void; data: string }) {
@@ -57,12 +57,31 @@ export function ModifyPanel({ context }: { context: Context }) {
             )}
             {tool === "straighten" && (
                 <>
+                    <div className="field">
+                        <span>thickness</span>
+                        <span className="row" style={{ margin: 0 }}>
+                            <div className="seg">
+                                <button type="button" className={state.thickness === null ? "on" : ""} onClick={() => modifyTool.update({ thickness: null })} data-thickness="auto">
+                                    auto
+                                </button>
+                                <button type="button" className={state.thickness !== null ? "on" : ""} onClick={() => modifyTool.update({ thickness: state.thickness ?? 0.1 })} data-thickness="set">
+                                    set
+                                </button>
+                            </div>
+                            {state.thickness !== null && (
+                                <>
+                                    <input className="number" type="number" min={5} step={5} value={Math.round(state.thickness * 100)} onChange={(event) => event.target.value !== "" && modifyTool.update({ thickness: Math.max(0.05, Number(event.target.value) / 100) })} data-modify="thickness" />
+                                    <span className="dim">cm</span>
+                                </>
+                            )}
+                        </span>
+                    </div>
                     <Number_ label="band width" value={state.band} min={0.1} max={1.5} step={0.05} unit="m" onChange={(band) => modifyTool.update({ band })} data="band" />
                     <label className="row">
                         <input type="checkbox" checked={state.fullColumn} onChange={(event) => modifyTool.update({ fullColumn: event.target.checked })} />
                         full column
                     </label>
-                    <div className="hint">Wall voxels within {(state.band / 2).toFixed(2)} m of the line, up to {reachText}, become a straight wall (it keeps its height and its doorways).</div>
+                    <div className="hint">The wall under the stroke (band {(state.band / 2).toFixed(2)} m either side), up to {reachText}, becomes a clean slab; doorways stay open.</div>
                 </>
             )}
             {state.busy && <div className="hint">applying…</div>}

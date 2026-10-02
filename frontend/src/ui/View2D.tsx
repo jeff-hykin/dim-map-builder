@@ -486,7 +486,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
                 if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 0.2) {
                     return
                 }
-                body = { tool: "straighten", floor: storey, from, to, width: state.band, ...reach }
+                body = { tool: "straighten", floor: storey, from, to, width: state.band, thickness: state.thickness, ...reach }
             }
             modifyTool.update({ busy: true })
             await run(api.modify(session.id, body), (r) => `${r.label}: ${r.changed.toLocaleString()} voxels changed (⌘Z undoes)`)
