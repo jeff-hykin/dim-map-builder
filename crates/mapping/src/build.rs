@@ -112,24 +112,45 @@ fn pick_cloud_stream(recording: &Recording, wanted: &str) -> Result<(String, u64
     Ok((best.name.clone(), best.count))
 }
 
-pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<BuildResult> {
-    let stage_count = if options.loop_closure { 4 } else { 3 };
-    let mut report = |stage: &str, index: usize, done: u64, total: u64, note: String| {
-        progress(Progress { stage: stage.into(), stage_index: index, stage_count, done, total, note });
-    };
-    let check = || if cancel.load(Ordering::Relaxed) { Err(anyhow::anyhow!(Cancelled)) } else { Ok(()) };
-    let mut result = BuildResult { voxel_size: options.voxel_size, ..Default::default() };
+/// Step 1, shared by the build and the quick preview: which stream, which world frame, how scans get placed.
+struct Prepared {
+    stream: String,
+    total: u64,
+    world: String,
+    placement: Placement,
+    notes: Vec<String>,
+}
 
-    // 1. tf + stream + frame
-    report("Reading the recording", 0, 0, 1, String::new());
+impl Prepared {
+    /// the sensor's pose in the world for one scan, if it can be placed
+    fn sensor_pose(&self, ts: f64, frame: &str, pose: Option<[f64; 7]>, tolerance: f64) -> Option<Iso> {
+        let stored = pose.map(|p| iso([p[0], p[1], p[2]], [p[3], p[4], p[5], p[6]]));
+        match &self.placement {
+            Placement::Tf(tree) => tree.lookup(&self.world, frame.trim_start_matches('/'), ts, tolerance).or(stored),
+            Placement::World => stored.or(Some(Iso::identity())),
+            Placement::StoredPose => stored,
+        }
+    }
+
+    /// the scan's points in the sensor frame
+    fn sensor_points(&self, sensor: &Iso, points: Vec<[f32; 3]>) -> Vec<[f32; 3]> {
+        if matches!(self.placement, Placement::World) {
+            let back = sensor.inverse();
+            points.iter().map(|p| crate::tf::transform_point(&back, *p)).collect()
+        } else {
+            points
+        }
+    }
+}
+
+fn prepare(recording: &Recording, options: &BuildOptions) -> Result<Prepared> {
     let (stream, total) = pick_cloud_stream(recording, &options.cloud_stream)?;
-    result.cloud_stream = stream.clone();
+    let mut notes = Vec::new();
     let mut tree = TfTree::default();
     for edge in recording.tf_edges()? {
         tree.add(edge.header.ts(), &edge.header.frame_id, &edge.child, iso(edge.translation, edge.rotation));
     }
     tree.finish();
-    check()?;
     let mut first: Option<(f64, String, Option<[f64; 7]>)> = None;
     recording.for_each(&stream, |ts, message, pose| {
         if let Message::Cloud(cloud) = message {
@@ -153,29 +174,94 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
         };
     }
     let placement = if cloud_frame == world || cloud_frame.is_empty() {
-        result.notes.push(format!("clouds are already in {world}"));
+        notes.push(format!("clouds are already in {world}"));
         Placement::World
     } else if tree.lookup(&world, &cloud_frame, first_ts, f64::INFINITY).is_some() {
-        result.notes.push(format!("placing {cloud_frame} clouds in {world} through tf"));
+        notes.push(format!("placing {cloud_frame} clouds in {world} through tf"));
         Placement::Tf(tree)
     } else if first_pose.is_some() {
-        result.notes.push(format!("no tf from {cloud_frame} to {world}: using the recording's stored scan poses"));
+        notes.push(format!("no tf from {cloud_frame} to {world}: using the recording's stored scan poses"));
         Placement::StoredPose
     } else {
         bail!("can't place {cloud_frame} clouds: no tf to {} and no stored poses (tf frames: {})", WORLD_FRAMES.join("/"), tree.frames().join(", "));
     };
-    result.world_frame = world.clone();
-    report("Reading the recording", 0, 1, 1, result.notes.join("; "));
+    Ok(Prepared { stream, total, world, placement, notes })
+}
 
-    let stored = |pose: Option<[f64; 7]>| pose.map(|p| iso([p[0], p[1], p[2]], [p[3], p[4], p[5], p[6]]));
-    // the sensor's pose in the world for one scan, if it can be placed
-    let sensor_pose = |ts: f64, frame: &str, pose: Option<[f64; 7]>| -> Option<Iso> {
-        match &placement {
-            Placement::Tf(tree) => tree.lookup(&world, frame.trim_start_matches('/'), ts, options.tf_tolerance).or(stored(pose)),
-            Placement::World => stored(pose).or(Some(Iso::identity())),
-            Placement::StoredPose => stored(pose),
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    pub world_frame: String,
+    pub cloud_stream: String,
+    pub points: Vec<[f32; 3]>,
+    pub path: Vec<[f32; 3]>,
+    pub scans: usize,
+    pub notes: Vec<String>,
+}
+
+/// The raw recording at a glance: up to `max_scans` scans spread over the recording, placed by odometry/tf only (no
+/// ray tracing, no loop closure), merged into `resolution` voxels; plus the odometry path.
+pub fn preview(recording: &Recording, options: &BuildOptions, max_scans: usize, resolution: f32, progress: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<Preview> {
+    let prepared = prepare(recording, options)?;
+    let step = (prepared.total as usize / max_scans.max(1)).max(1) as u64;
+    let mut cells: ahash::AHashSet<(i32, i32, i32)> = ahash::AHashSet::new();
+    let mut result = Preview { world_frame: prepared.world.clone(), cloud_stream: prepared.stream.clone(), notes: prepared.notes.clone(), ..Default::default() };
+    let mut index = 0u64;
+    recording.for_each(&prepared.stream, |ts, message, pose| {
+        index += 1;
+        if index % 32 == 0 {
+            progress(Progress { stage: "Reading scans".into(), stage_index: 0, stage_count: 1, done: index, total: prepared.total, note: String::new() });
+            if cancel.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!(Cancelled));
+            }
         }
+        let Message::Cloud(cloud) = message else { return Ok(true) };
+        let Some(sensor) = prepared.sensor_pose(ts, &cloud.frame_id, pose, options.tf_tolerance) else { return Ok(true) };
+        let t = sensor.translation.vector;
+        result.path.push([t.x as f32, t.y as f32, t.z as f32]);
+        if (index - 1) % step != 0 {
+            return Ok(true);
+        }
+        result.scans += 1;
+        for p in prepared.sensor_points(&sensor, cloud.points) {
+            let w = crate::tf::transform_point(&sensor, p);
+            if cells.insert(crate::voxels::key_of(w, resolution)) {
+                result.points.push(w);
+            }
+        }
+        Ok(true)
+    })?;
+    // thin the path to ~2 cm steps
+    let mut thinned: Vec<[f32; 3]> = Vec::new();
+    for p in result.path.drain(..) {
+        if thinned.last().is_none_or(|q| (0..3).map(|i| (p[i] - q[i]).powi(2)).sum::<f32>() > 0.0004) {
+            thinned.push(p);
+        }
+    }
+    result.path = thinned;
+    Ok(result)
+}
+
+pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<BuildResult> {
+    let stage_count = if options.loop_closure { 4 } else { 3 };
+    let mut report = |stage: &str, index: usize, done: u64, total: u64, note: String| {
+        progress(Progress { stage: stage.into(), stage_index: index, stage_count, done, total, note });
     };
+    let check = || if cancel.load(Ordering::Relaxed) { Err(anyhow::anyhow!(Cancelled)) } else { Ok(()) };
+    let mut result = BuildResult { voxel_size: options.voxel_size, ..Default::default() };
+
+    // 1. tf + stream + frame
+    report("Reading the recording", 0, 0, 1, String::new());
+    let prepared = prepare(recording, options)?;
+    check()?;
+    let stream = prepared.stream.clone();
+    let total = prepared.total;
+    let world = prepared.world.clone();
+    result.cloud_stream = stream.clone();
+    result.world_frame = world.clone();
+    result.notes = prepared.notes.clone();
+    report("Reading the recording", 0, 1, 1, result.notes.join("; "));
+    let sensor_pose = |ts: f64, frame: &str, pose: Option<[f64; 7]>| prepared.sensor_pose(ts, frame, pose, options.tf_tolerance);
     let every = options.every.max(1);
 
     // 2. loop closure
@@ -195,12 +281,7 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
                 return Ok(true);
             }
             let Some(sensor) = sensor_pose(ts, &cloud.frame_id, pose) else { return Ok(true) };
-            let body: Vec<[f32; 3]> = if matches!(placement, Placement::World) {
-                let inverse = sensor.inverse();
-                cloud.points.iter().map(|p| crate::tf::transform_point(&inverse, *p)).collect()
-            } else {
-                cloud.points
-            };
+            let body = prepared.sensor_points(&sensor, cloud.points);
             if pgo.process(sensor, ts, &body) {
                 loops += 1;
             }
@@ -259,12 +340,7 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
             result.corrected_path.push(position);
             last_position = Some(position);
         }
-        let points: Vec<(f32, f32, f32)> = if matches!(placement, Placement::World) {
-            let back = sensor.inverse();
-            cloud.points.iter().map(|p| crate::tf::transform_point(&back, *p)).map(|p| (p[0], p[1], p[2])).collect()
-        } else {
-            cloud.points.iter().map(|p| (p[0], p[1], p[2])).collect()
-        };
+        let points: Vec<(f32, f32, f32)> = prepared.sensor_points(&sensor, cloud.points).into_iter().map(|p| (p[0], p[1], p[2])).collect();
         let (t, q) = parts(&corrected);
         mapper.add_frame(points, Pose { position: (t[0] as f32, t[1] as f32, t[2] as f32), orientation: (q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32) });
         result.scans_used += 1;

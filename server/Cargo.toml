@@ -2,7 +2,8 @@
 name = "dimos-app-server"
 version = "0.1.0"
 edition = "2021"
-description = "Map Builder's backend for dimOS Desktop"
+description = "Map Builder's backend for dimOS Desktop: build, clean, annotate and save maps from dimos recordings"
+license = "Apache-2.0"
 
 [[bin]]
 name = "dimos-app-server"
@@ -10,5 +11,19 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+axum = "0.8"
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
 dimos-recording = { path = "../crates/dimos-recording" }
+futures = "0.3"
 mapping = { path = "../crates/mapping" }
+nalgebra = "0.33"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "fs"] }
+tower-http = { version = "0.6", features = ["fs", "limit"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

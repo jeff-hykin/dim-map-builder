@@ -166,30 +166,31 @@ pub fn rewrite_with(path: &Path, replace_topics: &[String], channels: &[NewChann
     Ok(())
 }
 
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    pub fn write_fixture(path: &Path, messages: &[(&str, &str, &str, f64, Vec<u8>)]) {
-        let mut writer = mcap::Writer::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap())).unwrap();
-        let mut channels: HashMap<String, u16> = HashMap::new();
-        for (index, (topic, encoding, kind, ts, payload)) in messages.iter().enumerate() {
-            let id = *channels.entry(topic.to_string()).or_insert_with(|| {
-                if *encoding == "lcm" {
-                    let metadata = BTreeMap::from([(LCM_TYPE_KEY.to_string(), kind.to_string())]);
-                    writer.add_channel(0, topic, "lcm", &metadata).unwrap()
-                } else {
-                    let schema = writer.add_schema(kind, "ros2msg", b"").unwrap();
-                    writer.add_channel(schema, topic, encoding, &BTreeMap::new()).unwrap()
-                }
-            });
-            let time = (ts * 1e9) as u64;
-            writer
-                .write_to_known_channel(&mcap::records::MessageHeader { channel_id: id, sequence: index as u32, log_time: time, publish_time: time }, payload)
-                .unwrap();
-        }
-        writer.finish().unwrap();
+/// Writes a small mcap (topic, encoding, kind, time, payload): fixtures for tests here and in dependents.
+pub fn write_fixture(path: &Path, messages: &[(&str, &str, &str, f64, Vec<u8>)]) {
+    let mut writer = mcap::Writer::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap())).unwrap();
+    let mut channels: HashMap<String, u16> = HashMap::new();
+    for (index, (topic, encoding, kind, ts, payload)) in messages.iter().enumerate() {
+        let id = *channels.entry(topic.to_string()).or_insert_with(|| {
+            if *encoding == "lcm" {
+                let metadata = BTreeMap::from([(LCM_TYPE_KEY.to_string(), kind.to_string())]);
+                writer.add_channel(0, topic, "lcm", &metadata).unwrap()
+            } else {
+                let schema = writer.add_schema(kind, "ros2msg", b"").unwrap();
+                writer.add_channel(schema, topic, encoding, &BTreeMap::new()).unwrap()
+            }
+        });
+        let time = (ts * 1e9) as u64;
+        writer
+            .write_to_known_channel(&mcap::records::MessageHeader { channel_id: id, sequence: index as u32, log_time: time, publish_time: time }, payload)
+            .unwrap();
     }
+    writer.finish().unwrap();
+    }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn rewrite_keeps_originals_and_replaces_previous_saves() {

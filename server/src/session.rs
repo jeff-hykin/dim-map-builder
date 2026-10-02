@@ -259,7 +259,16 @@ impl Store {
     pub fn load_map(&self, id: &str) -> Result<Option<MapData>> {
         let path = self.session_dir(id)?.join("map.bin");
         match std::fs::read(&path) {
-            Ok(bytes) => Ok(Some(decode_map(&bytes)?)),
+            Ok(bytes) => {
+                let mut map = decode_map(&bytes)?;
+                // edits since the map was written live in removed.bin
+                if let Ok(mask) = std::fs::read(self.session_dir(id)?.join("removed.bin")) {
+                    if mask.len() == map.points.len() {
+                        map.removed = mask.iter().map(|b| *b != 0).collect();
+                    }
+                }
+                Ok(Some(map))
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error.into()),
         }
@@ -271,6 +280,15 @@ impl Store {
         let temp = dir.join("map.bin.tmp");
         std::fs::write(&temp, encode_map(map))?;
         std::fs::rename(&temp, dir.join("map.bin"))?;
+        self.save_removed(id, &map.removed)
+    }
+
+    /// Just the deletion mask: what every edit changes, small enough to write on each one.
+    pub fn save_removed(&self, id: &str, removed: &[bool]) -> Result<()> {
+        let dir = self.session_dir(id)?;
+        let temp = dir.join("removed.bin.tmp");
+        std::fs::write(&temp, removed.iter().map(|r| *r as u8).collect::<Vec<u8>>())?;
+        std::fs::rename(&temp, dir.join("removed.bin"))?;
         Ok(())
     }
 
@@ -302,7 +320,7 @@ fn encode_map(map: &MapData) -> Vec<u8> {
     for count in [map.points.len(), map.raw_path.len(), map.corrected_path.len(), map.loops.len()] {
         out.extend_from_slice(&(count as u32).to_le_bytes());
     }
-    let mut floats = |values: &[[f32; 3]], out: &mut Vec<u8>| {
+    let floats = |values: &[[f32; 3]], out: &mut Vec<u8>| {
         for p in values {
             for v in p {
                 out.extend_from_slice(&v.to_le_bytes());

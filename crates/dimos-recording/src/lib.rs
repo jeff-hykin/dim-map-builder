@@ -180,7 +180,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("drive.mcap");
         let lcm_cloud = lcm::encode_xyz_cloud(&lcm::Header::at(2.0, "lidar"), &[[4.0, 5.0, 6.0]], None);
-        mcap_io::tests::write_fixture(
+        mcap_io::write_fixture(
             &path,
             &[
                 ("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1.0, cdr::tests::cloud_cdr(1, "lidar", &[[1.0, 2.0, 3.0]])),
