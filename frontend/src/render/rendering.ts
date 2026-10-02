@@ -1,4 +1,4 @@
-// Copied from dim-live-viewer frontend/src/core/render (1ba5a3c) — the Map Builder draws with the same point styles.
+// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Builder draws with the same point styles.
 // Rendering choices that apply to every point layer: the default point style (a layer can override it) and the
 // automatic fallback that swaps splats for cubes when they can't keep up.
 import { persistentStore, Store } from "../core/store.ts"

@@ -74,6 +74,8 @@ body.light .view { background: radial-gradient(120% 90% at 50% 0%, #fbfcfd, #e3e
 .scene-label { font: 600 11px/1.2 var(--mono); padding: 2px 6px; border-radius: 2px; white-space: nowrap; background: rgba(6, 9, 15, 0.78); color: var(--fg); border-left: 2px solid var(--label-color, var(--accent)); transform: translateY(-50%); }
 body.light .scene-label { background: rgba(255, 255, 255, 0.85); }
 .scene-label.covered { opacity: 0; }
+/* the 3D labels (CSS2D sets its own z-index) stay out of the floor plan */
+.app.plans .label-layer { display: none; }
 
 .panel-head { border-left: 3px solid var(--accent); padding-left: 10px; margin: 2px 0 12px; }
 .panel-head h2 { margin: 0; font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; }

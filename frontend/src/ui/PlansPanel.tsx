@@ -134,13 +134,36 @@ export function PlanView({ context }: { context: Context }) {
     const floor = Math.min(ui.planFloor, Math.max(0, (session?.annotations.floors.length ?? 1) - 1))
     const plan: PlanInfo | undefined = session?.plans[floor]
 
+    /** pixel bounds (column/row) of the known cells' 1st–99th percentile: sparse far stripes don't set the zoom */
+    const content = useRef<[number, number, number, number] | null>(null)
     useEffect(() => {
         if (!session || !plan) {
             setImage(null)
             return
         }
         const next = new Image()
-        next.onload = () => setImage(next)
+        next.onload = () => {
+            const scratch = document.createElement("canvas")
+            scratch.width = next.width
+            scratch.height = next.height
+            const g = scratch.getContext("2d")!
+            g.drawImage(next, 0, 0)
+            const pixels = g.getImageData(0, 0, next.width, next.height).data
+            const columns: number[] = []
+            const rows: number[] = []
+            for (let row = 0; row < next.height; row++) {
+                for (let column = 0; column < next.width; column++) {
+                    if (pixels[(row * next.width + column) * 4] !== 128) {
+                        columns.push(column)
+                        rows.push(row)
+                    }
+                }
+            }
+            const pick = (values: number[], q: number) => values.sort((a, b) => a - b)[Math.floor(q * (values.length - 1))] ?? 0
+            content.current = columns.length ? [pick(columns, 0.01), pick(rows, 0.01), pick(columns, 0.99), pick(rows, 0.99)] : null
+            view.current.fitted = ""
+            setImage(next)
+        }
         next.src = api.planUrl(session.id, floor, session.revision)
     }, [session?.id, session?.revision, floor, plan?.width])
 
@@ -181,9 +204,12 @@ export function PlanView({ context }: { context: Context }) {
         const v = view.current
         const key = `${session.id}:${floor}:${plan.width}x${plan.height}`
         if (v.fitted !== key) {
-            v.zoom = Math.min((box.clientWidth - 40) / plan.width, (box.clientHeight - 40) / plan.height)
-            v.x = (box.clientWidth - plan.width * v.zoom) / 2
-            v.y = (box.clientHeight - plan.height * v.zoom) / 2
+            const [c0, r0, c1, r1] = content.current ?? [0, 0, plan.width, plan.height]
+            const w = Math.max(20, c1 - c0 + 1)
+            const h = Math.max(20, r1 - r0 + 1)
+            v.zoom = Math.min((box.clientWidth - 60) / w, (box.clientHeight - 60) / h)
+            v.x = box.clientWidth / 2 - ((c0 + c1 + 1) / 2) * v.zoom
+            v.y = box.clientHeight / 2 - ((r0 + r1 + 1) / 2) * v.zoom
             v.fitted = key
         }
         g.imageSmoothingEnabled = false
@@ -212,7 +238,23 @@ export function PlanView({ context }: { context: Context }) {
             g.stroke()
             g.fillText(`${y}`, 2, sy - 2)
         }
-        const polygon = (corners: [number, number][], color: string, fill: boolean, label?: string) => {
+        // labels placed greedily: one that would overlap a placed label is skipped (points first, then areas)
+        const placed: [number, number, number, number][] = []
+        const label = (text: string, x: number, y: number, color: string, font = "600 12px ui-monospace, monospace") => {
+            g.font = font
+            const width = g.measureText(text).width
+            const rect: [number, number, number, number] = [x - 2, y - 12, x + width + 2, y + 4]
+            if (placed.some((p) => rect[0] < p[2] && rect[2] > p[0] && rect[1] < p[3] && rect[3] > p[1])) {
+                return
+            }
+            placed.push(rect)
+            g.fillStyle = "rgba(6, 9, 15, 0.72)"
+            g.fillRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1])
+            g.fillStyle = color
+            g.fillText(text, x, y)
+        }
+        const pending: (() => void)[] = []
+        const polygon = (corners: [number, number][], color: string, fill: boolean, text?: string) => {
             if (!corners.length) {
                 return
             }
@@ -229,13 +271,12 @@ export function PlanView({ context }: { context: Context }) {
             g.strokeStyle = color
             g.lineWidth = 2
             g.stroke()
-            if (label) {
+            if (text) {
                 const cx = corners.reduce((s, c) => s + c[0], 0) / corners.length
                 const cy = corners.reduce((s, c) => s + c[1], 0) / corners.length
                 const [sx, sy] = toScreen(cx, cy)
-                g.fillStyle = color
                 g.font = "600 12px ui-monospace, monospace"
-                g.fillText(label, sx - g.measureText(label).width / 2, sy)
+                pending.push(() => label(text, sx - g.measureText(text).width / 2, sy, color))
             }
         }
         for (const area of session.annotations.areas.filter((a) => a.floor === floor)) {
@@ -259,9 +300,10 @@ export function PlanView({ context }: { context: Context }) {
             g.strokeStyle = "#06090f"
             g.lineWidth = 2
             g.stroke()
-            g.font = "600 12px ui-monospace, monospace"
-            g.fillStyle = "#d8e6f4"
-            g.fillText(point.name, sx + 9, sy + 4)
+            label(point.name, sx + 9, sy + 4, "#d8e6f4")
+        }
+        for (const draw of pending) {
+            draw()
         }
     })
 

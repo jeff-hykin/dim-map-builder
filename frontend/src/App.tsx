@@ -306,7 +306,7 @@ export function App() {
     const running = job?.state === "running" ? job : null
 
     return (
-        <div className="app">
+        <div className={`app ${ui.stage === "plans" ? "plans" : ""}`}>
             <header className="topbar">
                 <span className="title">Map Builder</span>
                 {session && <span className="recording-name" title={session.recordingPath}>{session.name}</span>}

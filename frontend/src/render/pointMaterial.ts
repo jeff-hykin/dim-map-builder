@@ -1,4 +1,4 @@
-// Copied from dim-live-viewer frontend/src/core/render (1ba5a3c) — the Map Builder draws with the same point styles.
+// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Builder draws with the same point styles.
 // One shader for every point-like thing, a port of MemWorld's sprite shader
 // (memory_world/web/static/voxel_sprites.js): same view-space light normalize(2, 4, 3), same sphere (0.45 + 0.75·n·L)
 // and cube-face (0.42 + 0.72·n·L) lighting, sprites sized to the projected diameter. Points are GL point sprites,
@@ -96,7 +96,8 @@ void main() {
     vViewDepth = depth;
 #endif
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = clamp(px, uMinPx, 512.0);
+    // a splat right in front of the camera would be a screen-filling blob (and the most expensive fragment work)
+    gl_PointSize = clamp(px, uMinPx, uStyle == 3 ? 64.0 : 512.0);
     vCenter = center;
     vHalf = 0.5 * gl_PointSize / uPxPerMeter * depth;
 }

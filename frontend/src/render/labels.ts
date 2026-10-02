@@ -1,4 +1,4 @@
-// Copied from dim-live-viewer frontend/src/core/render (1ba5a3c) — the Map Builder draws with the same point styles.
+// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Builder draws with the same point styles.
 // Text in the 3D scene as HTML labels (crisp at any zoom, no font atlas), pooled so a message that relabels
 // everything every frame reuses the same elements.
 import * as THREE from "three"
