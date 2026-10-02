@@ -1,7 +1,7 @@
 //! The page's HTTP API under /api (docs/api.md in this repo). Session-scoped routes take the session id from
 //! `/api/open` (one per recording). Errors are `{ "error": "..." }`.
 use crate::app::App;
-use crate::workspace::{OpResult, Region, Workspace};
+use crate::workspace::{Modify, OpResult, Region, Workspace};
 use anyhow::Context;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
@@ -85,6 +85,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/sessions/{id}/job", delete(cancel))
         .route("/api/sessions/{id}/op", post(op))
         .route("/api/sessions/{id}/transform", post(transform))
+        .route("/api/sessions/{id}/floor", get(floor))
+        .route("/api/sessions/{id}/modify", post(modify))
         .route("/api/sessions/{id}/annotations", post(add_annotation))
         .route("/api/sessions/{id}/annotations/{annotation}", axum::routing::patch(patch_annotation).delete(delete_annotation))
         .route("/api/sessions/{id}/fit-box", post(fit_box))
@@ -208,6 +210,35 @@ async fn op(State(app): State<Arc<App>>, Path(id): Path<String>, Json(body): Jso
         }
     })
     .await??;
+    Ok(Json(result))
+}
+
+/// The local floor: per storey, a grid of floor heights (null where unknown) and which were measured.
+async fn floor(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
+    let workspace = app.require(&id)?;
+    let (model, version) = tokio::task::spawn_blocking(move || {
+        let mut workspace = workspace.lock().unwrap();
+        workspace.floor_model().map(|m| (m, workspace.map_version))
+    })
+    .await??;
+    let storeys: Vec<Value> = model
+        .storeys
+        .iter()
+        .map(|s| {
+            json!({
+                "level": s.level,
+                "band": s.band,
+                "heights": s.heights.iter().map(|h| if h.is_nan() { None } else { Some((h * 1000.0).round() / 1000.0) }).collect::<Vec<_>>(),
+                "measured": s.measured.iter().map(|m| *m as u8).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "mapVersion": version, "cell": model.cell, "origin": model.origin, "width": model.width, "height": model.height, "storeys": storeys })))
+}
+
+async fn modify(State(app): State<Arc<App>>, Path(id): Path<String>, Json(body): Json<Modify>) -> Result<Json<OpResult>> {
+    let app2 = app.clone();
+    let result = tokio::task::spawn_blocking(move || app2.mutate(&id, |w| w.modify(&body))).await??;
     Ok(Json(result))
 }
 

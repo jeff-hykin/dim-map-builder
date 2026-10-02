@@ -2,11 +2,14 @@
 //! tools, floors and plans. The API and the MCP tools both call these; nothing here knows who asked.
 use crate::session::{Annotations, Area, BoxAnnotation, Floor, MapData, PlaneAnnotation, PlanPoint, PointAnnotation, Session, Transform, UndoEntry};
 use anyhow::{bail, Context, Result};
+use mapping::edit::{Edit, Reach, Stroke};
+use mapping::floor::{FloorModel, FloorOptions};
 use mapping::floorplan::{rasterize, FloorPlan, PlanOptions};
 use mapping::tf::Iso;
 use mapping::voxels::{self, Box3};
 use nalgebra::{Point3, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Where a tool acts: a box, the camera's view (its view-projection matrix, column-major, map frame), or everything.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +63,43 @@ pub struct Workspace {
     pub map_version: u64,
     /// set when the session is discarded: a late write (a view update, an edit in flight) must not recreate it
     pub discarded: bool,
+    /// the local floor, for the map version and storey levels it was made from
+    floor_cache: Option<(u64, Vec<f32>, Arc<FloorModel>)>,
+}
+
+/// How high a Modify tool reaches: to `zEnd` (over the local floor when `relative`, else absolute z), or with
+/// `fullColumn` up to just under the next storey.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ZEnd {
+    pub z_end: Option<f32>,
+    pub relative: bool,
+    pub full_column: bool,
+}
+
+/// A Modify tool's stroke on a storey (map-frame x, y in meters).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "tool", rename_all = "camelCase")]
+pub enum Modify {
+    #[serde(rename_all = "camelCase")]
+    Erase {
+        floor: usize,
+        path: Vec<[f32; 2]>,
+        radius: f32,
+        #[serde(flatten)]
+        reach: ZEnd,
+    },
+    #[serde(rename_all = "camelCase")]
+    Draw { floor: usize, path: Vec<[f32; 2]>, width: f32, height: f32 },
+    #[serde(rename_all = "camelCase")]
+    Straighten {
+        floor: usize,
+        from: [f32; 2],
+        to: [f32; 2],
+        width: f32,
+        #[serde(flatten)]
+        reach: ZEnd,
+    },
 }
 
 fn new_id(prefix: &str) -> String {
@@ -85,7 +125,7 @@ fn rotate(value: &Iso, n: [f32; 3]) -> [f32; 3] {
 
 impl Workspace {
     pub fn new(session: Session, map: Option<MapData>) -> Workspace {
-        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64, discarded: false };
+        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64, discarded: false, floor_cache: None };
         workspace.refresh_frame();
         workspace
     }
@@ -307,6 +347,102 @@ impl Workspace {
         Ok(up)
     }
 
+    /// The storeys' floor heights: the floor plans' floors once generated, else detected.
+    pub fn levels(&self) -> Vec<f32> {
+        if !self.session.annotations.floors.is_empty() {
+            return self.session.annotations.floors.iter().map(|f| f.z).collect();
+        }
+        let (_, points, normals) = self.visible_points();
+        voxels::floor_levels(&points, &normals, 1.8)
+    }
+
+    /// The local floor of the map as it is now (cached until the map or the storeys change).
+    pub fn floor_model(&mut self) -> Result<Arc<FloorModel>> {
+        let voxel = self.require_map()?.voxel_size;
+        let levels = self.levels();
+        if let Some((version, cached_levels, model)) = &self.floor_cache {
+            if *version == self.map_version && *cached_levels == levels {
+                return Ok(model.clone());
+            }
+        }
+        let (_, points, normals) = self.visible_points();
+        let model = Arc::new(mapping::floor::build(&points, &normals, voxel, &levels, &FloorOptions::default()));
+        self.floor_cache = Some((self.map_version, levels, model.clone()));
+        Ok(model)
+    }
+
+    /// Erase / draw / straighten a wall on a storey, as one undoable edit.
+    pub fn modify(&mut self, request: &Modify) -> Result<OpResult> {
+        let model = self.floor_model()?;
+        let voxel = self.require_map()?.voxel_size;
+        let (_, points, normals) = self.visible_points();
+        let storey = match request {
+            Modify::Erase { floor, .. } | Modify::Draw { floor, .. } | Modify::Straighten { floor, .. } => *floor,
+        };
+        let band = model.storeys.get(storey).with_context(|| format!("no floor {storey} (floors: 0..{})", model.storeys.len()))?.band;
+        let floor_at = |x: f32, y: f32| model.height_at(storey, x, y);
+        let reach = |z: &ZEnd| -> Result<Reach> {
+            if z.full_column {
+                // up to the next storey's band, or everything above on the top storey
+                let top = if storey + 1 < model.storeys.len() { band[1] } else { f32::MAX };
+                return Ok(Reach { above_floor: None, top });
+            }
+            let end = z.z_end.context("zEnd (or fullColumn) is required")?;
+            Ok(if z.relative { Reach { above_floor: Some(end), top: f32::MAX } } else { Reach { above_floor: None, top: end } })
+        };
+        let (label, edit) = match request {
+            Modify::Erase { path, radius, reach: z, .. } => {
+                if path.is_empty() {
+                    bail!("erase needs a path");
+                }
+                let edit = mapping::edit::erase(&points, &normals, voxel, &Stroke { path: path.clone(), radius: *radius }, floor_at, reach(z)?);
+                (format!("Erase (r {:.2} m)", radius), edit)
+            }
+            Modify::Draw { path, width, height, .. } => {
+                if path.is_empty() {
+                    bail!("draw needs a path");
+                }
+                let edit = mapping::edit::draw(&points, &normals, voxel, &Stroke { path: path.clone(), radius: (width / 2.0).max(voxel / 2.0) }, floor_at, *height);
+                (format!("Draw ({:.2} m wide, {:.2} m tall)", width, height), edit)
+            }
+            Modify::Straighten { from, to, width, reach: z, .. } => {
+                let edit = mapping::edit::straighten(&points, &normals, voxel, *from, *to, *width, floor_at, reach(z)?);
+                if edit.add.is_empty() {
+                    bail!("no wall found along that line (drag along a wall, or widen the band)");
+                }
+                (format!("Straighten wall ({:.1} m)", (to[0] - from[0]).hypot(to[1] - from[1])), edit)
+            }
+        };
+        self.apply_edit(&label, edit)
+    }
+
+    /// Applies an edit computed on `visible_points()` (indices into that list) as one undoable step.
+    fn apply_edit(&mut self, label: &str, edit: Edit) -> Result<OpResult> {
+        let indices = self.visible();
+        let inverse = self.session.transform.iso().inverse();
+        let map = self.map.as_mut().context("no map yet: build the global map first")?;
+        let flipped: Vec<u32> = edit.remove.iter().map(|i| indices[*i as usize]).collect();
+        for i in &flipped {
+            map.removed[*i as usize] = true;
+        }
+        let first = map.points.len() as u32;
+        // stored in the recording's world frame, like the built voxels
+        for (p, n) in edit.add.iter().zip(&edit.add_normals) {
+            map.points.push(apply(&inverse, *p));
+            map.normals.push(rotate(&inverse, *n));
+            map.removed.push(false);
+        }
+        self.points.extend(&edit.add);
+        self.normals.extend(&edit.add_normals);
+        let added: Vec<u32> = (first..first + edit.add.len() as u32).collect();
+        let changed = flipped.len() + added.len();
+        if changed > 0 {
+            self.map_version += 1;
+            self.record(UndoEntry { label: format!("{label}: -{} +{} voxels", flipped.len(), added.len()), flipped, added, ..Default::default() });
+        }
+        Ok(OpResult { label: label.into(), changed, remaining: self.remaining(), preview: None })
+    }
+
     pub fn undo(&mut self) -> Option<String> {
         let entry = self.session.undo.pop()?;
         self.unapply(&entry, true);
@@ -332,8 +468,11 @@ impl Workspace {
             for i in &entry.flipped {
                 map.removed[*i as usize] = !undo;
             }
+            for i in &entry.added {
+                map.removed[*i as usize] = undo;
+            }
         }
-        if !entry.flipped.is_empty() {
+        if !entry.flipped.is_empty() || !entry.added.is_empty() {
             self.map_version += 1;
         }
         if let Some((before, after)) = &entry.annotations {
@@ -637,6 +776,35 @@ pub mod tests {
         let identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
         assert!(Region::View { matrix: identity }.contains([0.5, 0.5, 0.5]));
         assert!(!Region::View { matrix: identity }.contains([1.5, 0.5, 0.5]));
+    }
+
+    #[test]
+    fn modify_tools_undo_and_redo() {
+        let mut ws = Workspace::new(Session { stage: "map".into(), ..Default::default() }, Some(room_map()));
+        // move the map so added voxels must be stored back in the world frame
+        ws.rotate_yaw(30.0).unwrap();
+        let total = ws.remaining();
+        let model = ws.floor_model().unwrap();
+        assert_eq!(model.storeys.len(), 1);
+        let drawn = ws.modify(&Modify::Draw { floor: 0, path: vec![[1.0, 1.0], [2.0, 1.0]], width: 0.1, height: 1.0 }).unwrap();
+        assert!(drawn.changed > 300, "{}", drawn.changed);
+        assert_eq!(ws.remaining(), total + drawn.changed);
+        // what was drawn sits on the floor, in the map frame, also after a round trip through the world frame
+        let (_, points, _) = ws.visible_points();
+        let new_points: Vec<_> = points.iter().filter(|p| (p[1] - 1.0).abs() < 0.08 && (0.9..2.1).contains(&p[0]) && p[2] > 0.06).collect();
+        assert!(new_points.len() >= drawn.changed, "{} {}", new_points.len(), drawn.changed);
+        ws.undo();
+        assert_eq!(ws.remaining(), total);
+        ws.redo();
+        assert_eq!(ws.remaining(), total + drawn.changed);
+        // erase it again: the floor under it stays
+        let erased = ws.modify(&Modify::Erase { floor: 0, path: vec![[1.0, 1.0], [2.0, 1.0]], radius: 0.15, reach: ZEnd { z_end: Some(1.8), relative: true, full_column: false } }).unwrap();
+        assert!(erased.changed >= drawn.changed);
+        let floor_left = ws.visible_points().1.iter().filter(|p| (p[1] - 1.0).abs() < 0.1 && (1.1..1.9).contains(&p[0])).count();
+        assert!(floor_left >= 16 * 4, "{floor_left}");
+        ws.undo();
+        ws.undo();
+        assert_eq!(ws.remaining(), total);
     }
 
     #[test]

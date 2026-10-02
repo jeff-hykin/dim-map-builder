@@ -171,11 +171,17 @@ impl App {
             bail!("no session {id} (discarded)");
         }
         let before = workspace.session.revision;
+        let voxels_before = workspace.map.as_ref().map_or(0, |m| m.points.len());
         let result = change(&mut workspace)?;
         if workspace.session.revision != before {
             self.store.save(&workspace.session)?;
             if let Some(map) = &workspace.map {
-                self.store.save_removed(id, &map.removed)?;
+                // an edit that added voxels rewrites the map file; otherwise the mask is enough
+                if map.points.len() != voxels_before {
+                    self.store.save_map(id, map)?;
+                } else {
+                    self.store.save_removed(id, &map.removed)?;
+                }
             }
             self.emit(json!({ "type": "session", "id": id, "revision": workspace.session.revision }));
         }

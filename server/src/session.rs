@@ -146,6 +146,9 @@ pub struct UndoEntry {
     /// indices whose `removed` flag this edit flipped
     #[serde(default)]
     pub flipped: Vec<u32>,
+    /// voxels this edit added to the map (appended to `points`; undo hides them again)
+    #[serde(default)]
+    pub added: Vec<u32>,
     #[serde(default)]
     pub annotations: Option<(Annotations, Annotations)>,
     #[serde(default)]
