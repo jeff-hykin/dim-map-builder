@@ -21,6 +21,10 @@ Coordinates you pass and get back are map-frame meters. Workflow: get_view (wher
 query_region / find_objects to locate things by geometry -> fit_box to get a tight box around what's in a rough region -> add_box with that box. \
 Cleanup tools remove voxels and are undoable (undo). 'region' can be \"view\" (what the user sees now), \"all\", or a box {center:[x,y,z], size:[dx,dy,dz], yaw}.";
 
+const GUIDE_BASIC: &str = "Map Builder: a 3D voxel map of a robot's recording, in the 'map' frame: meters, +z up. \
+Coordinates you pass and get back are map-frame meters. Use get_view to see what the user sees, then add_box etc. \
+Cleanup tools remove voxels and are undoable (undo). 'region' can be \"view\", \"all\", or a box {center:[x,y,z], size:[dx,dy,dz], yaw}.";
+
 fn tools() -> Value {
     let box_schema = json!({
         "type": "object",
@@ -74,19 +78,28 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-pub async fn handle(State(app): State<Arc<App>>, headers: HeaderMap, Json(request): Json<Value>) -> Response {
+/// `?toolset=basic` serves the first version of the tools (no find_objects / fit_box / query_region, plain
+/// screenshots): kept for the agent evaluation's before/after (eval/), not for use.
+#[derive(serde::Deserialize, Default)]
+pub struct Options {
+    #[serde(default)]
+    toolset: String,
+}
+
+pub async fn handle(State(app): State<Arc<App>>, axum::extract::Query(options): axum::extract::Query<Options>, headers: HeaderMap, Json(request): Json<Value>) -> Response {
     let _ = headers;
+    let basic = options.toolset == "basic";
     // a batch is answered as one
     if let Some(batch) = request.as_array() {
         let mut answers = Vec::new();
         for item in batch {
-            if let Some(answer) = answer(&app, item.clone()).await {
+            if let Some(answer) = answer(&app, item.clone(), basic).await {
                 answers.push(answer);
             }
         }
         return Json(Value::Array(answers)).into_response();
     }
-    match answer(&app, request).await {
+    match answer(&app, request, basic).await {
         Some(answer) => {
             let mut response = Json(answer).into_response();
             response.headers_mut().insert("mcp-session-id", "map-builder".parse().unwrap());
@@ -96,7 +109,9 @@ pub async fn handle(State(app): State<Arc<App>>, headers: HeaderMap, Json(reques
     }
 }
 
-async fn answer(app: &Arc<App>, request: Value) -> Option<Value> {
+const ADVANCED: [&str; 3] = ["find_objects", "fit_box", "query_region"];
+
+async fn answer(app: &Arc<App>, request: Value, basic: bool) -> Option<Value> {
     let id = request.get("id").cloned();
     let method = request["method"].as_str().unwrap_or_default().to_string();
     let id = id?; // notifications get no answer
@@ -108,15 +123,27 @@ async fn answer(app: &Arc<App>, request: Value) -> Option<Value> {
                 "protocolVersion": request["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
                 "capabilities": { "tools": { "listChanged": false } },
                 "serverInfo": { "name": "dim-map-builder", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": GUIDE,
+                "instructions": if basic { GUIDE_BASIC } else { GUIDE },
             }
         }),
         "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
-        "tools/list" => json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": tools() } }),
+        "tools/list" => {
+            let mut list = tools();
+            if basic {
+                list.as_array_mut().unwrap().retain(|tool| !ADVANCED.contains(&tool["name"].as_str().unwrap_or_default()));
+                for tool in list.as_array_mut().unwrap() {
+                    if let Some(text) = tool["description"].as_str() {
+                        tool["description"] = json!(text.replace(GUIDE, GUIDE_BASIC).replace(" with a 1 m grid, axis labels and annotation labels drawn on it", ""));
+                    }
+                }
+            }
+            json!({ "jsonrpc": "2.0", "id": id, "result": { "tools": list } })
+        }
         "tools/call" => {
             let name = request["params"]["name"].as_str().unwrap_or_default().to_string();
             let arguments = request["params"]["arguments"].clone();
-            let content = match call(app, &name, arguments).await {
+            let outcome = if basic && ADVANCED.contains(&name.as_str()) { Err(anyhow::anyhow!("unknown tool {name}")) } else { call(app, &name, arguments, basic).await };
+            let content = match outcome {
                 Ok(content) => json!({ "content": content, "isError": false }),
                 Err(error) => json!({ "content": [{ "type": "text", "text": format!("error: {error:#}") }], "isError": true }),
             };
@@ -156,7 +183,7 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + '
     tokio::task::spawn_blocking(work).await?
 }
 
-pub async fn call(app: &Arc<App>, name: &str, args: Value) -> Result<Vec<Value>> {
+pub async fn call(app: &Arc<App>, name: &str, args: Value, basic: bool) -> Result<Vec<Value>> {
     let (id, workspace) = app.target(args["session"].as_str())?;
     let app2 = app.clone();
     let id2 = id.clone();
@@ -195,7 +222,7 @@ pub async fn call(app: &Arc<App>, name: &str, args: Value) -> Result<Vec<Value>>
                 "note": "map-frame meters; the screenshot's grid lines are 1 m apart, labelled at their x/y values",
             }));
             if args["screenshot"].as_bool().unwrap_or(true) {
-                let image = app.capture(json!({ "overlay": true, "topDown": args["topDown"].as_bool().unwrap_or(false) })).await?;
+                let image = app.capture(json!({ "overlay": !basic, "topDown": args["topDown"].as_bool().unwrap_or(false) })).await?;
                 let data = image.split_once(",").map_or(image.as_str(), |(_, data)| data).to_string();
                 content.push(json!({ "type": "image", "data": data, "mimeType": "image/png" }));
             }

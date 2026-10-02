@@ -529,10 +529,11 @@ export class MapScene {
         if (!positions.length) {
             return
         }
-        const box = new THREE.Box3().setFromArray(positions)
-        const center = box.getCenter(new THREE.Vector3())
-        const size = box.getSize(new THREE.Vector3()).length()
-        this.viewer.frame(center, Math.max(3, size * 0.8))
+        // the bulk of the map (2nd–98th percentile per axis): a few far specks don't zoom the view out
+        const ranges = [0, 1, 2].map((axis) => percentileRange(positions, axis, 0.02, 0.98))
+        const center = new THREE.Vector3(...ranges.map(([lo, hi]) => (lo + hi) / 2))
+        const size = Math.hypot(...ranges.map(([lo, hi]) => hi - lo))
+        this.viewer.frame(center, Math.max(3, size * 0.75))
     }
 
     topDown() {
