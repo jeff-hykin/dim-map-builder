@@ -1,0 +1,14 @@
+[package]
+name = "dimos-app-server"
+version = "0.1.0"
+edition = "2021"
+description = "Map Builder's backend for dimOS Desktop"
+
+[[bin]]
+name = "dimos-app-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+dimos-recording = { path = "../crates/dimos-recording" }
+mapping = { path = "../crates/mapping" }

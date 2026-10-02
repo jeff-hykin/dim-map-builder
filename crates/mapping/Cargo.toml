@@ -1,0 +1,21 @@
+[package]
+name = "mapping"
+version = "0.1.0"
+edition = "2021"
+description = "The Map Builder's map math: ray-traced voxel map (vendored from dimos), tf, loop closure, cleanup, floor plans"
+license = "Apache-2.0"
+
+[dependencies]
+ahash = "0.8"
+anyhow = "1"
+arrayvec = "0.7"
+kiddo = "5"
+nalgebra = "0.33"
+png = "0.17"
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+
+dimos-recording = { path = "../dimos-recording" }
+
+[dev-dependencies]
+tempfile = "3"
