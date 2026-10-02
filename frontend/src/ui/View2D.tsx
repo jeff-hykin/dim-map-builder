@@ -192,7 +192,12 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         // frame the content until the user moves the view (always, for the minimap)
         if (!view.current || minimap || autoFit.current) {
             autoFit.current = true
-            const [x0, y0, x1, y1] = raster.content ?? [raster.origin[0], raster.origin[1], raster.origin[0] + raster.width * raster.resolution, raster.origin[1] + raster.height * raster.resolution]
+            let [x0, y0, x1, y1] = raster.content ?? [raster.origin[0], raster.origin[1], raster.origin[0] + raster.width * raster.resolution, raster.origin[1] + raster.height * raster.resolution]
+            // the minimap always shows where the 3D camera stands, even when it's outside the map
+            if (minimap && scene) {
+                const { camera } = scene.footprint(0)
+                ;[x0, y0, x1, y1] = [Math.min(x0, camera[0] - 1), Math.min(y0, camera[1] - 1), Math.max(x1, camera[0] + 1), Math.max(y1, camera[1] + 1)]
+            }
             const pad = minimap ? 8 : 40
             const pixelsPerMeter = Math.min((width - pad * 2) / Math.max(1, x1 - x0), (height - pad * 2) / Math.max(1, y1 - y0))
             view.current = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, pixelsPerMeter }
