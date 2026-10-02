@@ -236,7 +236,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
                 g.moveTo(sx, 0)
                 g.lineTo(sx, height)
                 g.stroke()
-                g.fillText(`${x}`, sx + 2, 12)
+                g.fillText(`${x}`, sx + 2, 66)
             }
             for (let y = Math.ceil(y0 / step) * step; y <= y1; y += step) {
                 const [, sy] = toScreen(0, y)

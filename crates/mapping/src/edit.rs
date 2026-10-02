@@ -175,8 +175,9 @@ pub fn draw(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Stro
 }
 
 /// Straighten a wall: the voxels within `width / 2` of the line from `from` to `to` (above the local floor, up to
-/// `reach`) are replaced by a one-voxel-thick wall on the line fitted through them. Along the wall, each stretch keeps
-/// the heights it had (a doorway stays open), with small holes closed and the bottom carried down to the floor.
+/// `reach`) are replaced by a one-voxel-thick wall on the line fitted through them, from the floor to a level top (the
+/// running median of the observed tops). Gaps and notches are filled, except a doorway: at least 0.6 m along the wall
+/// with nothing within 0.5 m of the floor, which stays open under a level header.
 pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [f32; 2], to: [f32; 2], width: f32, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
     let stroke = Stroke { path: vec![from, to], radius: width / 2.0 };
     let columns: AHashSet<(i32, i32)> = stroke.columns(voxel).into_iter().collect();
@@ -235,37 +236,72 @@ pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [
         }
     }
     let normal = [-direction[1], direction[0], 0.0];
-    let mut added: AHashSet<Key> = AHashSet::new();
-    let max_gap = (0.3 / voxel).round() as i32;
-    for bin in 0..bins {
-        // a stretch takes its neighbours' heights too, which bridges a missing voxel here and there
-        let mut heights: Vec<i32> = (bin.saturating_sub(1)..(bin + 2).min(bins)).flat_map(|b| layers[b].iter().copied()).collect();
-        heights.sort_unstable();
-        heights.dedup();
-        if heights.is_empty() {
+    // per stretch: where it is, its floor layer, and the lowest / highest wall voxel seen there
+    let stretches: Vec<Option<([f32; 2], (i32, i32), i32, Option<(i32, i32)>)>> = (0..bins)
+        .map(|bin| {
+            let t = start + (bin as f32 + 0.5) * voxel;
+            let (x, y) = (origin[0] + direction[0] * t, origin[1] + direction[1] * t);
+            let column = ((x / voxel).floor() as i32, (y / voxel).floor() as i32);
+            let floor = floors.get(&column).copied().or_else(|| floor_at(x, y))?;
+            let span = layers[bin].iter().copied().fold(None, |range: Option<(i32, i32)>, l| Some(range.map_or((l, l), |(lo, hi)| (lo.min(l), hi.max(l)))));
+            Some(([x, y], column, (floor / voxel).floor() as i32 + 1, span))
+        })
+        .collect();
+    // a doorway: at least 0.6 m along the wall where nothing comes down to within 0.5 m of the floor
+    let near_floor = (0.5 / voxel).round() as i32;
+    let open: Vec<bool> = stretches.iter().map(|s| s.is_none_or(|(_, _, bottom, span)| span.is_none_or(|(low, _)| low - bottom > near_floor))).collect();
+    let mut doorway = vec![false; bins];
+    let mut run_start = 0;
+    for bin in 0..=bins {
+        if bin < bins && open[bin] {
             continue;
         }
-        let t = start + (bin as f32 + 0.5) * voxel;
-        let (x, y) = (origin[0] + direction[0] * t, origin[1] + direction[1] * t);
-        let column = ((x / voxel).floor() as i32, (y / voxel).floor() as i32);
-        let Some(floor) = floors.get(&column).copied().or_else(|| floor_at(x, y)) else { continue };
-        let bottom = (floor / voxel).floor() as i32 + 1;
-        let mut filled: Vec<i32> = Vec::new();
-        let mut previous = if heights[0] - bottom <= max_gap { bottom - 1 } else { heights[0] - 1 };
-        for layer in heights {
-            if layer - previous <= max_gap + 1 {
-                filled.extend(previous + 1..=layer);
-            } else {
-                filled.push(layer);
-            }
-            previous = layer;
+        if (bin - run_start) as f32 * voxel >= 0.6 {
+            doorway[run_start..bin].iter_mut().for_each(|d| *d = true);
         }
-        for layer in filled.into_iter().filter(|l| *l >= bottom) {
-            let key = (column.0, column.1, layer);
-            if added.insert(key) {
-                edit.push(center(key, voxel), normal);
+        run_start = bin + 1;
+    }
+    // the wall's top: the median of the stretch tops within 0.4 m, so a ragged top becomes a level one
+    let window = (0.4 / voxel).round() as usize;
+    let median = |values: &mut Vec<i32>| -> Option<i32> {
+        values.sort_unstable();
+        values.get(values.len() / 2).copied()
+    };
+    let tops: Vec<Option<i32>> = (0..bins)
+        .map(|bin| median(&mut (bin.saturating_sub(window)..(bin + window + 1).min(bins)).filter_map(|b| stretches[b].and_then(|s| s.3).map(|span| span.1)).collect()))
+        .collect();
+    let mut added: AHashSet<Key> = AHashSet::new();
+    let mut bin = 0;
+    while bin < bins {
+        // a doorway keeps its opening and gets a level header if there was wall above it
+        if doorway[bin] {
+            let end = (bin..bins).find(|b| !doorway[*b]).unwrap_or(bins);
+            let header = median(&mut (bin..end).filter_map(|b| stretches[b].and_then(|s| s.3).map(|span| span.0)).collect());
+            if let Some(header) = header {
+                for b in bin..end {
+                    if let (Some((_, column, _, _)), Some(top)) = (stretches[b], tops[b]) {
+                        for layer in header..=top {
+                            let key = (column.0, column.1, layer);
+                            if added.insert(key) {
+                                edit.push(center(key, voxel), normal);
+                            }
+                        }
+                    }
+                }
+            }
+            bin = end;
+            continue;
+        }
+        // wall: from one over the floor up to the level top (small gaps and notches filled)
+        if let (Some((_, column, bottom, _)), Some(top)) = (stretches[bin], tops[bin]) {
+            for layer in bottom..=top {
+                let key = (column.0, column.1, layer);
+                if added.insert(key) {
+                    edit.push(center(key, voxel), normal);
+                }
             }
         }
+        bin += 1;
     }
     edit.remove = wall;
     edit.remove.sort_unstable();
@@ -327,6 +363,43 @@ mod tests {
         assert_eq!(edit.add.len(), 20 * 20, "{}", edit.add.len());
         assert!(edit.add.iter().all(|p| p[2] > at(0) && p[2] <= at(0) + 1.0));
         assert!(edit.add_normals.iter().all(|n| n[1].abs() > 0.99), "faces away from the line");
+    }
+
+    /// a straight wall with a ragged top, a 1 m doorway (a header above 2 m), and a 20 cm hole that should close
+    #[test]
+    fn straighten_keeps_doorways_and_levels_the_top() {
+        let (mut points, mut normals) = (Vec::new(), Vec::new());
+        for i in 0..80 {
+            for j in 0..80 {
+                points.push([at(i), at(j), at(0)]);
+                normals.push([0.0, 0.0, 1.0]);
+            }
+        }
+        for j in 0..80 {
+            let door = (20..40).contains(&j);
+            let hole = (60..64).contains(&j);
+            // the top wobbles between 2.2 and 2.45 m
+            let top = 44 + (j * 7 % 5);
+            for k in 1..=top {
+                if (door && k < 40) || (hole && k < 30) {
+                    continue;
+                }
+                points.push([at(40), at(j), at(k)]);
+                normals.push([1.0, 0.0, 0.0]);
+            }
+        }
+        let edit = straighten(&points, &normals, 0.05, [2.0, 0.1], [2.0, 3.9], 0.3, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX });
+        let at_y = |y: f32| -> Vec<f32> {
+            let mut zs: Vec<f32> = edit.add.iter().filter(|p| (p[1] - y).abs() < 0.03).map(|p| p[2]).collect();
+            zs.sort_by(|a, b| a.total_cmp(b));
+            zs
+        };
+        let door = at_y(at(30));
+        assert!(!door.is_empty() && door[0] > 1.9, "the doorway stays open under its header: {:?}", door.first());
+        let hole = at_y(at(62));
+        assert!((hole[0] - at(1)).abs() < 1e-4, "the small hole is filled down to the floor");
+        let tops: AHashSet<i32> = [at(5), at(12), at(50), at(70)].iter().map(|y| (at_y(*y).last().unwrap() / 0.05) as i32).collect();
+        assert!(tops.len() <= 2, "a level top, not a comb: {tops:?}");
     }
 
     #[test]

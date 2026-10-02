@@ -22,6 +22,16 @@ export const POINT_STYLES = {
 export type PointStyle = keyof typeof POINT_STYLES
 export type ColorMode = "height" | "intensity" | "range" | "solid"
 
+/** How a cube's faces are lit (dim-live-viewer 1fb7f7d). Each is a branch in the voxel shader, picked by `uCubeShade`. */
+export const CUBE_SHADES = {
+    soft: { id: 0, label: "Soft", about: "gentle wrap-around light, no dark faces (rerun-like)" },
+    sky: { id: 1, label: "Sky", about: "lit from above: tops bright, sides mid, undersides dim; doesn't change as you orbit" },
+    outline: { id: 2, label: "Outlined", about: "flat color with thin dark edges, like a voxel editor" },
+    bevel: { id: 3, label: "Beveled", about: "soft light with faces that darken gently toward their edges" },
+    memworld: { id: 4, label: "Contrast", about: "MemWorld's strong per-face light" },
+} as const
+export type CubeShade = keyof typeof CUBE_SHADES
+
 export interface PointLook {
     /** "default" follows Settings → Rendering */
     style: PointStyle | "default"
@@ -36,6 +46,8 @@ export interface PointLook {
     rangeMax: number | null
     solid: string
     opacity: number
+    /** cube face lighting (default Soft) */
+    shade?: CubeShade
 }
 
 const COLOR = { height: 0, intensity: 1, range: 2, solid: 3 }
@@ -110,6 +122,7 @@ uniform float uOpacity;
 uniform vec3 uLightWorld;
 uniform vec2 uFog;
 uniform vec3 uBackground;
+uniform int uCubeShade;
 // view-space light direction, MemWorld's normalize(2, 4, 3)
 const vec3 LIGHT = vec3(0.3713907, 0.7427814, 0.5570860);
 varying vec3 vColor;
@@ -162,9 +175,25 @@ void main() {
     else if (a.y >= a.z) { normal = vec3(0.0, sign(local.y), 0.0); face = local.xz; }
     else { normal = vec3(0.0, 0.0, sign(local.z)); face = local.xy; }
     // per-face light (MemWorld's cube faces): the view-space light turned into world space once per draw, on the CPU
-    float light = 0.42 + 0.72 * max(dot(normal, uLightWorld), 0.0);
-    float edge = smoothstep(0.86, 0.99, max(abs(face.x), abs(face.y)));
-    gl_FragColor = vec4(vColor * light * (1.0 - 0.18 * edge), uOpacity);
+    float rim = max(abs(face.x), abs(face.y));
+    float ndl = dot(normal, uLightWorld);
+    float light;
+    if (uCubeShade == 0) {
+        // wrap lighting: the face away from the light still keeps most of its color
+        light = 0.66 + 0.36 * (0.5 + 0.5 * ndl) - 0.06 * smoothstep(0.9, 1.0, rim);
+    } else if (uCubeShade == 1) {
+        // hemisphere light from world up (z), with a small side bias so neighbouring side faces still differ
+        light = normal.z > 0.5 ? 1.02 : normal.z < -0.5 ? 0.62 : 0.8 + 0.06 * (normal.x + 0.5 * normal.y);
+        light -= 0.05 * smoothstep(0.9, 1.0, rim);
+    } else if (uCubeShade == 2) {
+        light = (0.9 + 0.08 * ndl) * (1.0 - 0.5 * smoothstep(0.88, 0.93, rim));
+    } else if (uCubeShade == 3) {
+        light = (0.72 + 0.3 * (0.5 + 0.5 * ndl)) * (1.0 - 0.22 * smoothstep(0.45, 1.0, rim));
+    } else {
+        // per-face light (MemWorld's cube faces): the view-space light turned into world space once per draw, on the CPU
+        light = (0.42 + 0.72 * max(ndl, 0.0)) * (1.0 - 0.18 * smoothstep(0.86, 0.99, rim));
+    }
+    gl_FragColor = vec4(vColor * light, uOpacity);
 #endif
 }
 `
@@ -194,6 +223,7 @@ export function makePointMaterial(pixelsPerMeter: { value: number }): THREE.Shad
             uKeep: { value: 1 },
             uFog: { value: new THREE.Vector2(10, 40) },
             uBackground: { value: new THREE.Color(0x06090f) },
+            uCubeShade: { value: 0 },
         },
         defines: {},
     })
@@ -214,6 +244,7 @@ export function applyLook(material: THREE.ShaderMaterial, look: PointLook, range
     uniforms.uSize.value = Math.max(0.001, look.size)
     const style = POINT_STYLES[look.style as PointStyle] ?? POINT_STYLES.disc
     uniforms.uStyle.value = style.id
+    uniforms.uCubeShade.value = CUBE_SHADES[look.shade ?? "soft"]?.id ?? 0
     // only the defines this look needs; a change recompiles once
     const wanted = new Set<string>()
     if (style.define) {

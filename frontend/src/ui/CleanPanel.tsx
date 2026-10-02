@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { api, type Region } from "../core/api.ts"
 import { GRADIENTS } from "../render/gradients.ts"
+import { CUBE_SHADES, type CubeShade } from "../render/pointMaterial.ts"
 import type { Context } from "./context.ts"
 
 interface Tool {
@@ -179,6 +180,18 @@ export function CleanPanel({ context }: { context: Context }) {
                     ))}
                 </div>
             </div>
+            {ui.look.style === "voxel" && (
+                <div className="field">
+                    <span>cube shading</span>
+                    <select value={ui.look.shade ?? "soft"} onChange={(event) => { const shade = event.target.value as CubeShade; scene.applyLook({ shade }); setUi({ look: { ...ui.look, shade } }) }} data-cube-shade>
+                        {Object.entries(CUBE_SHADES).map(([id, shade]) => (
+                            <option key={id} value={id} title={shade.about}>
+                                {shade.label}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
             <div className="field">
                 <span>colors</span>
                 <select value={ui.look.gradient} onChange={(event) => { scene.applyLook({ gradient: event.target.value }); setUi({ look: { ...ui.look, gradient: event.target.value } }) }}>

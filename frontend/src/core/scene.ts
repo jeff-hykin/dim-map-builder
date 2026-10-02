@@ -4,7 +4,7 @@
 import * as THREE from "three"
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js"
 import { Viewer } from "../render/viewer.ts"
-import { applyLook, makePointMaterial, type PointLook, type PointStyle } from "../render/pointMaterial.ts"
+import { applyLook, makePointMaterial, type CubeShade, type PointLook, type PointStyle } from "../render/pointMaterial.ts"
 import { FatLines, pushBox } from "../render/lines.ts"
 import { LabelPool } from "../render/labels.ts"
 import type { Annotations, Box3 } from "./api.ts"
@@ -18,6 +18,8 @@ export interface MapLook {
     gradient: string
     /** voxel edge multiplier: 1 = the map's voxel size */
     scale: number
+    /** how cube faces are lit */
+    shade?: CubeShade
 }
 
 const ACCENT = new THREE.Color("#7af0a8")
@@ -94,7 +96,7 @@ export class MapScene {
     readonly raw: PointLayer
     readonly preview: PointLayer
     voxelSize = 0.05
-    look: MapLook = { style: "voxel", gradient: "memworld", scale: 1 }
+    look: MapLook = { style: "voxel", gradient: "memworld", scale: 1, shade: "soft" }
     #paths: FatLines
     #rawPath: FatLines
     #loops: FatLines
@@ -257,6 +259,7 @@ export class MapScene {
             rangeMax: null,
             solid: "#ffffff",
             opacity: 1,
+            shade: this.look.shade ?? "soft",
         })
         this.viewer.requestRender()
     }

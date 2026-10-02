@@ -2,6 +2,7 @@
 import type { MapScene } from "../core/scene.ts"
 import type { Session } from "../core/api.ts"
 import { AUTO_RANGE, type FloorModel, type SliceRange } from "../core/slice.ts"
+import type { CubeShade } from "../render/pointMaterial.ts"
 
 export type ViewMode = "3d" | "split" | "2d"
 
@@ -41,7 +42,7 @@ export interface UiState {
     view2d: View2d | null
     floorOverlay: boolean
     showPaths: { corrected: boolean; raw: boolean; loops: boolean }
-    look: { style: "voxel" | "disc" | "square" | "splat"; gradient: string; scale: number }
+    look: { style: "voxel" | "disc" | "square" | "splat"; gradient: string; scale: number; shade?: CubeShade }
     region: { center: [number, number, number]; size: [number, number, number]; yaw: number } | null
     selected: { kind: string; id: string } | null
     scope: "view" | "region" | "all"
@@ -57,7 +58,7 @@ export const DEFAULT_UI: UiState = {
     view2d: null,
     floorOverlay: false,
     showPaths: { corrected: true, raw: false, loops: true },
-    look: { style: "voxel", gradient: "memworld", scale: 1 },
+    look: { style: "voxel", gradient: "memworld", scale: 1, shade: "soft" },
     region: null,
     selected: null,
     scope: "view",
