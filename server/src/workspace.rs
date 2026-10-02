@@ -56,6 +56,8 @@ pub struct Workspace {
     /// map-frame copies of `map.points` / `map.normals` (transform applied), rebuilt when the transform changes
     points: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
+    /// bumps whenever what the page draws as the map changes (deletions, transform, a new build)
+    pub map_version: u64,
 }
 
 fn new_id(prefix: &str) -> String {
@@ -81,12 +83,13 @@ fn rotate(value: &Iso, n: [f32; 3]) -> [f32; 3] {
 
 impl Workspace {
     pub fn new(session: Session, map: Option<MapData>) -> Workspace {
-        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new() };
+        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64 };
         workspace.refresh_frame();
         workspace
     }
 
     fn refresh_frame(&mut self) {
+        self.map_version += 1;
         let transform = self.session.transform.iso();
         if let Some(map) = &self.map {
             self.points = map.points.iter().map(|p| apply(&transform, *p)).collect();
@@ -187,6 +190,7 @@ impl Workspace {
         }
         let changed = flipped.len();
         if changed > 0 {
+            self.map_version += 1;
             self.record(UndoEntry { label: format!("{label} ({changed} voxels)"), flipped, ..Default::default() });
         }
         Ok(OpResult { label: label.into(), changed, remaining: self.remaining(), preview: None })
@@ -326,6 +330,9 @@ impl Workspace {
             for i in &entry.flipped {
                 map.removed[*i as usize] = !undo;
             }
+        }
+        if !entry.flipped.is_empty() {
+            self.map_version += 1;
         }
         if let Some((before, after)) = &entry.annotations {
             self.session.annotations = if undo { before.clone() } else { after.clone() };

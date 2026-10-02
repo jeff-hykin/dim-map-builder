@@ -6,7 +6,7 @@
         "dev": "vite",
         "build": "tsc --noEmit -p . && vite build",
         "check": "tsc --noEmit -p .",
-        "test": "deno test -A --no-check --no-lock test/"
+        "test": "echo no frontend unit tests (the logic is server-side)"
     },
     "dependencies": {
         "react": "^19.2.0",

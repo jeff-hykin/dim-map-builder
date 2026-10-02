@@ -159,6 +159,7 @@ export interface Session {
     redoLabel: string | null
     unsaved: boolean
     voxels: number
+    mapVersion: number
     totalVoxels: number
     voxelSize: number | null
     bounds: [[number, number, number], [number, number, number]] | null

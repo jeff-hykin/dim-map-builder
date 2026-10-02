@@ -60,6 +60,7 @@ pub fn summary(app: &App, workspace: &Workspace) -> Value {
         object.insert("redoLabel".into(), json!(session.redo.last().map(|e| e.label.clone())));
         object.insert("unsaved".into(), json!(session.revision != session.saved_revision));
         object.insert("voxels".into(), json!(workspace.remaining()));
+        object.insert("mapVersion".into(), json!(workspace.map_version));
         object.insert("totalVoxels".into(), json!(workspace.map.as_ref().map_or(0, |m| m.points.len())));
         object.insert("voxelSize".into(), json!(workspace.map.as_ref().map(|m| m.voxel_size)));
         object.insert("bounds".into(), json!(workspace.bounds()));

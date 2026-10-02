@@ -1,0 +1,44 @@
+# The Map Builder's agent tools (MCP)
+
+The Map Builder server is an MCP server (streamable HTTP, JSON-RPC 2.0) at **`POST /mcp`**, i.e. through Desktop:
+
+    http://127.0.0.1:7077/apps/dim-map-builder/mcp
+
+Hook it into Desktop's chat (dimcode) with
+
+    dimcode connect map-builder http://127.0.0.1:7077/apps/dim-map-builder/mcp
+
+or point any MCP client at it. Tools act on the recording open in the Map Builder page (or `session`), and every edit is
+the same undoable edit a user makes: it shows up in the page immediately, and `undo` / the page's Undo reverts it.
+
+Coordinates are **meters in the map frame** (+z up; after "Level the floor", the main floor is z = 0). Boxes are
+`{ center: [x, y, z], size: [dx, dy, dz], yaw }` (full extents, yaw in radians about +z). A `region` argument is
+`"view"` (what the user's camera sees now), `"all"`, or a box.
+
+| Tool | What it does |
+| --- | --- |
+| `get_status` | the open map: recording, stage, voxel count, bounds, floors, annotation counts, running job, unsaved?, recent history |
+| `get_view` | the user's camera, the bounds of the visible voxels, and a **screenshot** of the 3D view with a labelled 1 m grid, axes and annotation labels (`topDown: true` for a plan-like shot) |
+| `set_view` | move the user's camera to look at a point |
+| `query_region` | count / bounds / horizontal-vs-vertical surface split / sample of the voxels in a region |
+| `find_objects` | clusters standing on a floor (furniture-like) in a region, each with a tight box, size and height |
+| `fit_box` | the tightest box around the non-floor voxels in a rough box (`add: true` adds it) |
+| `add_box`, `add_plane`, `add_point` | add labelled annotations |
+| `list_annotations`, `update_annotation`, `delete_annotation` | read / change / remove by id |
+| `cleanup` | remove `floating` clusters, `outliers`, the `floor`, `walls`, or everything but walls (`keepWalls`), in a region; `preview: true` only counts |
+| `crop` | keep only a box, keep a height band, or delete a box |
+| `rotate_map`, `level_map` | orient the map (annotations move with it) |
+| `generate_floor_plans` | 2D plans per storey |
+| `get_floor_plan` | a plan as an image plus its origin / resolution (pixel → meters) and its named points and areas |
+| `add_plan_point`, `add_area` | named spots and areas (`kind: "no-go"` for navigation to avoid) on a floor |
+| `undo`, `redo` | anyone's last edit |
+| `build_map`, `save_to_recording` | start the background jobs (poll `get_status`) |
+
+## How to box an object well
+
+1. `get_view` to see what the user sees (or `find_objects` with `region: "view"` to get candidates with boxes).
+2. Narrow down: `query_region` on a rough box around where it should be (counts, heights).
+3. `fit_box` with a generous box around it: the result hugs the voxels (floor excluded); `add: true, label: "chair"`.
+
+The evaluation that shaped these tools (≥10 boxing tasks, IoU against hand-placed boxes, before/after the
+`find_objects` / `fit_box` / labelled-screenshot additions) is in `eval/`.

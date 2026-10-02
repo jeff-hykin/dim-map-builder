@@ -44,7 +44,7 @@ class PointLayer {
     readonly points: THREE.Points
     readonly geometry = new THREE.BufferGeometry()
     readonly material: THREE.ShaderMaterial
-    positions = new Float32Array(0)
+    positions: Float32Array<ArrayBufferLike> = new Float32Array(0)
     range: [number, number] = [0, 1]
 
     constructor(viewer: Viewer) {
