@@ -502,7 +502,7 @@ export function App() {
 
                 <div className="orbs">
                     <button type="button" className={`orb orb-edit ${ui.paletteOpen ? "open" : ""}`} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ paletteOpen: !ui.paletteOpen })} title={hasMap ? "Edit tools (E)" : "Generate the map first"} data-orb="edit">
-                        <Icon name="menu" />
+                        <Icon name="edit" />
                     </button>
                     <button type="button" className={`orb orb-generate ${session && !hasMap ? "next" : ""} ${running?.kind === "build" ? "busy" : ""}`} disabled={!session} onMouseDown={keepFocus} onClick={() => setModal("generate")} title={hasMap ? "Map generation settings (regenerate)" : "Generate the map"} data-orb="generate">
                         <Icon name="refresh" />
