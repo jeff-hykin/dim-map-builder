@@ -2,7 +2,7 @@
 // per text message. One socket per page (not SSE): every app shares Desktop's origin, and an SSE stream holds one of
 // the browser's 6 HTTP/1.1 connections per host, so a few open apps starve the rest. Websockets don't count there.
 //
-//     import { appEvents } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.6.0/events.js"
+//     import { appEvents } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.6.1/events.js"
 //     const stop = appEvents((event) => { ... }, { query: { page: id }, onOpen, onClose })
 //
 // Reconnects forever with backoff (0.5s doubling to 10s, reset after a connection that lived 5s). Returns unsubscribe.
@@ -11,7 +11,7 @@ export const EVENTS_PATH = "api/events/ws"
 
 /**
  * @param {(event: any) => void} onEvent called with each parsed JSON event
- * @param {{ path?: string, query?: Record<string, string>, onOpen?: () => void, onClose?: () => void }} [options]
+ * @param {{ path?: string, query?: Record<string, string>, onOpen?: () => void, onClose?: (info: { wasOpen: boolean }) => void }} [options]
  * @returns {() => void} closes the socket and stops reconnecting
  */
 export function appEvents(onEvent, options = {}) {
@@ -44,10 +44,9 @@ export function appEvents(onEvent, options = {}) {
             }
             onEvent(event)
         }
+        // every lost or failed connection, so a page loaded while the server is down can show it
         socket.onclose = () => {
-            if (wasOpen) {
-                options.onClose?.()
-            }
+            options.onClose?.({ wasOpen })
             if (closed) {
                 return
             }

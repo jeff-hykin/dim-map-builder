@@ -31,7 +31,7 @@ Through Desktop it's all under `/apps/dim-map-builder/`. JSON unless noted; erro
 | `POST /api/sessions/:id/undo` · `/redo` | | `{ undone }` · `{ redone }` |
 | `PUT /api/sessions/:id/view` | camera, view-projection, visible bounds, UI state | saved with the session (not an edit) |
 | `POST /api/sessions/:id/save` | | `{ job }` — write into the recording |
-| `GET /api/events` | SSE | `{type:"job", job}`, `{type:"session", id, revision}`, `{type:"preview"}`, `{type:"capture", request, options}`, `{type:"setView", ...}` |
+| `GET /api/events/ws` | websocket, one JSON event per message (the page uses this; `GET /api/events` is the same stream as SSE, kept for older pages) | `{type:"job", job}`, `{type:"session", id, revision}`, `{type:"preview"}`, `{type:"capture", request, options}`, `{type:"setView", ...}` |
 | `POST /api/captures/:request` | a PNG data URL | the page answering a `capture` (the agent's screenshot) |
 
 `op` is `floating` (`minVoxels`), `outliers` (`neighbors`, `stdRatio`), `floor` (`thickness`), `walls` (`minHeight`),

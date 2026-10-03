@@ -288,22 +288,8 @@ export const api = {
 
 /** Server events: job progress, session changes, capture / camera requests from the agent. */
 export function events(onEvent: (event: Record<string, any>) => void): () => void {
-    let opened = false
-    // appEvents only reports a close after an open; a server that's down from the start still needs the banner
-    const neverOpened = setTimeout(() => {
-        if (!opened) {
-            onEvent({ type: "disconnected" })
-        }
-    }, 2000)
-    const stop = appEvents(onEvent, {
-        onOpen: () => {
-            opened = true
-            onEvent({ type: "connected" })
-        },
+    return appEvents(onEvent, {
+        onOpen: () => onEvent({ type: "connected" }),
         onClose: () => onEvent({ type: "disconnected" }),
     })
-    return () => {
-        clearTimeout(neverOpened)
-        stop()
-    }
 }
