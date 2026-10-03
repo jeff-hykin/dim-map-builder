@@ -5,6 +5,7 @@ import { api, type Region } from "../core/api.ts"
 import { GRADIENTS } from "../render/gradients.ts"
 import { CUBE_SHADES, type CubeShade } from "../render/pointMaterial.ts"
 import type { Context } from "./context.ts"
+import { Icon } from "./Icon.tsx"
 
 interface Tool {
     op: string
@@ -60,15 +61,15 @@ export function CleanPanel({ context }: { context: Context }) {
     return (
         <div>
             <div className="panel-head">
-                <h2>Clean the map</h2>
+                <h2 className="dim-h2">Clean the map</h2>
                 <p>{session.voxels.toLocaleString()} voxels. Preview shows what a tool would remove in red; every change can be undone (⌘Z).</p>
             </div>
 
-            <h3>Scope</h3>
+            <h3 className="dim-label">Scope</h3>
             <div className="row">
-                <div className="seg">
+                <div className="dim-tabs seg">
                     {(["view", "region", "all"] as const).map((scope) => (
-                        <button key={scope} type="button" className={ui.scope === scope ? "on" : ""} onClick={() => (scope === "region" ? ensureRegion() : setUi({ scope }))}>
+                        <button key={scope} type="button" className={`dim-tab ${ui.scope === scope ? "on" : ""}`} onClick={() => (scope === "region" ? ensureRegion() : setUi({ scope }))}>
                             {scope === "view" ? "in view" : scope === "region" ? "region box" : "whole map"}
                         </button>
                     ))}
@@ -77,22 +78,22 @@ export function CleanPanel({ context }: { context: Context }) {
             {ui.scope === "region" && (
                 <div className="hint">
                     Drag the yellow box's handles: <kbd>G</kbd> move · <kbd>R</kbd> turn · <kbd>S</kbd> resize.{" "}
-                    <button type="button" className="icon-button" onClick={() => { scene.setRegion(scene.regionFromView()); scene.select({ kind: "region", id: "region" }); setUi({ region: scene.region }) }}>
+                    <button type="button" className="dim-btn sm icon" onClick={() => { scene.setRegion(scene.regionFromView()); scene.select({ kind: "region", id: "region" }); setUi({ region: scene.region }) }}>
                         box around view
                     </button>
                 </div>
             )}
 
-            <h3>Remove</h3>
+            <h3 className="dim-label">Remove</h3>
             {TOOLS.map((tool) => (
-                <div className="tool-card" key={tool.op}>
+                <div className="dim-panel tool-card" key={tool.op}>
                     <div className="name">{tool.name}</div>
                     <div className="about">{tool.about}</div>
                     {tool.params?.map((param) => (
                         <div className="field" key={param.key}>
                             <span>{param.label}</span>
                             <div className="row" style={{ margin: 0 }}>
-                                <input type="range" min={param.min} max={param.max} step={param.step} value={params[tool.op][param.key]} onChange={(event) => setParams({ ...params, [tool.op]: { ...params[tool.op], [param.key]: Number(event.target.value) } })} />
+                                <input className="dim-range" type="range" min={param.min} max={param.max} step={param.step} value={params[tool.op][param.key]} onChange={(event) => setParams({ ...params, [tool.op]: { ...params[tool.op], [param.key]: Number(event.target.value) } })} />
                                 <span>
                                     {params[tool.op][param.key]}
                                     {param.unit ? ` ${param.unit}` : ""}
@@ -101,10 +102,10 @@ export function CleanPanel({ context }: { context: Context }) {
                         </div>
                     ))}
                     <div className="row">
-                        <button type="button" className="button" data-preview={tool.op} onClick={() => preview(tool.op)}>
+                        <button type="button" className="dim-btn sm" data-preview={tool.op} onClick={() => preview(tool.op)}>
                             Preview
                         </button>
-                        <button type="button" className="button primary" data-op={tool.op} onClick={() => apply(tool.op)}>
+                        <button type="button" className="dim-btn sm primary" data-op={tool.op} onClick={() => apply(tool.op)}>
                             Remove
                         </button>
                     </div>
@@ -113,68 +114,68 @@ export function CleanPanel({ context }: { context: Context }) {
             {previewing && (
                 <div className="row">
                     <span className="hint grow">{previewing}</span>
-                    <button type="button" className="icon-button" onClick={() => { scene.setPreview(null); setPreviewing(null) }}>
+                    <button type="button" className="dim-btn sm icon" onClick={() => { scene.setPreview(null); setPreviewing(null) }}>
                         clear
                     </button>
                 </div>
             )}
 
-            <h3>Crop</h3>
-            <div className="tool-card">
+            <h3 className="dim-label">Crop</h3>
+            <div className="dim-panel tool-card">
                 <div className="about">With the region box: keep only what's inside it, or delete what's inside.</div>
                 <div className="row">
-                    <button type="button" className="button" onClick={ensureRegion}>
+                    <button type="button" className="dim-btn sm" onClick={ensureRegion}>
                         {scene.region ? "Edit region" : "Draw region"}
                     </button>
-                    <button type="button" className="button" disabled={!scene.region} data-op="cropOutside" onClick={() => apply("cropOutside", {}, { kind: "box", ...scene.region! })}>
+                    <button type="button" className="dim-btn sm" disabled={!scene.region} data-op="cropOutside" onClick={() => apply("cropOutside", {}, { kind: "box", ...scene.region! })}>
                         Keep inside
                     </button>
-                    <button type="button" className="button danger" disabled={!scene.region} data-op="deleteInside" onClick={() => apply("deleteInside", {}, { kind: "box", ...scene.region! })}>
+                    <button type="button" className="dim-btn sm danger" disabled={!scene.region} data-op="deleteInside" onClick={() => apply("deleteInside", {}, { kind: "box", ...scene.region! })}>
                         Delete inside
                     </button>
                 </div>
                 <div className="field">
                     <span>keep heights</span>
                     <div className="row" style={{ margin: 0 }}>
-                        <input className="number" type="number" step={0.1} value={heights[0]} onChange={(event) => setHeights([Number(event.target.value), heights[1]])} />
+                        <input className="dim-input number" type="number" step={0.1} value={heights[0]} onChange={(event) => setHeights([Number(event.target.value), heights[1]])} />
                         <span>to</span>
-                        <input className="number" type="number" step={0.1} value={heights[1]} onChange={(event) => setHeights([heights[0], Number(event.target.value)])} />
+                        <input className="dim-input number" type="number" step={0.1} value={heights[1]} onChange={(event) => setHeights([heights[0], Number(event.target.value)])} />
                         <span>m</span>
                     </div>
                 </div>
                 <div className="row">
-                    <button type="button" className="button" onClick={() => preview("cropHeight", { zMin: heights[0], zMax: heights[1] })}>
+                    <button type="button" className="dim-btn sm" onClick={() => preview("cropHeight", { zMin: heights[0], zMax: heights[1] })}>
                         Preview
                     </button>
-                    <button type="button" className="button primary" data-op="cropHeight" onClick={() => apply("cropHeight", { zMin: heights[0], zMax: heights[1] }, { kind: "all" })}>
+                    <button type="button" className="dim-btn sm primary" data-op="cropHeight" onClick={() => apply("cropHeight", { zMin: heights[0], zMax: heights[1] }, { kind: "all" })}>
                         Crop heights
                     </button>
                 </div>
             </div>
 
-            <h3>Orient</h3>
-            <div className="tool-card">
+            <h3 className="dim-label">Orient</h3>
+            <div className="dim-panel tool-card">
                 <div className="about">Turn the map about its center, or level it so the floor is flat at z = 0. Annotations move with it.</div>
                 <div className="row">
-                    <button type="button" className="button" onClick={() => run(api.rotate(session.id, -90))}>↺ 90°</button>
-                    <button type="button" className="button" onClick={() => run(api.rotate(session.id, 90))}>↻ 90°</button>
-                    <input className="number" type="number" step={0.5} value={yaw} onChange={(event) => setYaw(Number(event.target.value))} />
-                    <button type="button" className="button" onClick={() => run(api.rotate(session.id, -yaw))}>↺</button>
-                    <button type="button" className="button" onClick={() => run(api.rotate(session.id, yaw))}>↻</button>
+                    <button type="button" className="dim-btn sm" onClick={() => run(api.rotate(session.id, -90))}><Icon name="rotate-left" /> 90°</button>
+                    <button type="button" className="dim-btn sm" onClick={() => run(api.rotate(session.id, 90))}><Icon name="rotate-right" /> 90°</button>
+                    <input className="dim-input number" type="number" step={0.5} value={yaw} onChange={(event) => setYaw(Number(event.target.value))} />
+                    <button type="button" className="dim-btn sm" onClick={() => run(api.rotate(session.id, -yaw))}><Icon name="rotate-left" /></button>
+                    <button type="button" className="dim-btn sm" onClick={() => run(api.rotate(session.id, yaw))}><Icon name="rotate-right" /></button>
                 </div>
                 <div className="row">
-                    <button type="button" className="button primary" data-action="level" onClick={() => run(api.level(session.id), "Levelled")}>
+                    <button type="button" className="dim-btn sm primary" data-action="level" onClick={() => run(api.level(session.id), "Levelled")}>
                         Level the floor
                     </button>
                 </div>
             </div>
 
-            <h3>Look</h3>
+            <h3 className="dim-label">Look</h3>
             <div className="field">
                 <span>voxels as</span>
-                <div className="seg">
+                <div className="dim-tabs seg">
                     {(["voxel", "disc", "square", "splat"] as const).map((style) => (
-                        <button key={style} type="button" className={ui.look.style === style ? "on" : ""} onClick={() => { scene.applyLook({ style }); setUi({ look: { ...ui.look, style } }) }}>
+                        <button key={style} type="button" className={`dim-tab ${ui.look.style === style ? "on" : ""}`} onClick={() => { scene.applyLook({ style }); setUi({ look: { ...ui.look, style } }) }}>
                             {style === "voxel" ? "cubes" : style === "disc" ? "spheres" : style === "square" ? "squares" : "glow"}
                         </button>
                     ))}
@@ -183,7 +184,7 @@ export function CleanPanel({ context }: { context: Context }) {
             {ui.look.style === "voxel" && (
                 <div className="field">
                     <span>cube shading</span>
-                    <select value={ui.look.shade ?? "soft"} onChange={(event) => { const shade = event.target.value as CubeShade; scene.applyLook({ shade }); setUi({ look: { ...ui.look, shade } }) }} data-cube-shade>
+                    <select className="dim-select" value={ui.look.shade ?? "soft"} onChange={(event) => { const shade = event.target.value as CubeShade; scene.applyLook({ shade }); setUi({ look: { ...ui.look, shade } }) }} data-cube-shade>
                         {Object.entries(CUBE_SHADES).map(([id, shade]) => (
                             <option key={id} value={id} title={shade.about}>
                                 {shade.label}
@@ -194,7 +195,7 @@ export function CleanPanel({ context }: { context: Context }) {
             )}
             <div className="field">
                 <span>colors</span>
-                <select value={ui.look.gradient} onChange={(event) => { scene.applyLook({ gradient: event.target.value }); setUi({ look: { ...ui.look, gradient: event.target.value } }) }}>
+                <select className="dim-select" value={ui.look.gradient} onChange={(event) => { scene.applyLook({ gradient: event.target.value }); setUi({ look: { ...ui.look, gradient: event.target.value } }) }}>
                     {GRADIENTS.map((name) => (
                         <option key={name} value={name}>
                             {name}
@@ -222,7 +223,7 @@ export function CleanPanel({ context }: { context: Context }) {
                 </div>
             </div>
 
-            <h3>History</h3>
+            <h3 className="dim-label">History</h3>
             <div className="history">
                 {[...session.history].reverse().map((line, index) => (
                     <span key={index}>{line}</span>

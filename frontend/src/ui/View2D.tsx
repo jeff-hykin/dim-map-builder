@@ -766,7 +766,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         <div className={minimap ? "minimap-view" : "plan-view"} ref={host} data-view2d={kind} style={{ cursor }}>
             <canvas ref={canvas} />
             {heightImage && !minimap && (
-                <div className="height-legend">
+                <div className="dim-panel glass height-legend">
                     floor height {heightImage.range[0].toFixed(2)} … {heightImage.range[1].toFixed(2)} m <span className="ramp" />
                 </div>
             )}

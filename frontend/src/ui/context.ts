@@ -3,23 +3,24 @@ import type { MapScene } from "../core/scene.ts"
 import type { Session } from "../core/api.ts"
 import { AUTO_RANGE, type FloorModel, type SliceRange } from "../core/slice.ts"
 import type { CubeShade } from "../render/pointMaterial.ts"
+import type { IconName } from "./Icon.tsx"
 
 export type ViewMode = "3d" | "split" | "2d"
 
 /** The edit orb's palette: one tool at a time, each with its own options card. "select" just looks around. */
 export type ToolId = "select" | "clean" | "annotate" | "polygon" | "places" | "erase" | "brush" | "line" | "straighten" | "views"
 
-export const TOOLS: { id: ToolId; icon: string; label: string; key: string; view: "2d" | "3d" | "any" }[] = [
-    { id: "select", icon: "✋", label: "Select / move around", key: "Escape", view: "any" },
-    { id: "erase", icon: "⌫", label: "Erase", key: "x", view: "2d" },
-    { id: "brush", icon: "✎", label: "Draw", key: "d", view: "2d" },
-    { id: "line", icon: "╱", label: "Draw a line", key: "l", view: "2d" },
-    { id: "straighten", icon: "⟋", label: "Straighten a wall", key: "w", view: "2d" },
-    { id: "polygon", icon: "⬠", label: "Polygon (an area with a height)", key: "p", view: "2d" },
-    { id: "places", icon: "⚑", label: "Named points and areas", key: "n", view: "2d" },
-    { id: "annotate", icon: "⬚", label: "Boxes, planes and points in 3D", key: "b", view: "3d" },
-    { id: "clean", icon: "✧", label: "Clean up (floating specks, outliers, floor, walls, crop, level)", key: "c", view: "3d" },
-    { id: "views", icon: "▤", label: "Saved 2D views", key: "", view: "any" },
+export const TOOLS: { id: ToolId; icon: IconName; label: string; key: string; view: "2d" | "3d" | "any" }[] = [
+    { id: "select", icon: "drive", label: "Select / move around", key: "Escape", view: "any" },
+    { id: "erase", icon: "trash", label: "Erase", key: "x", view: "2d" },
+    { id: "brush", icon: "plus", label: "Draw", key: "d", view: "2d" },
+    { id: "line", icon: "minus", label: "Draw a line", key: "l", view: "2d" },
+    { id: "straighten", icon: "arrow-right", label: "Straighten a wall", key: "w", view: "2d" },
+    { id: "polygon", icon: "map", label: "Polygon (an area with a height)", key: "p", view: "2d" },
+    { id: "places", icon: "target", label: "Named points and areas", key: "n", view: "2d" },
+    { id: "annotate", icon: "top", label: "Boxes, planes and points in 3D", key: "b", view: "3d" },
+    { id: "clean", icon: "sparkle", label: "Clean up (floating specks, outliers, floor, walls, crop, level)", key: "c", view: "3d" },
+    { id: "views", icon: "eye", label: "Saved 2D views", key: "", view: "any" },
 ]
 
 /** the 2D view's camera: the world point at its center and its zoom */

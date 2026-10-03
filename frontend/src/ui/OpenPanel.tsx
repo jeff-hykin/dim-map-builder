@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react"
 import { recordings, type DesktopRecording, type RecordingMetadata } from "../core/api.ts"
 import type { Context } from "./context.ts"
+import { Icon } from "./Icon.tsx"
 
 function size(bytes: number) {
     return bytes > 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(0.1, bytes / 1e6).toFixed(1)} MB`
@@ -43,22 +44,22 @@ export function OpenPanel({ context }: { context: Context }) {
     return (
         <div>
             <div className="panel-head">
-                <h2>Open a recording</h2>
+                <h2 className="dim-h2">Open a recording</h2>
                 <p>From Desktop's shared recordings folder{dir ? `: ${dir}` : ""}. Record one with the Live Viewer.</p>
             </div>
             {context.session && (
-                <div className="tool-card">
+                <div className="dim-panel tool-card">
                     <div className="name">Continue: {context.session.name}</div>
                     <div className="about">{context.session.stage === "map" ? `${context.session.voxels.toLocaleString()} voxels` : "not built yet"} · your work is kept automatically</div>
-                    <button type="button" className="button primary" onClick={() => context.setModal(context.session?.stage === "map" ? null : "generate")}>
+                    <button type="button" className="dim-btn sm primary" onClick={() => context.setModal(context.session?.stage === "map" ? null : "generate")}>
                         Continue
                     </button>
                 </div>
             )}
             <div className="row">
-                <input className="text grow" placeholder="filter…" value={filter} onChange={(event) => setFilter(event.target.value)} />
-                <button type="button" className="icon-button" onClick={load} title="Reload the list">
-                    ⟳
+                <input className="dim-input text grow" placeholder="filter…" value={filter} onChange={(event) => setFilter(event.target.value)} />
+                <button type="button" className="dim-btn sm icon" onClick={load} title="Reload the list">
+                    <Icon name="refresh" />
                 </button>
             </div>
             {problem && <div className="problem">{problem}</div>}
@@ -68,7 +69,7 @@ export function OpenPanel({ context }: { context: Context }) {
                     <li key={recording.id}>
                         <button
                             type="button"
-                            className={`recording ${context.session?.recordingPath === recording.path ? "current" : ""}`}
+                            className={`dim-panel recording ${context.session?.recordingPath === recording.path ? "current" : ""}`}
                             data-recording={recording.id}
                             onClick={() => recordings.metadata(recording.id).then(setDetails).catch((error) => setProblem(error.message))}
                         >
@@ -80,8 +81,8 @@ export function OpenPanel({ context }: { context: Context }) {
                             </div>
                         </button>
                         {details?.id === recording.id && (
-                            <div className="tool-card">
-                                <div className="streams">
+                            <div className="dim-panel tool-card">
+                                <div className="dim-mono streams">
                                     {details.duration != null && <span>{Math.round(details.duration)} s recorded</span>}
                                     {details.streams.slice(0, 14).map((stream) => (
                                         <span key={stream.name}>
@@ -92,7 +93,7 @@ export function OpenPanel({ context }: { context: Context }) {
                                 </div>
                                 <button
                                     type="button"
-                                    className="button primary"
+                                    className="dim-btn sm primary"
                                     disabled={opening !== null}
                                     data-open={recording.id}
                                     onClick={async () => {

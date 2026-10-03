@@ -5,6 +5,7 @@ import { useEffect, useState } from "react"
 import { api, recordings, type RecordingMetadata } from "../core/api.ts"
 import { JobCard, duration } from "./JobCard.tsx"
 import type { Context } from "./context.ts"
+import { Icon } from "./Icon.tsx"
 
 type Options = Record<string, any>
 
@@ -43,9 +44,9 @@ function Field({ name, value, onChange, disabled }: { name: string; value: unkno
         <div className="field" title={about}>
             <span>{label}</span>
             {typeof value === "number" ? (
-                <input className="number" type="number" step="any" value={value} disabled={disabled} onChange={(event) => event.target.value !== "" && onChange(Number(event.target.value))} data-option={name} />
+                <input className="dim-input number" type="number" step="any" value={value} disabled={disabled} onChange={(event) => event.target.value !== "" && onChange(Number(event.target.value))} data-option={name} />
             ) : (
-                <input className="text" value={String(value ?? "")} disabled={disabled} onChange={(event) => onChange(event.target.value)} data-option={name} />
+                <input className="dim-input text" value={String(value ?? "")} disabled={disabled} onChange={(event) => onChange(event.target.value)} data-option={name} />
             )}
         </div>
     )
@@ -90,25 +91,25 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const annotationCount = a.boxes.length + a.planes.length + a.points.length + a.planPoints.length + a.areas.length + (a.prisms?.length ?? 0)
     return (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !building && onClose()}>
-            <div className="modal" role="dialog" aria-label="Generate the map" data-modal="generate">
+            <div className="dim-panel modal" role="dialog" aria-label="Generate the map" data-modal="generate">
                 <div className="modal-head">
-                    <h2>{built ? "Regenerate the map" : "Generate the map"}</h2>
-                    <button type="button" className="icon-button" onClick={onClose} title="Close (the build keeps running)">
-                        ✕
+                    <h2 className="dim-h2">{built ? "Regenerate the map" : "Generate the map"}</h2>
+                    <button type="button" className="dim-btn sm icon" onClick={onClose} title="Close (the build keeps running)">
+                        <Icon name="close" />
                     </button>
                 </div>
                 <p className="hint">Every scan placed by the recording's tf, loops closed (ICP + pose graph), then ray traced so free space clears what moved. The defaults work for most recordings.</p>
                 <div className="field">
                     <span>voxel size</span>
                     <span className="row" style={{ margin: 0 }}>
-                        <input type="range" min={0.02} max={0.2} step={0.01} value={options.voxelSize} disabled={building} onChange={(event) => set({ voxelSize: Number(event.target.value) })} />
-                        <input className="number" type="number" min={0.01} max={0.5} step={0.01} value={options.voxelSize} disabled={building} onChange={(event) => event.target.value !== "" && set({ voxelSize: Number(event.target.value) })} data-option="voxelSize" />
+                        <input className="dim-range" type="range" min={0.02} max={0.2} step={0.01} value={options.voxelSize} disabled={building} onChange={(event) => set({ voxelSize: Number(event.target.value) })} />
+                        <input className="dim-input number" type="number" min={0.01} max={0.5} step={0.01} value={options.voxelSize} disabled={building} onChange={(event) => event.target.value !== "" && set({ voxelSize: Number(event.target.value) })} data-option="voxelSize" />
                         <span className="dim">m</span>
                     </span>
                 </div>
                 <div className="field">
                     <span>lidar stream</span>
-                    <select value={options.cloudStream ?? ""} onChange={(event) => set({ cloudStream: event.target.value })} disabled={building}>
+                    <select className="dim-select" value={options.cloudStream ?? ""} onChange={(event) => set({ cloudStream: event.target.value })} disabled={building}>
                         <option value="">auto (the biggest)</option>
                         {clouds.map((stream) => (
                             <option key={stream.name} value={stream.name}>
@@ -117,7 +118,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                         ))}
                     </select>
                 </div>
-                <details className="advanced" data-advanced>
+                <details className="dim-panel advanced" data-advanced>
                     <summary>Advanced {changed ? <span className="dim">· changed</span> : <span className="dim">· loop closure, ray tracing, tunables</span>}</summary>
                     <label className="row">
                         <input type="checkbox" checked={!options.loopClosure} disabled={building} onChange={(event) => set({ loopClosure: !event.target.checked })} data-option="skipLoopClosure" />
@@ -130,29 +131,29 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                     {(["every", "maxRange", "tfTolerance", "worldFrame"] as const).map((name) => (
                         <Field key={name} name={name} value={options[name]} disabled={building} onChange={(value) => set({ [name]: value })} />
                     ))}
-                    <h3>Ray tracer</h3>
+                    <h3 className="dim-label">Ray tracer</h3>
                     {Object.keys(defaults.ray).map((name) => (
                         <Field key={name} name={name} value={options.ray[name]} disabled={building || !options.rayTracing} onChange={(value) => group("ray", { [name]: value })} />
                     ))}
-                    <h3>Loop closure (pose graph)</h3>
+                    <h3 className="dim-label">Loop closure (pose graph)</h3>
                     {Object.keys(defaults.pgo).map((name) => (
                         <Field key={name} name={name} value={options.pgo[name]} disabled={building || !options.loopClosure} onChange={(value) => group("pgo", { [name]: value })} />
                     ))}
                     <div className="row">
-                        <button type="button" className="button" disabled={building} onClick={() => setOptions({ ...defaults, cloudStream: options.cloudStream })}>
+                        <button type="button" className="dim-btn sm" disabled={building} onClick={() => setOptions({ ...defaults, cloudStream: options.cloudStream })}>
                             Reset to defaults
                         </button>
                     </div>
                 </details>
                 {confirming && (
-                    <div className="warning" data-regen-warning>
+                    <div className="dim-alert warn warning" data-regen-warning>
                         <strong>Regenerate over the current map?</strong> The new map replaces this one: every voxel edit on it (cleanup, erase, draw, straightened walls) and the undo history are gone, and the exported occupancy grids are dropped.
                         {annotationCount > 0 && ` Your ${annotationCount} annotation${annotationCount === 1 ? "" : "s"} stay where they are, but may no longer line up with a map built differently.`}
                         <div className="row">
-                            <button type="button" className="button danger armed" onClick={generate} data-action="confirm-regenerate">
+                            <button type="button" className="dim-btn sm danger" onClick={generate} data-action="confirm-regenerate">
                                 Yes, regenerate
                             </button>
-                            <button type="button" className="button" onClick={() => setConfirming(false)}>
+                            <button type="button" className="dim-btn sm" onClick={() => setConfirming(false)}>
                                 Keep the current map
                             </button>
                         </div>
@@ -160,7 +161,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 )}
                 {!confirming && (
                     <div className="row">
-                        <button type="button" className="button primary" disabled={building} data-action="build" onClick={generate}>
+                        <button type="button" className="dim-btn sm primary" disabled={building} data-action="build" onClick={generate}>
                             {built ? "Regenerate…" : "Generate"}
                         </button>
                         {built && session.build && <span className="hint">current: {session.totalVoxels.toLocaleString()} voxels at {(session.build.voxelSize * 100).toFixed(0)} cm, built in {duration(session.build.seconds)}</span>}

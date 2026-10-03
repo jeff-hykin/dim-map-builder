@@ -21,6 +21,7 @@ import { FIT_2D, View2D } from "./ui/View2D.tsx"
 import { SliceBar } from "./ui/SliceBar.tsx"
 import { JobCard } from "./ui/JobCard.tsx"
 import { SlicerWizard } from "./ui/SlicerWizard.tsx"
+import { Icon } from "./ui/Icon.tsx"
 
 const MODES: { id: ViewMode; label: string }[] = [
     { id: "3d", label: "3D" },
@@ -435,21 +436,19 @@ export function App() {
         return () => window.clearTimeout(timer)
     }, [target[0], target[1]])
     const twoDKind = mode === "split" ? "minimap" : "main"
-    const modeIndex = MODES.findIndex((m) => m.id === mode)
     const toolSpec = TOOLS.find((t) => t.id === ui.tool)
 
     return (
         <div className={`app mode-${mode} ${sliding ? "sliding" : ""}`}>
             <header className="topbar">
-                <span className="title">Map Builder</span>
-                <button type="button" className="icon-button recording-name" title={session ? `${session.recordingPath} (open another)` : "Open a recording"} onClick={() => setModal("open")} data-action="open">
-                    {session ? `▾ ${session.name}` : "Open a recording…"}
+                <span className="dim-label title">Map Builder</span>
+                <button type="button" className="dim-btn sm icon recording-name" title={session ? `${session.recordingPath} (open another)` : "Open a recording"} onClick={() => setModal("open")} data-action="open">
+                    {session ? <><Icon name="chevron-down" /> {session.name}</> : "Open a recording…"}
                 </button>
                 <span className="spacer" />
-                <div className="mode-switch" role="tablist" aria-label="view" data-mode-switch={mode}>
-                    <span className="mode-highlight" style={{ transform: `translateX(${modeIndex * 100}%)` }} />
+                <div className="dim-tabs mode-switch" role="tablist" aria-label="view" data-mode-switch={mode}>
                     {MODES.map((m) => (
-                        <button key={m.id} type="button" role="tab" aria-selected={mode === m.id} className={mode === m.id ? "on" : ""} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ mode: m.id })} data-mode={m.id} title={m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)"}>
+                        <button key={m.id} type="button" role="tab" aria-selected={mode === m.id} className={`dim-tab ${mode === m.id ? "on" : ""}`} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ mode: m.id })} data-mode={m.id} title={m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)"}>
                             {m.label}
                         </button>
                     ))}
@@ -457,15 +456,15 @@ export function App() {
                 <span className="spacer" />
                 {session && (
                     <>
-                        <button type="button" className="icon-button" disabled={!session.undoLabel} title={session.undoLabel ? `Undo: ${session.undoLabel} (⌘Z)` : "Nothing to undo"} onClick={() => run(api.undo(session.id))}>
-                            ↶
+                        <button type="button" className="dim-btn sm icon" disabled={!session.undoLabel} title={session.undoLabel ? `Undo: ${session.undoLabel} (⌘Z)` : "Nothing to undo"} onClick={() => run(api.undo(session.id))}>
+                            <Icon name="rotate-left" />
                         </button>
-                        <button type="button" className="icon-button" disabled={!session.redoLabel} title={session.redoLabel ? `Redo: ${session.redoLabel} (⇧⌘Z)` : "Nothing to redo"} onClick={() => run(api.redo(session.id))}>
-                            ↷
+                        <button type="button" className="dim-btn sm icon" disabled={!session.redoLabel} title={session.redoLabel ? `Redo: ${session.redoLabel} (⇧⌘Z)` : "Nothing to redo"} onClick={() => run(api.redo(session.id))}>
+                            <Icon name="rotate-right" />
                         </button>
                         {hasMap && (
-                            <button type="button" className={`button save ${session.unsaved ? "unsaved" : "saved"}`} onClick={() => setModal("save")} title={session.savedAt ? `last saved ${new Date(session.savedAt * 1000).toLocaleString()}` : "not saved into the recording yet"} data-action="save-menu">
-                                {session.unsaved ? "● Save" : "✓ Saved"}
+                            <button type="button" className={`dim-btn sm save ${session.unsaved ? "primary unsaved" : "saved"}`} onClick={() => setModal("save")} title={session.savedAt ? `last saved ${new Date(session.savedAt * 1000).toLocaleString()}` : "not saved into the recording yet"} data-action="save-menu">
+                                {session.unsaved ? "Save" : <><Icon name="check" /> Saved</>}
                             </button>
                         )}
                     </>
@@ -475,13 +474,13 @@ export function App() {
                 <div className="pane pane-3d" style={{ width: target[0] }}>
                     <div className="pane-inner" style={{ width: inner[0] }}>
                         <div className="scene" ref={host} />
-                        {stats && <div className="view-stats">{stats}</div>}
+                        {stats && <div className="dim-panel glass dim-mono view-stats">{stats}</div>}
                         <div className="view-tools">
-                            <button type="button" className="icon-button" title="Frame the map (F)" onClick={() => scene?.frameMap()}>
-                                ⤢ Frame
+                            <button type="button" className="dim-btn sm icon" title="Frame the map (F)" onClick={() => scene?.frameMap()}>
+                                <Icon name="fullscreen" /> Frame
                             </button>
-                            <button type="button" className="icon-button" title="Top-down view (T)" onClick={() => scene?.topDown()}>
-                                ⊤ Top
+                            <button type="button" className="dim-btn sm icon" title="Top-down view (T)" onClick={() => scene?.topDown()}>
+                                <Icon name="top" /> Top
                             </button>
                         </div>
                     </div>
@@ -492,8 +491,8 @@ export function App() {
                         {hasMap && mode === "2d" && <SliceBar context={context} />}
                         {hasMap && mode === "2d" && (
                             <div className="view-tools">
-                                <button type="button" className="icon-button" title="Frame the map (F)" onClick={() => window.dispatchEvent(new Event(FIT_2D))}>
-                                    ⤢ Frame
+                                <button type="button" className="dim-btn sm icon" title="Frame the map (F)" onClick={() => window.dispatchEvent(new Event(FIT_2D))}>
+                                    <Icon name="fullscreen" /> Frame
                                 </button>
                             </div>
                         )}
@@ -503,10 +502,10 @@ export function App() {
 
                 <div className="orbs">
                     <button type="button" className={`orb orb-edit ${ui.paletteOpen ? "open" : ""}`} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ paletteOpen: !ui.paletteOpen })} title={hasMap ? "Edit tools (E)" : "Generate the map first"} data-orb="edit">
-                        ✎
+                        <Icon name="menu" />
                     </button>
                     <button type="button" className={`orb orb-generate ${session && !hasMap ? "next" : ""} ${running?.kind === "build" ? "busy" : ""}`} disabled={!session} onMouseDown={keepFocus} onClick={() => setModal("generate")} title={hasMap ? "Map generation settings (regenerate)" : "Generate the map"} data-orb="generate">
-                        ⟳
+                        <Icon name="refresh" />
                     </button>
                     <button
                         type="button"
@@ -522,32 +521,32 @@ export function App() {
                         title={hasMap ? "Slicer: height band, alignment and crop (a view, not an edit)" : "Generate the map first"}
                         data-orb="slicer"
                     >
-                        ◫
+                        <Icon name="layers" />
                     </button>
                 </div>
                 {hasMap && !session?.annotations.slice && !slicing && (
-                    <div className="orb-hint" data-slicer-hint>
-                        ◂ Recommended: slice your map
+                    <div className="dim-badge warn orb-hint" data-slicer-hint>
+                        <Icon name="arrow-left" /> Recommended: slice your map
                     </div>
                 )}
                 {slicing && hasMap && <SlicerWizard context={context} onClose={() => setSlicing(false)} />}
                 {hasMap && ui.paletteOpen && !slicing && (
-                    <div className="palette" role="toolbar" aria-label="edit tools" data-palette>
+                    <div className="dim-panel glass palette" role="toolbar" aria-label="edit tools" data-palette>
                         {TOOLS.map((tool) => (
-                            <button key={tool.id} type="button" className={ui.tool === tool.id ? "on" : ""} onMouseDown={keepFocus} onClick={() => pickTool(tool.id)} title={`${tool.label}${tool.key.length === 1 ? ` (${tool.key.toUpperCase()})` : tool.key ? " (Esc)" : ""}`} data-tool={tool.id}>
-                                {tool.icon}
+                            <button key={tool.id} type="button" className={`dim-btn ghost icon ${ui.tool === tool.id ? "on" : ""}`} onMouseDown={keepFocus} onClick={() => pickTool(tool.id)} title={`${tool.label}${tool.key.length === 1 ? ` (${tool.key.toUpperCase()})` : tool.key ? " (Esc)" : ""}`} data-tool={tool.id}>
+                                <Icon name={tool.icon} />
                             </button>
                         ))}
                     </div>
                 )}
                 {hasMap && ui.paletteOpen && ui.tool !== "select" && toolSpec && (
-                    <div className="tool-panel" data-tool-panel={ui.tool}>
+                    <div className="dim-panel glass tool-panel" data-tool-panel={ui.tool}>
                         <div className="tool-panel-head">
                             <span>
-                                {toolSpec.icon} {toolSpec.label}
+                                <Icon name={toolSpec.icon} /> {toolSpec.label}
                             </span>
-                            <button type="button" className="icon-button" onClick={() => pickTool("select")} title="Close (Esc)">
-                                ✕
+                            <button type="button" className="dim-btn sm icon" onClick={() => pickTool("select")} title="Close (Esc)">
+                                <Icon name="close" />
                             </button>
                         </div>
                         {ui.tool === "clean" && <CleanPanel context={context} />}
@@ -563,18 +562,18 @@ export function App() {
                         <JobCard job={running} onCancel={() => session && run(api.cancel(session.id), "Cancelling…")} />
                     </div>
                 )}
-                {toast && <div className={`toast ${toast.error ? "error" : ""}`}>{toast.text}</div>}
-                {!connected && <div className="connection">Reconnecting to the Map Builder server…</div>}
+                <div className="dim-toasts">{toast && <div className={`dim-toast ${toast.error ? "danger" : ""}`}>{toast.text}</div>}</div>
+                {!connected && <div className="dim-alert danger connection">Reconnecting to the Map Builder server…</div>}
             </section>
             {modal === "generate" && session && <GenerateModal context={context} onClose={() => setModal(null)} />}
             {modal === "open" && (
                 <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && session && setModal(null)}>
-                    <div className="modal" data-modal="open">
+                    <div className="dim-panel modal" data-modal="open">
                         {session && (
                             <div className="modal-head">
                                 <span />
-                                <button type="button" className="icon-button" onClick={() => setModal(null)}>
-                                    ✕
+                                <button type="button" className="dim-btn sm icon" onClick={() => setModal(null)}>
+                                    <Icon name="close" />
                                 </button>
                             </div>
                         )}
@@ -584,11 +583,11 @@ export function App() {
             )}
             {modal === "save" && session && (
                 <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModal(null)}>
-                    <div className="modal" data-modal="save">
+                    <div className="dim-panel modal" data-modal="save">
                         <div className="modal-head">
                             <span />
-                            <button type="button" className="icon-button" onClick={() => setModal(null)}>
-                                ✕
+                            <button type="button" className="dim-btn sm icon" onClick={() => setModal(null)}>
+                                <Icon name="close" />
                             </button>
                         </div>
                         <SavePanel context={context} />

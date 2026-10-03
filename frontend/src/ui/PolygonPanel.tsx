@@ -5,6 +5,7 @@ import { api, type PrismAnnotation } from "../core/api.ts"
 import { useStore } from "../core/store.ts"
 import type { Context } from "./context.ts"
 import { polygonTool } from "./tools.ts"
+import { Icon } from "./Icon.tsx"
 
 export function PolygonPanel({ context }: { context: Context }) {
     const { session, scene, run, ui, floor } = context
@@ -17,7 +18,7 @@ export function PolygonPanel({ context }: { context: Context }) {
     const number = (prism: PrismAnnotation, key: "height" | "base") => (
         <input
             key={`${prism.id}${key}${prism[key]}`}
-            className="number"
+            className="dim-input number"
             type="number"
             step={0.05}
             defaultValue={prism[key].toFixed(2)}
@@ -32,23 +33,23 @@ export function PolygonPanel({ context }: { context: Context }) {
         <div>
             <div className="field">
                 <span>label</span>
-                <input className="text" placeholder="e.g. couch, desk, lab bench" value={tool.label} onChange={(event) => polygonTool.update({ label: event.target.value })} data-polygon-label />
+                <input className="dim-input text" placeholder="e.g. couch, desk, lab bench" value={tool.label} onChange={(event) => polygonTool.update({ label: event.target.value })} data-polygon-label />
             </div>
             <div className="field">
                 <span>height</span>
                 <span className="row" style={{ margin: 0 }}>
-                    <input className="number" type="number" min={0.05} step={0.05} value={tool.height} onChange={(event) => event.target.value !== "" && polygonTool.update({ height: Number(event.target.value) })} data-polygon-height />
+                    <input className="dim-input number" type="number" min={0.05} step={0.05} value={tool.height} onChange={(event) => event.target.value !== "" && polygonTool.update({ height: Number(event.target.value) })} data-polygon-height />
                     <span className="dim">m over the local floor</span>
                 </span>
             </div>
             <div className="hint">Click corners in the 2D view; Enter or double-click closes it, Backspace drops the last corner, Esc cancels.</div>
-            <h3>Polygons ({prisms.length})</h3>
+            <h3 className="dim-label">Polygons ({prisms.length})</h3>
             <ul className="items">
                 {prisms.map((p) => (
                     <li key={p.id} className={`item stacked ${ui.selected?.id === p.id ? "on" : ""}`} onClick={() => scene.select({ kind: "prism", id: p.id })} data-prism={p.id}>
                         <span className={`swatch ${p.source === "agent" ? "agent" : ""}`} />
                         <input
-                            className="text"
+                            className="dim-input text"
                             defaultValue={p.label}
                             key={p.label}
                             onClick={(event) => event.stopPropagation()}
@@ -61,13 +62,13 @@ export function PolygonPanel({ context }: { context: Context }) {
                             {number(p, "base")}
                             <button
                                 type="button"
-                                className="icon-button"
+                                className="dim-btn sm icon"
                                 onClick={(event) => {
                                     event.stopPropagation()
                                     run(api.remove(session.id, p.id), "Deleted (⌘Z to undo)")
                                 }}
                             >
-                                ✕
+                                <Icon name="close" />
                             </button>
                         </span>
                     </li>

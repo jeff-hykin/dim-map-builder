@@ -19,7 +19,7 @@ export function JobCard({ job, onCancel }: { job: Job; onCancel?: () => void }) 
     const percent = Math.round(job.fraction * 100)
     const state = job.state
     return (
-        <div className={`job ${state}`} data-job-state={state}>
+        <div className={`dim-panel job ${state}`} data-job-state={state}>
             <div className="stage-line">
                 <strong>{TITLES[job.kind] ?? job.kind}</strong>
                 <span>{state === "running" ? `${percent}%` : state}</span>
@@ -37,13 +37,13 @@ export function JobCard({ job, onCancel }: { job: Job; onCancel?: () => void }) 
                 </div>
             )}
             {progress?.note && state === "running" && <div className="hint">{progress.note}</div>}
-            <div className="numbers">
+            <div className="dim-mono numbers">
                 <span>elapsed {duration(job.elapsed)}</span>
                 {state === "running" && <span data-eta>ETA {job.etaSeconds != null ? duration(job.etaSeconds) : "estimating…"}</span>}
                 {job.error && <span className="problem">{job.error}</span>}
                 <span className="spacer" />
                 {state === "running" && onCancel && job.kind !== "save" && (
-                    <button type="button" className="button danger" onClick={onCancel}>
+                    <button type="button" className="dim-btn sm danger" onClick={onCancel}>
                         Cancel
                     </button>
                 )}

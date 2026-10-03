@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import * as THREE from "three"
 import { api, type Slice } from "../core/api.ts"
 import type { Context } from "./context.ts"
+import { Icon } from "./Icon.tsx"
 
 const BIG = 1e9
 const STEPS = ["Height", "Align", "Crop", "Done"]
@@ -15,7 +16,7 @@ function NumberField({ value, onChange, step, data, unit }: { value: number; onC
     useEffect(() => setText(unit === "°" ? value.toFixed(1) : value.toFixed(2)), [value, unit])
     return (
         <span className="row" style={{ margin: 0 }}>
-            <input className="number" type="number" step={step} value={text} data-slicer={data} onChange={(event) => setText(event.target.value)} onBlur={() => text !== "" && onChange(Number(text))} onKeyDown={(event) => event.key === "Enter" && text !== "" && onChange(Number(text))} />
+            <input className="dim-input number" type="number" step={step} value={text} data-slicer={data} onChange={(event) => setText(event.target.value)} onBlur={() => text !== "" && onChange(Number(text))} onKeyDown={(event) => event.key === "Enter" && text !== "" && onChange(Number(text))} />
             <span className="dim">{unit}</span>
         </span>
     )
@@ -178,7 +179,7 @@ export function SlicerWizard({ context, onClose }: { context: Context; onClose: 
         <>
             {(step === 2 || step === 3) && <AlignGrid />}
             {step === 3 && cropped && <CropOverlay context={context} draft={draft} z={zMid} onChange={setDraft} />}
-            <div className="slicer-panel" data-slicer-step={step}>
+            <div className="dim-panel glass slicer-panel" data-slicer-step={step}>
                 <div className="stepper">
                     {STEPS.map((name, index) => (
                         <span key={name} className={`dot ${step === index + 1 ? "on" : step > index + 1 ? "done" : ""}`}>
@@ -190,7 +191,7 @@ export function SlicerWizard({ context, onClose }: { context: Context; onClose: 
                 {step === 0 && <div className="hint">Flying out to the whole map…</div>}
                 {step === 1 && (
                     <>
-                        <h3>1/4 · Height</h3>
+                        <h3 className="dim-label">1/4 · Height</h3>
                         <div className="hint">Cut the map to the heights you care about (the ceiling and what's under the floor go). It's live; nothing is deleted.</div>
                         <DualRange low={draft.zMin} high={draft.zMax} min={zRange[0]} max={zRange[1]} onChange={(zMin, zMax) => setDraft({ zMin, zMax })} />
                         <div className="row">
@@ -203,18 +204,18 @@ export function SlicerWizard({ context, onClose }: { context: Context; onClose: 
                 )}
                 {step === 2 && (
                     <>
-                        <h3>2/4 · Align</h3>
+                        <h3 className="dim-label">2/4 · Align</h3>
                         <div className="hint">Turn the map until its walls run along the grid. The x-ray view makes walls glow brightest.</div>
                         <div className="row">
                             <div className="dial" onPointerDown={dial} title="drag around to turn" data-slicer-dial>
                                 <div className="dial-hand" style={{ transform: `rotate(${-degrees}deg)` }} />
                             </div>
-                            <input type="range" min={-45} max={45} step={0.1} value={Math.max(-45, Math.min(45, degrees))} onChange={(event) => setDraft({ yaw: (Number(event.target.value) * Math.PI) / 180 })} data-slicer="yawSlider" />
+                            <input className="dim-range" type="range" min={-45} max={45} step={0.1} value={Math.max(-45, Math.min(45, degrees))} onChange={(event) => setDraft({ yaw: (Number(event.target.value) * Math.PI) / 180 })} data-slicer="yawSlider" />
                         </div>
                         <div className="row">
                             <span className="dim">turn</span>
                             <NumberField value={degrees} step={0.5} unit="°" data="yaw" onChange={(value) => setDraft({ yaw: (value * Math.PI) / 180 })} />
-                            <button type="button" className="button" onClick={auto} title="from the walls' main direction" data-action="slicer-auto">
+                            <button type="button" className="dim-btn sm" onClick={auto} title="from the walls' main direction" data-action="slicer-auto">
                                 Auto
                             </button>
                         </div>
@@ -222,7 +223,7 @@ export function SlicerWizard({ context, onClose }: { context: Context; onClose: 
                 )}
                 {step === 3 && (
                     <>
-                        <h3>3/4 · Crop</h3>
+                        <h3 className="dim-label">3/4 · Crop</h3>
                         <div className="hint">Drag the rectangle's edges, corners or middle (in the turned frame), or type the numbers.</div>
                         {(["x", "y"] as const).map((axis) => (
                             <div className="row" key={axis}>
@@ -236,20 +237,20 @@ export function SlicerWizard({ context, onClose }: { context: Context; onClose: 
                 )}
                 {step === 4 && <div className="hint">Saved. Back to the map…</div>}
                 <div className="row slicer-buttons">
-                    <button type="button" className="button" onClick={cancel} data-action="slicer-cancel">
+                    <button type="button" className="dim-btn sm" onClick={cancel} data-action="slicer-cancel">
                         Cancel
                     </button>
                     {previous.current && step === 1 && (
-                        <button type="button" className="button danger" onClick={reset} data-action="slicer-reset">
+                        <button type="button" className="dim-btn sm danger" onClick={reset} data-action="slicer-reset">
                             Show everything
                         </button>
                     )}
                     <span className="spacer" />
-                    <button type="button" className="button" disabled={step <= 1 || step >= 4} onClick={() => go(step - 1)} data-action="slicer-back">
-                        ← Back
+                    <button type="button" className="dim-btn sm" disabled={step <= 1 || step >= 4} onClick={() => go(step - 1)} data-action="slicer-back">
+                        <Icon name="arrow-left" /> Back
                     </button>
-                    <button type="button" className="button primary" disabled={step === 0 || step >= 4} onClick={() => go(step + 1)} data-action="slicer-next">
-                        {step === 3 ? "Done ✓" : "Next →"}
+                    <button type="button" className="dim-btn sm primary" disabled={step === 0 || step >= 4} onClick={() => go(step + 1)} data-action="slicer-next">
+                        {step === 3 ? <>Done <Icon name="check" /></> : <>Next <Icon name="arrow-right" /></>}
                     </button>
                 </div>
             </div>
@@ -263,11 +264,11 @@ function AlignGrid() {
         <svg className="align-grid" data-align-grid>
             <defs>
                 <pattern id="align-grid-small" width="40" height="40" patternUnits="userSpaceOnUse">
-                    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(122, 240, 168, 0.18)" strokeWidth="1" />
+                    <path d="M 40 0 L 0 0 0 40" fill="none" style={{ stroke: "color-mix(in srgb, var(--ok) 18%, transparent)" }} strokeWidth="1" />
                 </pattern>
                 <pattern id="align-grid-big" width="200" height="200" patternUnits="userSpaceOnUse">
                     <rect width="200" height="200" fill="url(#align-grid-small)" />
-                    <path d="M 200 0 L 0 0 0 200" fill="none" stroke="rgba(122, 240, 168, 0.4)" strokeWidth="1" />
+                    <path d="M 200 0 L 0 0 0 200" fill="none" style={{ stroke: "color-mix(in srgb, var(--ok) 40%, transparent)" }} strokeWidth="1" />
                 </pattern>
             </defs>
             <rect width="100%" height="100%" fill="url(#align-grid-big)" />
@@ -333,8 +334,8 @@ function CropOverlay({ context, draft, z, onChange }: { context: Context; draft:
     const handles: [string, number[]][] = [["sw", sw], ["se", se], ["ne", ne], ["nw", nw], ["s", mid(sw, se)], ["e", mid(se, ne)], ["n", mid(ne, nw)], ["w", mid(nw, sw)]]
     return (
         <svg className="crop-overlay" ref={svg} data-crop-overlay>
-            <path d={`M 0 0 H 10000 V 10000 H 0 Z ${path}`} fill="rgba(3, 5, 9, 0.55)" fillRule="evenodd" />
-            <path d={path} fill="rgba(255, 209, 102, 0.04)" stroke="#ffd166" strokeWidth="2" style={{ cursor: "move" }} onPointerDown={drag("move")} />
+            <path d={`M 0 0 H 10000 V 10000 H 0 Z ${path}`} style={{ fill: "color-mix(in srgb, var(--bg) 55%, transparent)" }} fillRule="evenodd" />
+            <path d={path} strokeWidth="2" style={{ cursor: "move", fill: "color-mix(in srgb, var(--warn) 4%, transparent)", stroke: "var(--warn)" }} onPointerDown={drag("move")} />
             {handles.map(([name, [x, y]]) => (
                 <rect key={name} x={x - 7} y={y - 7} width={14} height={14} rx={3} className="crop-handle" onPointerDown={drag(name)} data-crop-handle={name} style={{ cursor: name.length === 2 ? "nwse-resize" : name === "e" || name === "w" ? "ew-resize" : "ns-resize" }} />
             ))}

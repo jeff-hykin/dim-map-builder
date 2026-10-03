@@ -18,8 +18,8 @@ function Number_({ label, value, min, max, step, unit, onChange, data }: { label
         <div className="field">
             <span>{label}</span>
             <span className="row" style={{ margin: 0 }}>
-                <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
-                <input className="number" type="number" min={min} max={max} step={step} value={value} onChange={(event) => event.target.value !== "" && onChange(Number(event.target.value))} data-modify={data} />
+                <input className="dim-range" type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} />
+                <input className="dim-input number" type="number" min={min} max={max} step={step} value={value} onChange={(event) => event.target.value !== "" && onChange(Number(event.target.value))} data-modify={data} />
                 <span className="dim">{unit}</span>
             </span>
         </div>
@@ -60,17 +60,17 @@ export function ModifyPanel({ context }: { context: Context }) {
                     <div className="field">
                         <span>thickness</span>
                         <span className="row" style={{ margin: 0 }}>
-                            <div className="seg">
-                                <button type="button" className={state.thickness === null ? "on" : ""} onClick={() => modifyTool.update({ thickness: null })} data-thickness="auto">
+                            <div className="dim-tabs seg">
+                                <button type="button" className={`dim-tab ${state.thickness === null ? "on" : ""}`} onClick={() => modifyTool.update({ thickness: null })} data-thickness="auto">
                                     auto
                                 </button>
-                                <button type="button" className={state.thickness !== null ? "on" : ""} onClick={() => modifyTool.update({ thickness: state.thickness ?? 0.1 })} data-thickness="set">
+                                <button type="button" className={`dim-tab ${state.thickness !== null ? "on" : ""}`} onClick={() => modifyTool.update({ thickness: state.thickness ?? 0.1 })} data-thickness="set">
                                     set
                                 </button>
                             </div>
                             {state.thickness !== null && (
                                 <>
-                                    <input className="number" type="number" min={5} step={5} value={Math.round(state.thickness * 100)} onChange={(event) => event.target.value !== "" && modifyTool.update({ thickness: Math.max(0.05, Number(event.target.value) / 100) })} data-modify="thickness" />
+                                    <input className="dim-input number" type="number" min={5} step={5} value={Math.round(state.thickness * 100)} onChange={(event) => event.target.value !== "" && modifyTool.update({ thickness: Math.max(0.05, Number(event.target.value) / 100) })} data-modify="thickness" />
                                     <span className="dim">cm</span>
                                 </>
                             )}
