@@ -75,7 +75,7 @@ function Item({ upload, uploads }: { upload: Upload; uploads: Uploads }) {
                     </div>
                 </>
             )}
-            {upload.state === "queued" && <div className="hint">Waiting for the uploads ahead of it.</div>}
+            {upload.state === "queued" && upload.errorCode !== "not_logged_in" && <div className="hint">Waiting for the uploads ahead of it.</div>}
             {upload.state === "done" && (
                 <div className="hint">
                     {upload.skipped ? "Already in the cloud: nothing to send." : "Uploaded."}
