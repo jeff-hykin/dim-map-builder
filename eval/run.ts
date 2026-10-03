@@ -69,8 +69,8 @@ for (const task of tasks.filter((t) => !args.only || args.only.split(",").includ
     await api("/api/open", { method: "POST", body: JSON.stringify({ id: session.recordingId, path: session.recordingPath, name: session.name }) })
     await new Promise((r) => setTimeout(r, 2500))
     if (task.view) {
-        // ask the page to look there (the same event set_view sends)
-        await fetch(`${server}/agent/set_view`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(task.view) })
+        // ask the page to look there
+        await fetch(`${server}/api/camera`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(task.view) })
         await new Promise((r) => setTimeout(r, 1500))
     }
     const before = await api(`/api/sessions/${task.session}`)
@@ -97,8 +97,8 @@ for (const task of tasks.filter((t) => !args.only || args.only.split(",").includ
     let failedCalls = 0
     for (const event of lines) {
         for (const block of event.message?.content ?? []) {
-            // call_endpoint's target is what counts (map builder actions are `dim-map-builder:POST agent/<name>`)
-            if (block.type === "tool_use") calls.push(String(block.input?.id ?? block.name).replace(/^mcp__desktop__/, "").replace(/^.*agent\//, ""))
+            // call_endpoint's target is what counts (map builder actions are `dim-map-builder:POST api/sessions/{id}/fit-box`...)
+            if (block.type === "tool_use") calls.push(String(block.input?.id ?? block.name).replace(/^mcp__desktop__/, "").replace(/^dim-map-builder:/, ""))
             if (block.type === "tool_result" && block.is_error) failedCalls++
         }
         if (event.type === "result") final = event.result ?? ""

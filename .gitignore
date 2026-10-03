@@ -3,3 +3,4 @@ result
 result-*
 node_modules
 frontend/dist
+deno.lock

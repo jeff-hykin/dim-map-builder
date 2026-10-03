@@ -46,6 +46,8 @@ pub struct App {
     /// the session a page has open now (the agent's default target)
     pub active: Mutex<Option<String>>,
     captures: Mutex<HashMap<u64, oneshot::Sender<String>>>,
+    /// Desktop's own HTTP API (its upload queue), from --desktop-url
+    pub desktop_url: std::sync::OnceLock<String>,
     next_job: AtomicU64,
     next_capture: AtomicU64,
 }
@@ -74,6 +76,7 @@ impl App {
             events: broadcast::channel(256).0,
             active: Mutex::new(None),
             captures: Mutex::new(HashMap::new()),
+            desktop_url: std::sync::OnceLock::new(),
             next_job: AtomicU64::new(1),
             next_capture: AtomicU64::new(1),
         })

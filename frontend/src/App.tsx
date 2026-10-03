@@ -80,7 +80,7 @@ export function App() {
 
     const uploads = useUploads(say)
 
-    /** uploads the open recording to Dimensional cloud (through Desktop's queue); `saveFirst` saves into it first */
+    /** uploads the open recording to Dimensional cloud (the backend saves first if asked, then queues it in Desktop) */
     const uploadRecording = useCallback(
         async (saveFirst: boolean) => {
             const current = sessionRef.current
@@ -88,32 +88,12 @@ export function App() {
                 return
             }
             setModal(null)
-            let path = current.recordingPath
-            if (saveFirst) {
-                const started = await run(api.save(current.id), "Saving into the recording, then uploading…")
-                if (!started) {
-                    return
-                }
-                // the save is a job: wait for it (a read-only recording is saved to a copy, which is what gets uploaded)
-                const deadline = Date.now() + 30 * 60_000
-                while (Date.now() < deadline) {
-                    await new Promise((resolve) => window.setTimeout(resolve, 500))
-                    const fresh = await api.session(current.id).catch(() => null)
-                    const job = fresh?.job
-                    if (!fresh || (job && job.id === started.job.id && job.state === "running")) {
-                        continue
-                    }
-                    if (job && job.id === started.job.id && job.state !== "done") {
-                        say(`Not uploaded: the save ${job.state}${job.error ? `: ${job.error}` : ""}`, true)
-                        return
-                    }
-                    path = fresh.recordingPath
-                    break
-                }
-            }
-            await uploads.upload(path)
+            await uploads.upload(async () => {
+                const result = await api.upload(current.id, saveFirst)
+                return result.upload ? `Queued ${result.upload.name} for upload` : "Saving into the recording, then uploading…"
+            })
         },
-        [run, say, uploads.upload],
+        [uploads.upload],
     )
 
     // the scene lives for the page's lifetime
@@ -316,6 +296,22 @@ export function App() {
             } else if (event.type === "capture") {
                 const image = scene.capture(event.options ?? {})
                 api.deliverCapture(event.request, image)
+            } else if (event.type === "ui") {
+                // an agent changed what the page shows (PATCH api/ui)
+                const patch = event.patch as Partial<UiState>
+                setUiState((ui) => ({ ...ui, ...patch, look: { ...ui.look, ...(patch.look ?? {}) }, showPaths: { ...ui.showPaths, ...(patch.showPaths ?? {}) } }))
+                if (patch.look) {
+                    scene.applyLook(patch.look)
+                }
+                if (patch.showPaths) {
+                    scene.showPaths({ ...uiRef.current.showPaths, ...patch.showPaths })
+                }
+            } else if (event.type === "upload") {
+                if (event.error) {
+                    say(`Couldn't queue the upload: ${event.error}`, true)
+                } else {
+                    uploads.refresh()
+                }
             } else if (event.type === "setView") {
                 scene.lookAt(event.target, event.distance ?? undefined, !!event.topDown)
             } else if (event.type === "opened" && event.id !== current?.id) {
@@ -330,7 +326,7 @@ export function App() {
                 setModal("open")
             }
         })
-    }, [scene, refresh, say, setUi])
+    }, [scene, refresh, say, setUi, uploads.refresh])
 
     // scene → UI: selection and edits from the gizmo, camera moves
     useEffect(() => {

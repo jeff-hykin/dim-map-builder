@@ -5,8 +5,7 @@
     "scripts": {
         "dev": "vite",
         "build": "tsc --noEmit -p . && vite build",
-        "check": "tsc --noEmit -p .",
-        "test": "echo \"no frontend unit tests (the logic is server-side)\""
+        "typecheck": "tsc --noEmit -p ."
     },
     "dependencies": {
         "react": "^19.2.0",

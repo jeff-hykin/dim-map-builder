@@ -1,9 +1,12 @@
 //! Map Builder's `dimos-app-server` (dimOS Desktop app contract, docs/apps.md in dimos-desktop): serves the built
-//! page, the editing API (/api), and the agent's endpoints (/agent.json, /agent/<name>). One compiled binary; no Python or dimos at runtime.
+//! page and every action as an HTTP endpoint (api.rs), listed in /agent.json for Desktop's agent. One compiled binary;
+//! no Python or dimos at runtime.
 mod api;
 mod app;
-mod agent;
+mod desktop;
 mod persist;
+mod probe;
+mod routes;
 mod session;
 mod workspace;
 
@@ -39,6 +42,9 @@ pub struct Args {
     /// Desktop's shared recordings folder
     #[arg(long, env = "DIMOS_RECORDINGS_DIR")]
     recordings: Option<PathBuf>,
+    /// print the endpoints (agent.json) and exit: scripts/check_endpoints.ts compares them with dimos.yaml
+    #[arg(long)]
+    agent_json: bool,
 }
 
 fn dimos_home() -> PathBuf {
@@ -48,12 +54,19 @@ fn dimos_home() -> PathBuf {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    if args.agent_json {
+        println!("{}", serde_json::to_string_pretty(&api::routes().manifest(api::DESCRIPTION))?);
+        return Ok(());
+    }
     let data = args.data.clone().unwrap_or_else(|| dimos_home().join("data").join("apps").join("dim-map-builder"));
     let recordings = args.recordings.clone().unwrap_or_else(|| dimos_home().join("recordings"));
     let frontend = args.frontend.clone().unwrap_or_else(|| PathBuf::from("frontend/dist"));
     eprintln!("map builder: page {}, sessions {}, recordings {}", frontend.display(), data.display(), recordings.display());
     let state = app::App::new(data, recordings);
-    let router = api::router(state.clone())
+    let _ = state.desktop_url.set(args.desktop_url.clone());
+    let router = api::routes()
+        .router
+        .with_state(state.clone())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(64 << 20))
         .fallback_service(tower_http::services::ServeDir::new(&frontend).fallback(tower_http::services::ServeFile::new(frontend.join("index.html"))));
     let shutdown = async {

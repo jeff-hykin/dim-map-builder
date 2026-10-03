@@ -1,7 +1,9 @@
 # Agent evaluation of the Map Builder tools
 
-These results are from when the app served its own `/mcp` (with `?toolset=basic`). The app now only describes its
-endpoints (`/agent.json`) and agents reach them through Desktop's MCP; `run.ts` runs the same tasks that way.
+These results are from when the app served its own `/mcp` (with `?toolset=basic`), whose tools are now the app's HTTP
+endpoints (`GET agent.json` lists them: `fit_box` is `POST api/sessions/{id}/fit-box`, `find_objects` is
+`.../find-objects`, `get_view` is `GET api/view`...). Agents reach them through Desktop's MCP; `run.ts` runs the same
+tasks that way.
 
 Claude (`claude -p`, Opus 5, given only the Map Builder MCP tools) on 12 tasks on the sim go2 office map (Live Viewer
 recording `live_viewer_1790926614.mcap`, 68 lidar scans). Ground truth = the MuJoCo scene's own object boxes

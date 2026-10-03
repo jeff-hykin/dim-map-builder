@@ -12,19 +12,23 @@ export interface Uploads {
     panelOpen: boolean
     setPanelOpen: (open: boolean) => void
     loginOpen: boolean
-    /** opens the login dialog; `then` = a path to queue once logged in */
-    openLogin: (then?: string) => void
+    /** opens the login dialog; `then` = what to queue once logged in */
+    openLogin: (then?: Queue) => void
     closeLogin: () => void
     /** the login was approved: queue what was waiting and show the panel */
     loggedIn: () => Promise<void>
-    /** checks the login, then queues `path` (or asks to log in first) */
-    upload: (path: string) => Promise<void>
+    /** checks the login, then queues the upload (or asks to log in first) */
+    upload: (queue: Queue) => Promise<void>
+    refresh: () => Promise<void>
     cancel: (id: string) => Promise<void>
     retry: (id: string) => Promise<void>
     clearFinished: () => Promise<void>
     logout: () => Promise<void>
     refreshAccount: () => Promise<void>
 }
+
+/** queues an upload through the backend (POST api/sessions/{id}/upload); says what it did */
+export type Queue = () => Promise<string>
 
 export const isActive = (upload: Upload) => upload.state === "queued" || upload.state === "uploading"
 
@@ -35,7 +39,7 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
     const [account, setAccount] = useState<CloudAccount | null>(null)
     const [panelOpen, setPanelOpen] = useState(false)
     const [loginOpen, setLoginOpen] = useState(false)
-    const afterLogin = useRef<string | null>(null)
+    const afterLogin = useRef<Queue | null>(null)
 
     const refresh = useCallback(async () => {
         try {
@@ -69,10 +73,9 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
     }, [panelOpen, refreshAccount])
 
     const enqueue = useCallback(
-        async (path: string) => {
+        async (queue: Queue) => {
             try {
-                const added = await uploadsApi.add(path)
-                say(`Queued ${added.name} for upload`)
+                say(await queue())
                 setPanelOpen(true)
                 await refresh()
             } catch (error) {
@@ -83,7 +86,7 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
     )
 
     const upload = useCallback(
-        async (path: string) => {
+        async (queue: Queue) => {
             let current: CloudAccount
             try {
                 current = await cloud.account()
@@ -93,11 +96,11 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
             }
             setAccount(current)
             if (!current.loggedIn) {
-                afterLogin.current = path
+                afterLogin.current = queue
                 setLoginOpen(true)
                 return
             }
-            await enqueue(path)
+            await enqueue(queue)
         },
         [say, enqueue],
     )
@@ -105,10 +108,10 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
     const loggedIn = useCallback(async () => {
         setLoginOpen(false)
         await refreshAccount()
-        const path = afterLogin.current
+        const queue = afterLogin.current
         afterLogin.current = null
-        if (path) {
-            await enqueue(path)
+        if (queue) {
+            await enqueue(queue)
         } else {
             setPanelOpen(true)
             await refresh()
@@ -135,7 +138,7 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
         panelOpen,
         setPanelOpen,
         loginOpen,
-        openLogin: (then?: string) => {
+        openLogin: (then?: Queue) => {
             afterLogin.current = then ?? null
             setLoginOpen(true)
         },
@@ -145,6 +148,7 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
         },
         loggedIn,
         upload,
+        refresh,
         cancel: (id) => act(uploadsApi.remove(id)),
         retry: (id) => act(uploadsApi.retry(id)),
         clearFinished: () => act(uploadsApi.clearFinished()),

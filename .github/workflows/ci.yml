@@ -1,20 +1,37 @@
-# The non-UI logic (cargo test) and the page (type check + build) on every push.
 name: ci
 on:
     push:
     pull_request:
+    workflow_dispatch:
 jobs:
-    test:
-        runs-on: ubuntu-latest
+    build:
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, macos-14]
+        runs-on: ${{ matrix.os }}
         steps:
             - uses: actions/checkout@v4
+            - uses: cachix/install-nix-action@v31
+            # pulls from dimos-desktop.cachix.org; pushes what it builds only when the CACHIX_AUTH_TOKEN secret is set
+            - uses: cachix/cachix-action@v16
+              with:
+                  name: dimos-desktop
+                  authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+            - run: nix build .#dimosApp -L
+            - uses: denoland/setup-deno@v2
+              with:
+                  deno-version: v2.x
+            # dimos.yaml's agent: lists exactly what the built server serves at agent.json
+            - run: deno task check-endpoints --binary result/bin/dimos-app-server
+            - run: deno fmt --check && deno lint
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
-            - run: cargo test --workspace
+            - run: cargo test --workspace --locked
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
                   cache: npm
                   cache-dependency-path: frontend/package-lock.json
-            - run: npm ci && npx tsc --noEmit -p . && npm run build
+            - run: npm ci && npm run typecheck
               working-directory: frontend

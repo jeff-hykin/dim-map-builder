@@ -1,4 +1,4 @@
-// Client for this app's backend (server/src/api.rs, at ./api), Desktop's shared recordings (../../recordings) and
+// Client for this app's backend (server/src/api.rs, at ./api: the same endpoints Desktop's agent calls), Desktop's shared recordings (../../recordings) and
 // Desktop's Dimensional cloud uploads (../../dimos/cloud, ../../dimos/uploads).
 import type { FloorModel } from "./slice.ts"
 import { appEvents } from "./events.js"
@@ -307,7 +307,6 @@ export const cloud = {
 
 export const uploads = {
     list: () => desktop<{ uploads: Upload[]; waitingForLogin: boolean }>("../../dimos/uploads"),
-    add: (path: string, options: { robotId?: string; kind?: string } = {}) => desktop<Upload>("../../dimos/uploads", json({ path, ...options })),
     /** cancels a queued / running one, removes a finished one */
     remove: (id: string) => desktop<{ ok: true }>(`../../dimos/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
     retry: (id: string) => desktop<Upload>(`../../dimos/uploads/${encodeURIComponent(id)}/retry`, { method: "POST" }),
@@ -362,6 +361,8 @@ export const api = {
     redo: (id: string) => call<{ redone: string | null }>(`api/sessions/${id}/redo`, { method: "POST" }),
     view: (id: string, view: Record<string, unknown>) => call(`api/sessions/${id}/view`, { method: "PUT", body: JSON.stringify(view) }),
     save: (id: string) => call<{ job: Job }>(`api/sessions/${id}/save`, { method: "POST" }),
+    /** queues the recording in Desktop's upload queue; with saveFirst and unsaved edits, after a save job */
+    upload: (id: string, saveFirst: boolean) => call<{ upload?: Upload; job?: Job }>(`api/sessions/${id}/upload`, json({ saveFirst })),
     deliverCapture: (request: number, dataUrl: string) => fetch(here(`api/captures/${request}`), { method: "POST", body: dataUrl }),
 }
 

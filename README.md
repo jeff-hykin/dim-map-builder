@@ -30,7 +30,8 @@ everything else is optional and in any order.
   in Desktop (they keep going when the page closes) and queue up; the uploads drawer shows each one's progress, speed
   and time left, with cancel, retry and readable errors.
 
-Desktop's agent can do all of it too, through the endpoints this app lists at `/agent.json` ([docs/agent-tools.md](docs/agent-tools.md)):
+Every action is an HTTP endpoint the page itself uses, and Desktop's agent calls the same ones (listed at `/agent.json`
+and in `dimos.yaml`, [docs/api.md](docs/api.md)):
 "clean up the floating voxels in this view", "box every chair", "add a no-go area around the stairs".
 
 Your work is never lost: the working session (map edits, undo history, annotations, plans, camera, panels) is kept
@@ -54,15 +55,17 @@ In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (b
 | --- | --- |
 | `crates/dimos-recording` | read/write dimos recordings without dimos: memory2 `.db`, `.mcap`; LCM + ROS 2 CDR clouds, tf, odometry |
 | `crates/mapping` | the map math: the ray-traced voxel map (vendored from dimos), tf tree, ICP, loop closure (a port of dimos's PGO), cleanup selections, floors, floor plans, the staged build |
-| `server` | `dimos-app-server`: sessions, jobs, the page's API (`/api`), the agent's endpoints (`/agent.json`), save/restore |
+| `server` | `dimos-app-server`: sessions, jobs, every action as an endpoint (`api.rs`, one table that is also `/agent.json`), save/restore |
+| `scripts/check_endpoints.ts` | checks dimos.yaml's `agent:` against the server's `--agent-json` (`--write` regenerates it) |
 | `frontend` | the page: React + Vite + three.js; `src/render` is copied from the Live Viewer (same point styles) |
-| `docs` | [schema.md](docs/schema.md) (what's saved), [agent-tools.md](docs/agent-tools.md), [api.md](docs/api.md) |
+| `docs` | [schema.md](docs/schema.md) (what's saved), [api.md](docs/api.md) (the endpoints) |
 
 One compiled binary at runtime: no Python, no dimos needed to build or edit maps.
 
 ## Develop
 
-    cargo test                                  # all the non-UI logic
+    cargo test --workspace                      # all the non-UI logic and every endpoint
+    deno task check-endpoints [--write]         # dimos.yaml's agent: = the served agent.json
     cargo run -p dimos-app-server -- --port 7190 --frontend frontend/dist
     (cd frontend && npm ci && npm run dev)      # the page, against a running Desktop (DESKTOP_URL)
     nix build .#dimosApp                        # what Desktop builds
