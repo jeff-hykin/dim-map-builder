@@ -132,7 +132,9 @@ export class MapScene {
 
     constructor(host: HTMLElement) {
         this.viewer = new Viewer(host, () => Date.now())
-        this.viewer.setTheme(true)
+        // the grid and fog follow the page's light/dark (dim-theme.js toggles body.dark and fires `dim-theme`)
+        this.viewer.setTheme(document.body.classList.contains("dark"))
+        window.addEventListener("dim-theme", (event) => this.viewer.setTheme((event as CustomEvent<{ dark: boolean }>).detail.dark))
         this.map = new PointLayer(this.viewer)
         this.raw = new PointLayer(this.viewer)
         this.preview = new PointLayer(this.viewer)
