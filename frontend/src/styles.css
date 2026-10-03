@@ -181,3 +181,35 @@ button:focus { outline: none; }
     .tool-panel { left: 12px; right: 12px; width: auto; top: auto; bottom: 12px; max-height: 45%; }
     .slice-bar { flex-wrap: wrap; max-width: calc(100% - 24px); }
 }
+
+/* ── uploads to Dimensional cloud: the topbar button, the drawer, the login dialog ── */
+.uploads-button { position: relative; gap: 4px; }
+.uploads-button.failed { color: var(--danger); }
+.uploads-button .count { font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-fg, #fff); display: inline-grid; place-items: center; }
+.upload-ring { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; }
+.upload-ring[data-busy="ring"] { background: conic-gradient(var(--primary) calc(var(--done) * 360deg), var(--muted) 0); }
+.upload-ring[data-busy="ring"] .dim-icon { background: var(--card); border-radius: 50%; width: 16px; height: 16px; padding: 2px; box-sizing: border-box; }
+.upload-ring[data-busy="spin"] { border: 2px solid var(--muted); border-top-color: var(--primary); animation: orb-spin 1s linear infinite; }
+.upload-ring[data-busy="spin"] .dim-icon { animation: orb-spin 1s linear infinite reverse; }
+.uploads-panel { position: absolute; right: 12px; top: 12px; z-index: 8; width: min(420px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; padding: 10px 12px; box-shadow: var(--shadow-lg); animation: palette-in 160ms ease-out; }
+.uploads-panel .tool-panel-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
+.upload-account { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
+.uploads { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+.upload { padding: 8px 10px; }
+.upload.failed { border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.upload.done { opacity: 0.85; }
+.upload-head { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; }
+.upload-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-numbers { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted-fg); font-size: 11px; }
+.upload-log { font-size: 10px; margin-top: 3px; word-break: break-all; }
+.upload-notice { margin: 6px 0; font-size: 11px; }
+.upload .row { margin: 4px 0 0; }
+.row.end { justify-content: flex-end; }
+.bar.indeterminate > div { width: 35%; animation: bar-slide 1.2s ease-in-out infinite; }
+@keyframes bar-slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.login .login-step { margin: 12px 0; }
+.login-url { word-break: break-all; color: var(--primary); text-decoration: none; display: inline-flex; gap: 4px; align-items: center; }
+.login-url:hover { text-decoration: underline; }
+.login-code { font-size: 28px; font-weight: 700; letter-spacing: 0.18em; padding: 6px 14px; border: 1px dashed var(--border); border-radius: var(--radius); background: var(--muted); user-select: all; }
+.login-wait { display: flex; align-items: center; gap: 8px; margin: 12px 0; color: var(--muted-fg); flex-wrap: wrap; }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); border-top-color: var(--primary); animation: orb-spin 0.9s linear infinite; display: inline-block; }

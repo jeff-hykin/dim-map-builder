@@ -1,4 +1,4 @@
-// Types for the vendored dim-app events.js (v0.6.1).
+// Types for the vendored dim-app events.js (v0.7.0).
 export declare const EVENTS_PATH: string
 export declare function appEvents(
     onEvent: (event: any) => void,

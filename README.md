@@ -24,6 +24,11 @@ everything else is optional and in any order.
   floor, walls, crop, level), **Saved views**. All undoable.
 - **Save** into the recording: the map, annotations and views become `map/*` streams in the same file
   ([docs/schema.md](docs/schema.md)), ready for a navigation blueprint to read.
+- **Upload** the recording (with the map saved in it) to your Dimensional cloud account: the Upload button in the top
+  bar, or the Save menu (which offers "Save, then upload" when there are unsaved edits). Not logged in? A dialog shows
+  the page to open and the code to approve from any signed-in browser, then the upload starts by itself. Uploads run
+  in Desktop (they keep going when the page closes) and queue up; the uploads drawer shows each one's progress, speed
+  and time left, with cancel, retry and readable errors.
 
 Desktop's agent can do all of it too, through the endpoints this app lists at `/agent.json` ([docs/agent-tools.md](docs/agent-tools.md)):
 "clean up the floating voxels in this view", "box every chair", "add a no-go area around the stairs".
@@ -33,6 +38,11 @@ server-side and written to disk on every change, separately from "Save into reco
 restart Desktop and it comes back as it was.
 
 ## Install
+
+This version needs a dimOS Desktop with cloud uploads (the `/dimos/cloud/*` and `/dimos/uploads` endpoints, branch
+`jeff/desktop_uploads` or later): it declares them in `dimos.yaml`, and an older Desktop rejects unknown `dimos-api:`
+entries, so it won't install there. Page errors also go to Desktop's error feed (`POST /api/errors`, dim-app
+`errors.js`) so its agent sees them; an older Desktop just drops those.
 
 In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (branch `dimos-desktop2`), or
 

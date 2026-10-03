@@ -22,6 +22,9 @@ import { SliceBar } from "./ui/SliceBar.tsx"
 import { JobCard } from "./ui/JobCard.tsx"
 import { SlicerWizard } from "./ui/SlicerWizard.tsx"
 import { Icon } from "./ui/Icon.tsx"
+import { useUploads, isActive } from "./ui/useUploads.ts"
+import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
+import { LoginDialog } from "./ui/LoginDialog.tsx"
 
 const MODES: { id: ViewMode; label: string }[] = [
     { id: "3d", label: "3D" },
@@ -73,6 +76,44 @@ export function App() {
             }
         },
         [say],
+    )
+
+    const uploads = useUploads(say)
+
+    /** uploads the open recording to Dimensional cloud (through Desktop's queue); `saveFirst` saves into it first */
+    const uploadRecording = useCallback(
+        async (saveFirst: boolean) => {
+            const current = sessionRef.current
+            if (!current) {
+                return
+            }
+            setModal(null)
+            let path = current.recordingPath
+            if (saveFirst) {
+                const started = await run(api.save(current.id), "Saving into the recording, then uploading…")
+                if (!started) {
+                    return
+                }
+                // the save is a job: wait for it (a read-only recording is saved to a copy, which is what gets uploaded)
+                const deadline = Date.now() + 30 * 60_000
+                while (Date.now() < deadline) {
+                    await new Promise((resolve) => window.setTimeout(resolve, 500))
+                    const fresh = await api.session(current.id).catch(() => null)
+                    const job = fresh?.job
+                    if (!fresh || (job && job.id === started.job.id && job.state === "running")) {
+                        continue
+                    }
+                    if (job && job.id === started.job.id && job.state !== "done") {
+                        say(`Not uploaded: the save ${job.state}${job.error ? `: ${job.error}` : ""}`, true)
+                        return
+                    }
+                    path = fresh.recordingPath
+                    break
+                }
+            }
+            await uploads.upload(path)
+        },
+        [run, say, uploads.upload],
     )
 
     // the scene lives for the page's lifetime
@@ -393,7 +434,10 @@ export function App() {
         return () => window.removeEventListener("keydown", onKey)
     }, [scene, run, setUi, pickTool, modal])
 
-    const context: Context = { session, scene, floor, ui, setUi, pickTool, setModal, run, refresh, openRecording }
+    const context: Context = { session, scene, floor, ui, setUi, pickTool, setModal, run, refresh, openRecording, uploads, uploadRecording }
+    const activeUploads = uploads.list.filter(isActive).length
+    const uploadFraction = overallFraction(uploads.list)
+    const uploadFailed = uploads.list.some((u) => u.state === "failed")
     const hasMap = session?.stage === "map"
     const job = session?.job
     const running = job?.state === "running" ? job : null
@@ -467,7 +511,30 @@ export function App() {
                                 {session.unsaved ? "Save" : <><Icon name="check" /> Saved</>}
                             </button>
                         )}
+                        <button
+                            type="button"
+                            className="dim-btn sm icon"
+                            onClick={() => (session.unsaved && hasMap ? setModal("save") : uploadRecording(false))}
+                            title={session.unsaved && hasMap ? "Upload to Dimensional cloud (save first, or upload as last saved)" : `Upload ${session.name} to Dimensional cloud`}
+                            data-action="upload"
+                        >
+                            <Icon name="upload" /> Upload
+                        </button>
                     </>
+                )}
+                {(uploads.list.length > 0 || uploads.waitingForLogin) && (
+                    <button
+                        type="button"
+                        className={`dim-btn sm icon uploads-button ${uploads.panelOpen ? "on" : ""} ${uploadFailed ? "failed" : ""}`}
+                        onClick={() => uploads.setPanelOpen(!uploads.panelOpen)}
+                        title={activeUploads ? `${activeUploads} upload${activeUploads > 1 ? "s" : ""} in progress` : "Uploads"}
+                        data-action="uploads-panel"
+                    >
+                        <span className="upload-ring" style={{ ["--done" as string]: uploadFraction ?? 0 }} data-busy={activeUploads > 0 ? (uploadFraction == null ? "spin" : "ring") : undefined}>
+                            <Icon name="upload" />
+                        </span>
+                        {activeUploads > 0 ? <span className="count" data-upload-count>{activeUploads}</span> : uploadFailed ? <Icon name="warn" /> : null}
+                    </button>
                 )}
             </header>
             <section className="view" ref={viewBox}>
@@ -562,9 +629,17 @@ export function App() {
                         <JobCard job={running} onCancel={() => session && run(api.cancel(session.id), "Cancelling…")} />
                     </div>
                 )}
+                {uploads.panelOpen && <UploadsPanel uploads={uploads} />}
                 <div className="dim-toasts">{toast && <div className={`dim-toast ${toast.error ? "danger" : ""}`}>{toast.text}</div>}</div>
                 {!connected && <div className="dim-alert danger connection">Reconnecting to the Map Builder server…</div>}
             </section>
+            {uploads.loginOpen && (
+                <LoginDialog
+                    reason={uploads.waitingForLogin ? "Uploads are waiting for you to log in." : null}
+                    onApproved={uploads.loggedIn}
+                    onClose={uploads.closeLogin}
+                />
+            )}
             {modal === "generate" && session && <GenerateModal context={context} onClose={() => setModal(null)} />}
             {modal === "open" && (
                 <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && session && setModal(null)}>

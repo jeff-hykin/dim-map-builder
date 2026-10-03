@@ -1,6 +1,18 @@
 title: Map Builder
 dimos-desktop-api: ">=2 <3"
-# Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams
+# Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams.
+# Dimensional cloud: log in and queue uploads of the recording (these need a Desktop with cloud uploads; an older
+# Desktop rejects unknown dimos-api entries, so it won't install this version).
 dimos-api:
     - GET /recordings
     - GET /recordings/{id}
+    - GET /dimos/cloud/account
+    - POST /dimos/cloud/login
+    - GET /dimos/cloud/login
+    - DELETE /dimos/cloud/login
+    - POST /dimos/cloud/logout
+    - GET /dimos/uploads
+    - POST /dimos/uploads
+    - DELETE /dimos/uploads
+    - DELETE /dimos/uploads/{id}
+    - POST /dimos/uploads/{id}/retry

@@ -4,6 +4,7 @@ import type { Session } from "../core/api.ts"
 import { AUTO_RANGE, type FloorModel, type SliceRange } from "../core/slice.ts"
 import type { CubeShade } from "../render/pointMaterial.ts"
 import type { IconName } from "./Icon.tsx"
+import type { Uploads } from "./useUploads.ts"
 
 export type ViewMode = "3d" | "split" | "2d"
 
@@ -82,4 +83,8 @@ export interface Context {
     run: <T>(action: Promise<T>, done?: string | ((value: T) => string)) => Promise<T | undefined>
     refresh: () => Promise<void>
     openRecording: (recording: { id: string; path: string; name: string; writable?: boolean }) => Promise<void>
+    /** Desktop's cloud upload queue and login */
+    uploads: Uploads
+    /** uploads the open recording; `saveFirst` saves the edits into it first */
+    uploadRecording: (saveFirst: boolean) => Promise<void>
 }

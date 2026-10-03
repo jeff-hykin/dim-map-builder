@@ -2,10 +2,11 @@
 import { useState } from "react"
 import { api } from "../core/api.ts"
 import { JobCard } from "./JobCard.tsx"
+import { Icon } from "./Icon.tsx"
 import type { Context } from "./context.ts"
 
 export function SavePanel({ context }: { context: Context }) {
-    const { session, run } = context
+    const { session, run, uploads, uploadRecording } = context
     const [confirmDiscard, setConfirmDiscard] = useState(false)
     if (!session) {
         return null
@@ -41,6 +42,34 @@ export function SavePanel({ context }: { context: Context }) {
                 <span className={`dim-badge ${session.unsaved ? "warn" : "ok"}`}>{session.unsaved ? "unsaved changes" : "saved"}</span>
             </div>
             {job && <JobCard job={job} />}
+            <h3 className="dim-label">Upload to Dimensional cloud</h3>
+            <div className="dim-panel tool-card" data-upload-section>
+                <div className="about">
+                    Sends {session.name} (with the map saved in it) to your Dimensional account, from Desktop: it keeps going if you close this page. Uploads queue up; follow them in the uploads panel.
+                </div>
+                {session.unsaved ? (
+                    <>
+                        <div className="hint">You have changes that aren't saved into the recording yet.</div>
+                        <div className="row">
+                            <button type="button" className="dim-btn sm primary" disabled={session.job?.state === "running"} onClick={() => uploadRecording(true)} data-action="save-and-upload">
+                                <Icon name="upload" /> Save, then upload
+                            </button>
+                            <button type="button" className="dim-btn sm" onClick={() => uploadRecording(false)} data-action="upload-as-saved">
+                                Upload as last saved
+                            </button>
+                        </div>
+                    </>
+                ) : (
+                    <div className="row">
+                        <button type="button" className="dim-btn sm primary" onClick={() => uploadRecording(false)} data-action="upload-recording">
+                            <Icon name="upload" /> Upload
+                        </button>
+                        <button type="button" className="dim-btn sm ghost" onClick={() => uploads.setPanelOpen(true)} data-action="show-uploads">
+                            Show uploads
+                        </button>
+                    </div>
+                )}
+            </div>
             <h3 className="dim-label">Start over</h3>
             <div className="dim-panel tool-card">
                 <div className="about">Forget this working copy (the edits not saved into the recording are lost). The recording itself is untouched.</div>

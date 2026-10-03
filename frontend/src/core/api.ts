@@ -1,4 +1,5 @@
-// Client for this app's backend (server/src/api.rs, at ./api) and Desktop's shared recordings (../../recordings).
+// Client for this app's backend (server/src/api.rs, at ./api), Desktop's shared recordings (../../recordings) and
+// Desktop's Dimensional cloud uploads (../../dimos/cloud, ../../dimos/uploads).
 import type { FloorModel } from "./slice.ts"
 import { appEvents } from "./events.js"
 
@@ -233,6 +234,84 @@ const json = (body: unknown): RequestInit => ({ method: "POST", body: JSON.strin
 export const recordings = {
     list: () => call<{ dir: string; extraDirs: string[]; recordings: DesktopRecording[] }>("../../recordings"),
     metadata: (id: string) => call<RecordingMetadata>(`../../recordings/${id.split("/").map(encodeURIComponent).join("/")}`),
+}
+
+/** Dimensional cloud login (Desktop's dimos server, docs/api.md in dimos-desktop) */
+export interface CloudAccount {
+    loggedIn: boolean
+    email: string | null
+    scopes: string[] | null
+    source: "env" | "stored" | null
+    cloudUrl: string
+    error: string | null
+}
+
+export interface LoginState {
+    state: "idle" | "starting" | "pending" | "approved" | "denied" | "expired" | "failed"
+    url: string | null
+    urlComplete: string | null
+    code: string | null
+    expiresAt: number | null
+    email: string | null
+    error: string | null
+}
+
+export type UploadState = "queued" | "uploading" | "done" | "failed" | "cancelled"
+
+export interface Upload {
+    id: string
+    path: string
+    name: string
+    size: number
+    robotId: string | null
+    kind: string | null
+    state: UploadState
+    phase: string | null
+    bytesDone: number
+    bytesTotal: number
+    rateBps: number | null
+    etaSeconds: number | null
+    uploadId: string | null
+    skipped: boolean
+    notice: string | null
+    error: string | null
+    errorCode: null | "not_logged_in" | "network" | "quota" | "file_missing" | "failed"
+    log: string | null
+    createdAt: number
+    startedAt: number | null
+    finishedAt: number | null
+}
+
+export const TOO_OLD_DESKTOP = "Uploading needs a newer dimOS Desktop (one with cloud uploads: the jeff/desktop_uploads branch or later)."
+
+/** Desktop's own endpoints; a 404 / 405 means a Desktop from before they existed */
+async function desktop<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(here(path), { headers: { "content-type": "application/json" }, ...init })
+    const body = await response.json().catch(() => ({}))
+    if (response.status === 404 || response.status === 405) {
+        throw new Error(TOO_OLD_DESKTOP)
+    }
+    if (!response.ok) {
+        throw new Error(body.error ?? `${response.status} ${response.statusText}`)
+    }
+    return body as T
+}
+
+export const cloud = {
+    account: () => desktop<CloudAccount>("../../dimos/cloud/account"),
+    login: () => desktop<LoginState>("../../dimos/cloud/login", { method: "POST" }),
+    loginState: () => desktop<LoginState>("../../dimos/cloud/login"),
+    cancelLogin: () => desktop<LoginState>("../../dimos/cloud/login", { method: "DELETE" }),
+    logout: () => desktop<CloudAccount>("../../dimos/cloud/logout", { method: "POST" }),
+}
+
+export const uploads = {
+    list: () => desktop<{ uploads: Upload[]; waitingForLogin: boolean }>("../../dimos/uploads"),
+    add: (path: string, options: { robotId?: string; kind?: string } = {}) => desktop<Upload>("../../dimos/uploads", json({ path, ...options })),
+    /** cancels a queued / running one, removes a finished one */
+    remove: (id: string) => desktop<{ ok: true }>(`../../dimos/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    retry: (id: string) => desktop<Upload>(`../../dimos/uploads/${encodeURIComponent(id)}/retry`, { method: "POST" }),
+    clearFinished: () => desktop<{ uploads: Upload[] }>("../../dimos/uploads", { method: "DELETE" }),
 }
 
 export const api = {

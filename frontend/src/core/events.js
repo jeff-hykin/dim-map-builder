@@ -2,7 +2,7 @@
 // per text message. One socket per page (not SSE): every app shares Desktop's origin, and an SSE stream holds one of
 // the browser's 6 HTTP/1.1 connections per host, so a few open apps starve the rest. Websockets don't count there.
 //
-//     import { appEvents } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.6.1/events.js"
+//     import { appEvents } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.7.0/events.js"
 //     const stop = appEvents((event) => { ... }, { query: { page: id }, onOpen, onClose })
 //
 // Reconnects forever with backoff (0.5s doubling to 10s, reset after a connection that lived 5s). Returns unsubscribe.
