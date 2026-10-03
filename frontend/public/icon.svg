@@ -1,9 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="10" fill="#06090f"/>
-  <path d="M10 46 L24 40 L40 46 L54 40 L54 18 L40 24 L24 18 L10 24 Z" fill="none" stroke="#4da3ff" stroke-width="3" stroke-linejoin="round"/>
-  <path d="M24 18 V40 M40 24 V46" stroke="#4da3ff" stroke-width="2" opacity="0.6"/>
-  <rect x="29" y="27" width="6" height="6" fill="#28c8e6"/>
-  <rect x="17" y="29" width="5" height="5" fill="#285aeb"/>
-  <rect x="44" y="30" width="5" height="5" fill="#96f096"/>
-  <path d="M42 33 l4 4 l4 -4" fill="none" stroke="#ff5f6d" stroke-width="0"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Map Builder">
+  <!-- dimOS app icon set v6: dark glass tile tinted to the glyph, neon gradient glyph with a soft bloom -->
+  <defs>
+    <radialGradient id="tile" cx=".5" cy=".18" r=".95"><stop offset="0" stop-color="#0f2e12"/><stop offset="1" stop-color="#07070f"/></radialGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".13"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".25" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-color="#fff" stop-opacity=".06"/></linearGradient>
+    <filter id="bloom" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4"/></filter>
+    <linearGradient id="a" gradientUnits="userSpaceOnUse" x1="0" y1="14" x2="0" y2="50"><stop offset="0" stop-color="#e8ff7a"/><stop offset="1" stop-color="#2ee87a"/></linearGradient>
+    <g id="glyph"><g fill="url(#a)">
+      <path d="M17 22l9-3.5v24L17 46z"/><path d="M27.5 18.5l9 3.5v24l-9-3.5z" opacity=".55"/><path d="M38 22l9-3.5v24L38 46z"/></g></g>
+  </defs>
+  <path d="M16 2H48A14 14 0 0 1 62 16V48A14 14 0 0 1 48 62H16A14 14 0 0 1 2 48V16A14 14 0 0 1 16 2Z" fill="url(#tile)"/>
+  <path d="M16 3H48A13 13 0 0 1 61 16V24H3V16A13 13 0 0 1 16 3Z" fill="url(#sheen)"/>
+  <g transform="translate(32 32) scale(1.12) translate(-32 -32)">
+    <use href="#glyph" filter="url(#bloom)"/>
+    <use href="#glyph"/>
+  </g>
+  <path d="M16 2H48A14 14 0 0 1 62 16V48A14 14 0 0 1 48 62H16A14 14 0 0 1 2 48V16A14 14 0 0 1 16 2Z" fill="none" stroke="url(#rim)" stroke-width="1"/>
 </svg>
