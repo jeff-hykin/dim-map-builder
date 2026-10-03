@@ -32,9 +32,10 @@
                     server = rustPlatform.buildRustPackage {
                         pname = "dim-map-builder-server";
                         version = "0.1.0";
-                        src = pkgs.lib.cleanSourceWith {
-                            src = ./.;
-                            filter = path: type: let base = baseNameOf path; in !(builtins.elem base [ "frontend" "target" "result" "docs" "eval" ]);
+                        # only what cargo reads, so a dimos.yaml or frontend change doesn't rebuild the server
+                        src = pkgs.lib.fileset.toSource {
+                            root = ./.;
+                            fileset = pkgs.lib.fileset.unions [ ./Cargo.toml ./Cargo.lock ./crates ./server ];
                         };
                         cargoLock.lockFile = ./Cargo.lock;
                         cargoBuildFlags = [ "-p" "dimos-app-server" ];
@@ -70,7 +71,7 @@
                             printf '#!%s\nexport MAP_BUILDER_FRONTEND="''${MAP_BUILDER_FRONTEND:-%s}"\nexec %s "$@"\n' \
                                 ${linux.runtimeShell} ${frontend} ${crossServer arch}/bin/dimos-app-server > $out/bin/dimos-app-server
                             chmod +x $out/bin/dimos-app-server
-                            cp ${self}/icon.svg $out/icon.svg
+                            cp ${./icon.svg} $out/icon.svg
                         '';
                 in {
                     inherit frontend server;
@@ -78,7 +79,7 @@
                     dimosApp = pkgs.runCommand "dim-map-builder" { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
                         mkdir -p $out/bin
                         makeWrapper ${server}/bin/dimos-app-server $out/bin/dimos-app-server --set-default MAP_BUILDER_FRONTEND ${frontend}
-                        cp ${self}/icon.svg $out/icon.svg
+                        cp ${./icon.svg} $out/icon.svg
                     '';
                     default = self.packages.${pkgs.system}.dimosApp;
                     dimosApp-aarch64-linux = linuxApp "aarch64";
