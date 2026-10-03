@@ -1,9 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="10" fill="#06090f"/>
-  <path d="M10 46 L24 40 L40 46 L54 40 L54 18 L40 24 L24 18 L10 24 Z" fill="none" stroke="#4da3ff" stroke-width="3" stroke-linejoin="round"/>
-  <path d="M24 18 V40 M40 24 V46" stroke="#4da3ff" stroke-width="2" opacity="0.6"/>
-  <rect x="29" y="27" width="6" height="6" fill="#28c8e6"/>
-  <rect x="17" y="29" width="5" height="5" fill="#285aeb"/>
-  <rect x="44" y="30" width="5" height="5" fill="#96f096"/>
-  <path d="M42 33 l4 4 l4 -4" fill="none" stroke="#ff5f6d" stroke-width="0"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" color="#34a357" role="img" aria-label="Map Builder">
+  <!-- dimOS app icon set: 24 grid, 2px round strokes, one hue per app at equal lightness, 24% tint for the duotone fill -->
+  <path d="M12 2.5l8.5 4.75L12 12 3.5 7.25z" fill="currentColor" fill-opacity=".24" stroke="none"/>
+  <path d="M12 2.5l8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5z"/>
+  <path d="M3.5 7.25L12 12l8.5-4.75M12 12v9.5"/>
+  <path d="M7.75 9.6v9.5M16.25 9.6v9.5M3.5 12l8.5 4.75 8.5-4.75" stroke-width="1.5" stroke-opacity=".7"/>
 </svg>
