@@ -1,5 +1,6 @@
 // Client for this app's backend (server/src/api.rs, at ./api) and Desktop's shared recordings (../../recordings).
 import type { FloorModel } from "./slice.ts"
+import { appEvents } from "./events.js"
 
 export interface DesktopRecording {
     id: string
@@ -287,29 +288,22 @@ export const api = {
 
 /** Server events: job progress, session changes, capture / camera requests from the agent. */
 export function events(onEvent: (event: Record<string, any>) => void): () => void {
-    let source: EventSource | null = null
-    let closed = false
-    const connect = () => {
-        source = new EventSource(here("api/events"))
-        source.onmessage = (message) => {
-            try {
-                onEvent(JSON.parse(message.data))
-            } catch {
-                // a malformed event is dropped
-            }
-        }
-        source.onerror = () => {
-            source?.close()
-            if (!closed) {
-                setTimeout(connect, 1500)
-            }
+    let opened = false
+    // appEvents only reports a close after an open; a server that's down from the start still needs the banner
+    const neverOpened = setTimeout(() => {
+        if (!opened) {
             onEvent({ type: "disconnected" })
         }
-        source.onopen = () => onEvent({ type: "connected" })
-    }
-    connect()
+    }, 2000)
+    const stop = appEvents(onEvent, {
+        onOpen: () => {
+            opened = true
+            onEvent({ type: "connected" })
+        },
+        onClose: () => onEvent({ type: "disconnected" }),
+    })
     return () => {
-        closed = true
-        source?.close()
+        clearTimeout(neverOpened)
+        stop()
     }
 }

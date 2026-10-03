@@ -4,13 +4,14 @@ use crate::app::App;
 use crate::workspace::{Modify, OpResult, Region, Workspace};
 use anyhow::Context;
 use axum::body::Bytes;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use futures::Stream;
+use futures::{SinkExt, Stream, StreamExt};
 use mapping::floorplan::PlanOptions;
 use mapping::voxels::Box3;
 use serde::Deserialize;
@@ -77,6 +78,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/open", post(open))
         .route("/api/build-defaults", get(|| async { Json(json!(mapping::build::BuildOptions::default())) }))
         .route("/api/events", get(events))
+        .route("/api/events/ws", get(events_ws))
         .route("/api/captures/{request}", post(capture))
         .route("/api/sessions/{id}", get(get_session).delete(discard))
         .route("/api/sessions/{id}/points.bin", get(points))
@@ -442,16 +444,103 @@ async fn capture(State(app): State<Arc<App>>, Path(request): Path<u64>, Query(_)
     Ok(Json(json!({ "delivered": app.deliver_capture(request, image) })))
 }
 
-async fn events(State(app): State<Arc<App>>) -> Sse<impl Stream<Item = std::result::Result<Event, std::convert::Infallible>>> {
-    let receiver = app.events.subscribe();
-    let stream = futures::stream::unfold(receiver, |mut receiver| async move {
+/// every server event from now on, as JSON; a subscriber that falls behind skips what it missed
+fn event_stream(app: &App) -> impl Stream<Item = Value> {
+    futures::stream::unfold(app.events.subscribe(), |mut receiver| async move {
         loop {
             match receiver.recv().await {
-                Ok(event) => return Some((Ok(Event::default().data(event.to_string())), receiver)),
+                Ok(event) => return Some((event, receiver)),
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(_) => return None,
             }
         }
-    });
+    })
+}
+
+/// the SSE form of /api/events/ws, kept for older pages
+async fn events(State(app): State<Arc<App>>) -> Sse<impl Stream<Item = std::result::Result<Event, std::convert::Infallible>>> {
+    let stream = event_stream(&app).map(|event| Ok(Event::default().data(event.to_string())));
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// the standard dimOS app event channel (dim-app events.js): one JSON event per text message
+async fn events_ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Response {
+    upgrade.on_upgrade(move |socket| forward_events(socket, app))
+}
+
+async fn forward_events(socket: WebSocket, app: Arc<App>) {
+    let (mut sender, mut receiver) = socket.split();
+    let mut events = Box::pin(event_stream(&app));
+    loop {
+        tokio::select! {
+            event = events.next() => match event {
+                Some(event) => {
+                    if sender.send(Message::Text(event.to_string().into())).await.is_err() {
+                        return;
+                    }
+                }
+                None => break,
+            },
+            // the page never sends anything meaningful; this only notices it going away
+            incoming = receiver.next() => match incoming {
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
+                Some(Ok(_)) => {}
+            },
+        }
+    }
+    let _ = sender.send(Message::Close(None)).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn serve() -> (Arc<App>, std::net::SocketAddr, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = router(app.clone());
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        (app, address, dir)
+    }
+
+    /// emits until the subscriber (which connects asynchronously) sees one
+    async fn emit_until<F: std::future::Future>(app: &App, received: F) -> F::Output {
+        let mut received = Box::pin(received);
+        loop {
+            app.emit(json!({ "type": "session", "id": "x", "revision": 3 }));
+            if let Ok(output) = tokio::time::timeout(std::time::Duration::from_millis(100), &mut received).await {
+                return output;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn websocket_carries_each_event_as_one_json_message() {
+        let (app, address, _dir) = serve().await;
+        let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/api/events/ws")).await.unwrap();
+        let message = emit_until(&app, socket.next()).await.unwrap().unwrap();
+        let event: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+        assert_eq!(event, json!({ "type": "session", "id": "x", "revision": 3 }));
+        socket.close(None).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sse_route_still_works() {
+        let (app, address, _dir) = serve().await;
+        let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+        stream.write_all(b"GET /api/events HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+        let read = async {
+            let mut text = String::new();
+            let mut buffer = [0u8; 4096];
+            while !text.contains(r#"data: {"id":"x","revision":3,"type":"session"}"#) {
+                let count = stream.read(&mut buffer).await.unwrap();
+                text.push_str(&String::from_utf8_lossy(&buffer[..count]));
+            }
+            text
+        };
+        emit_until(&app, read).await;
+    }
 }
