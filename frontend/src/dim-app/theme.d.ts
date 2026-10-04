@@ -1,13 +1,21 @@
 // Types for theme.js
 export type ThemeChoice = "dark" | "light" | "auto"
-export type ThemeDetail = { dark: boolean; theme: "portal" | "research"; choice: ThemeChoice }
+export type ThemeDetail = {
+    dark: boolean
+    theme: "portal" | "research"
+    choice: ThemeChoice
+}
 export function themeChoice(): ThemeChoice
 export function isDark(): boolean
 export function themeName(): "portal" | "research"
+export const THEME_FONTS: string[]
+export function themeFontsReady(): Promise<unknown>
 export function initTheme(): "portal" | "research"
 export function setThemeChoice(choice: ThemeChoice): void
 export function toggleTheme(): void
-export function onThemeChange(listener: (detail: ThemeDetail) => void): () => boolean
+export function onThemeChange(
+    listener: (detail: ThemeDetail) => void,
+): () => boolean
 export function themeColors(): {
     bg: string
     card: string
@@ -26,4 +34,6 @@ export function themeColors(): {
     mono: string
     sans: string
 }
-export function mountThemeToggle(container: Element | null | undefined): HTMLButtonElement
+export function mountThemeToggle(
+    container: Element | null | undefined,
+): HTMLButtonElement

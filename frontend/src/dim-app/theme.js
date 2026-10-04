@@ -1,7 +1,7 @@
 // dim-app theme: picks the app's palette and keeps it current.
 //
 //     import "./theme.css"   // (or <link rel="stylesheet" href=".../theme.css">)
-//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.9.3/theme.js"
+//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.9.5/theme.js"
 //     initTheme()                                   // body.science [+ .dark], html[data-dim-theme]
 //     mountThemeToggle(document.querySelector("header"))   // optional in-app Portal / Research toggle
 //     onThemeChange(({ dark }) => renderer.setClearColor(themeColors().sceneBg))
@@ -69,7 +69,11 @@ function apply() {
         document.body.classList.add("science")
         document.body.classList.toggle("dark", dark)
     }
-    const detail = { dark, theme: dark ? "portal" : "research", choice: themeChoice() }
+    const detail = {
+        dark,
+        theme: dark ? "portal" : "research",
+        choice: themeChoice(),
+    }
     for (const listener of listeners) {
         try {
             listener(detail)
@@ -80,16 +84,43 @@ function apply() {
     dispatchEvent(new CustomEvent("dim-theme", { detail }))
 }
 
+/** The theme's faces (theme.css @font-face); loading starts in initTheme, so no view shows a fallback first. */
+export const THEME_FONTS = [
+    '400 14px "Inter"',
+    '500 14px "Inter"',
+    '600 14px "Inter"',
+    '400 14px "IBM Plex Mono"',
+    '500 14px "IBM Plex Mono"',
+    '400 14px "Instrument Serif"',
+    'italic 400 14px "Instrument Serif"',
+    '400 14px "Michroma"',
+]
+
+/** Resolves when every face of the theme has loaded (or failed). */
+export function themeFontsReady() {
+    try {
+        return Promise.allSettled(
+            THEME_FONTS.map((font) => document.fonts.load(font)),
+        ).then(() => document.fonts.ready)
+    } catch {
+        return Promise.resolve()
+    }
+}
+
 /** Applies the theme now and keeps it in sync with the OS setting and other tabs. Safe to call more than once. */
 export function initTheme() {
     if (!installed) {
         installed = true
+        themeFontsReady()
         try {
-            matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-                if (themeChoice() === "auto") {
-                    apply()
-                }
-            })
+            matchMedia("(prefers-color-scheme: dark)").addEventListener(
+                "change",
+                () => {
+                    if (themeChoice() === "auto") {
+                        apply()
+                    }
+                },
+            )
         } catch {
             // no matchMedia: whatever the saved choice says
         }
@@ -123,7 +154,9 @@ export function setThemeChoice(choice) {
 /** Flips between Portal and Research; picking the OS's own scheme goes back to "auto". */
 export function toggleTheme() {
     const wantDark = !isDark()
-    setThemeChoice(wantDark === osPrefersDark() ? "auto" : wantDark ? "dark" : "light")
+    setThemeChoice(
+        wantDark === osPrefersDark() ? "auto" : wantDark ? "dark" : "light",
+    )
 }
 
 /** Calls `listener({ dark, theme, choice })` on every change. Returns an unsubscribe function. */
