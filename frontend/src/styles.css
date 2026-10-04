@@ -1,3 +1,6 @@
+/* the 2D plan's backdrop: dark blueprint in Portal, paper in Research */
+:root { --plan-bg: #0a0f17; --plan-vignette: rgba(3, 5, 9, 0.75); }
+:root[data-dim-theme="research"] { --plan-bg: #f5f4ef; --plan-vignette: rgba(32, 33, 31, 0.12); }
 /* Map Builder: layout, plus the few looks the shared theme (theme.css, the dimOS "Science" theme) has no class for:
    the orbs, the edit palette, the two-handle slider, the slicer's dial. Colors are the theme's tokens only; Portal (dark) / Research
    (light) comes from dim-app theme.js (body.science / body.science.dark). Components use the theme's .dim-* classes. */
@@ -22,7 +25,7 @@ kbd { font: 10px var(--mono); padding: 0 4px; border: 1px solid var(--border); b
 .pane-inner { position: absolute; top: 0; bottom: 0; }
 .pane-3d .pane-inner { left: 0; }
 /* the 2D floor plan is drawn dark (core/slice.ts PLAN_STYLE) in both themes: its backdrop is content, not chrome */
-.pane-2d .pane-inner { right: 0; background: #0a0f17; }
+.pane-2d .pane-inner { right: 0; background: var(--plan-bg); }
 .pane-2d { box-shadow: -1px 0 0 var(--border); }
 .app.mode-3d .pane-2d { box-shadow: none; }
 .scene { position: absolute; inset: 0; touch-action: none; }
@@ -167,11 +170,11 @@ button:focus { outline: none; }
 .history { color: var(--muted-fg); font-size: 11px; display: grid; gap: 2px; max-height: 180px; overflow: auto; }
 
 /* ── the 2D view ── */
-.plan-view, .minimap-view { position: absolute; inset: 0; overflow: hidden; z-index: 1; background: #0a0f17; touch-action: none; }
+.plan-view, .minimap-view { position: absolute; inset: 0; overflow: hidden; z-index: 1; background: var(--plan-bg); touch-action: none; }
 .plan-view canvas, .minimap-view canvas { position: absolute; inset: 0; }
 /* the minimap: a rounded frame with a soft vignette */
 .minimap-view { inset: 10px; border-radius: 14px; border: 1px solid var(--border); }
-.minimap-view::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 42px 6px rgba(3, 5, 9, 0.75); }
+.minimap-view::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 42px 6px var(--plan-vignette); }
 
 .connection { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); padding: 4px 10px; z-index: 7; }
 
@@ -214,3 +217,5 @@ button:focus { outline: none; }
 .login-wait { display: flex; align-items: center; gap: 8px; margin: 12px 0; color: var(--muted-fg); flex-wrap: wrap; }
 .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); border-top-color: var(--primary); animation: orb-spin 0.9s linear infinite; display: inline-block; }
 .upload-numbers [data-eta] { margin-left: auto; }
+/* the app title in the display face: Instrument Serif on paper (Research); Portal keeps the tracked micro-label */
+:root[data-dim-theme="research"] .title { font: 400 22px var(--display); letter-spacing: -0.01em; text-transform: none; color: var(--fg); }

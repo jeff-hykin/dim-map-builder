@@ -5,7 +5,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type PrismAnnotation, type SavedView, type Slice } from "../core/api.ts"
 import { Store, useStore } from "../core/store.ts"
-import { columnFloors, computeSlice, floorHeightImage, PLAN_STYLE, sliceLayers, type FloorModel } from "../core/slice.ts"
+import { columnFloors, computeSlice, floorHeightImage, PLAN_STYLE, setPlanTheme, sliceLayers, type FloorModel } from "../core/slice.ts"
+import { isDark, onThemeChange } from "../dim-app/theme.js"
 import type { Context, View2d } from "./context.ts"
 import { modifyTool, planTool, polygonTool } from "./tools.ts"
 
@@ -100,6 +101,18 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
     const panning = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null)
     const dragVertex = useRef<{ id: string; index: number; polygon: [number, number][] } | null>(null)
     const [, redraw] = useState(0)
+    // the plan follows the theme (Portal: glowing blueprint, Research: ink on paper); re-raster when it changes
+    const [themeRevision, setThemeRevision] = useState(0)
+    useEffect(() => {
+        setPlanTheme(isDark())
+        const unsubscribe = onThemeChange(({ dark }) => {
+            setPlanTheme(dark)
+            setThemeRevision((n) => n + 1)
+        })
+        return () => {
+            unsubscribe()
+        }
+    }, [])
 
     // the slicer's view: the map turned by its yaw, clipped to its box
     const shownSlice = useStore(scene?.sliceStore ?? NO_SLICE).slice
@@ -130,7 +143,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         const kindAt = (column: number, row: number) => computed.cells[(computed.height - 1 - row) * computed.width + column]
         const raster: Raster = { ...layers, origin: computed.origin, resolution: computed.resolution, width: computed.width, height: computed.height, content: contentBounds(kindAt, computed.width, computed.height, computed.origin, computed.resolution) }
         return { raster, milliseconds: performance.now() - started }
-    }, [scene, floor, storey, ui.slice.follow, ui.slice.z0, ui.slice.z1, mapRevision, shownSlice, ownFloors])
+    }, [scene, floor, storey, ui.slice.follow, ui.slice.z0, ui.slice.z1, mapRevision, shownSlice, ownFloors, themeRevision])
 
     const heightImage = useMemo(() => (floor && ui.floorOverlay && !minimap ? floorHeightImage(floor, storey) : null), [floor, storey, ui.floorOverlay, minimap])
 

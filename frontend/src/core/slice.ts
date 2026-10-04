@@ -168,14 +168,30 @@ export function computeSlice(points: Float32Array, model: FloorModel, storey: nu
     return { origin, resolution, width, height, cells, key: "", milliseconds: performance.now() - started }
 }
 
-/** The slice as two layers in the floor-plan look: a dark floor, and walls as a bright rim around a dimmer body. */
-export const PLAN_STYLE = {
-    floor: [21, 33, 50],
-    wallRim: [130, 212, 255],
-    wallBody: [38, 78, 122],
-    glow: "drop-shadow(0 0 4px rgba(80, 170, 255, 0.45))",
-    grid: "rgba(140, 180, 230, 0.07)",
-    gridText: "rgba(140, 180, 230, 0.5)",
+/** The slice as two layers in the floor-plan look: a floor, and walls as a rim around a body. Portal (dark) is the glowing
+ * blueprint; Research (light) is ink-blue walls on paper. `setPlanTheme` switches `PLAN_STYLE` in place. */
+const PLAN_STYLES = {
+    dark: {
+        floor: [21, 33, 50],
+        wallRim: [130, 212, 255],
+        wallBody: [38, 78, 122],
+        glow: "drop-shadow(0 0 4px rgba(80, 170, 255, 0.45))",
+        grid: "rgba(140, 180, 230, 0.07)",
+        gridText: "rgba(140, 180, 230, 0.5)",
+    },
+    light: {
+        floor: [234, 233, 226],
+        wallRim: [41, 60, 228],
+        wallBody: [168, 178, 238],
+        glow: "none",
+        grid: "rgba(32, 33, 31, 0.08)",
+        gridText: "rgba(32, 33, 31, 0.5)",
+    },
+}
+export const PLAN_STYLE = { ...PLAN_STYLES.dark }
+
+export function setPlanTheme(dark: boolean) {
+    Object.assign(PLAN_STYLE, dark ? PLAN_STYLES.dark : PLAN_STYLES.light)
 }
 
 /** Two canvases (row 0 at the top = highest y) from per-cell kinds: 0 unknown, 1 floor, 2 wall. */
