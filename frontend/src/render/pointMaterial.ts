@@ -1,4 +1,4 @@
-// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Builder draws with the same point styles.
+// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Editor draws with the same point styles.
 // One shader for every point-like thing, a port of MemWorld's sprite shader
 // (memory_world/web/static/voxel_sprites.js): same view-space light normalize(2, 4, 3), same sphere (0.45 + 0.75·n·L)
 // and cube-face (0.42 + 0.72·n·L) lighting, sprites sized to the projected diameter. Points are GL point sprites,

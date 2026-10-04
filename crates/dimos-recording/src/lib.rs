@@ -162,7 +162,7 @@ impl Recording {
         Ok(edges)
     }
 
-    /// The newest raw payload of a stream / topic (for state the Map Builder saved earlier).
+    /// The newest raw payload of a stream / topic (for state the Map Editor saved earlier).
     pub fn latest(&self, stream: &str) -> Result<Option<(f64, Vec<u8>)>> {
         match &self.backend {
             Backend::Db(connection, _) => db::latest(connection, stream),

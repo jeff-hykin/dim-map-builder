@@ -157,7 +157,7 @@ impl App {
     pub fn target(&self, id: Option<&str>) -> Result<(String, Arc<Mutex<Workspace>>)> {
         let id = match id.filter(|id| !id.is_empty()) {
             Some(id) => id.to_string(),
-            None => self.active.lock().unwrap().clone().or_else(|| self.store.last_open()).context("no recording is open in the Map Builder")?,
+            None => self.active.lock().unwrap().clone().or_else(|| self.store.last_open()).context("no recording is open in the Map Editor")?,
         };
         let workspace = self.require(&id)?;
         Ok((id, workspace))
@@ -443,7 +443,7 @@ impl App {
             Ok(Ok(image)) => Ok(image),
             _ => {
                 self.captures.lock().unwrap().remove(&request);
-                bail!("no Map Builder page answered (is it open in Desktop?)")
+                bail!("no Map Editor page answered (is it open in Desktop?)")
             }
         }
     }

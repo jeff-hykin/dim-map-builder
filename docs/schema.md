@@ -1,6 +1,6 @@
 # What "Save into recording" writes
 
-The Map Builder writes its result into the recording it opened, as new streams (`.db`) or channels (`.mcap`) named
+The Map Editor writes its result into the recording it opened, as new streams (`.db`) or channels (`.mcap`) named
 `map/...` beside the recording's own data, which is never modified. Saving again replaces them (a smaller number of
 floors also removes the stale `floor_<n>`, and the `map_builder_*` / `/map_builder/*` streams earlier versions wrote are
 dropped). Everything is in one fixed frame, **`map`**; `transform` (in the annotations JSON) maps the

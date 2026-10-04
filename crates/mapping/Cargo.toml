@@ -2,7 +2,7 @@
 name = "mapping"
 version = "0.1.0"
 edition = "2021"
-description = "The Map Builder's map math: ray-traced voxel map (vendored from dimos), tf, loop closure, cleanup, floor plans"
+description = "The Map Editor's map math: ray-traced voxel map (vendored from dimos), tf, loop closure, cleanup, floor plans"
 license = "Apache-2.0"
 
 [dependencies]

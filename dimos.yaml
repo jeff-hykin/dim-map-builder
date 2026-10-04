@@ -1,4 +1,4 @@
-title: Map Builder
+title: Map Editor
 dimos-desktop-api: ">=2 <3"
 # Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams.
 # Dimensional cloud: log in and queue uploads of the recording (these need a Desktop with cloud uploads; an older
@@ -22,7 +22,7 @@ caches:
       key: "dimos-desktop.cachix.org-1:A4P35aGJGmCan92LWyamtSFXMqaVE+VRFYnrJ8QMTeQ="
 agent:
     description: >-
-        Map Builder: build, clean, annotate and save a 3D voxel map of a robot's recording, in the 'map' frame: meters,
+        Map Editor: build, clean, annotate and save a 3D voxel map of a robot's recording, in the 'map' frame: meters,
         +z up, the floor of the main storey near z = 0 once levelled. Session routes take {id}: `current` is the
         recording open in the page. Workflow: GET api/view (where the user is looking + a labelled screenshot) or GET
         api/status (bounds, floors) -> query / find-objects to locate things by geometry -> fit-box for a tight box
@@ -52,7 +52,7 @@ agent:
             method: POST
             path: api/open
             description: >-
-                Open a recording (.mcap / .db) in the Map Builder: every open page switches to it (its saved map and
+                Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and
                 edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the
                 recordings folder.
             params:

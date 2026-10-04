@@ -1,4 +1,4 @@
-//! The Map Builder's map math, all native: the ray-traced voxel map (vendored from dimos), a recorded tf tree, loop
+//! The Map Editor's map math, all native: the ray-traced voxel map (vendored from dimos), a recorded tf tree, loop
 //! closure (a port of dimos's PGO), the cleanup selections, floors and floor plans, and the staged build pipeline.
 pub mod build;
 pub mod edit;

@@ -2,7 +2,7 @@
 name = "dimos-app-server"
 version = "0.1.0"
 edition = "2021"
-description = "Map Builder's backend for dimOS Desktop: build, clean, annotate and save maps from dimos recordings"
+description = "Map Editor's backend for dimOS Desktop: build, clean, annotate and save maps from dimos recordings"
 license = "Apache-2.0"
 
 [[bin]]

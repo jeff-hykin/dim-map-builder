@@ -1,4 +1,4 @@
-// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Builder draws with the same point styles.
+// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Editor draws with the same point styles.
 // The three.js view: one renderer, a ROS-convention (Z up) scene in the fixed frame, orbit/follow camera, a 2D
 // label overlay, and a render loop that only draws when something changed. It also keeps the latency numbers.
 import * as THREE from "three"

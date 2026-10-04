@@ -1,4 +1,4 @@
-// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Builder draws with the same point styles.
+// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Editor draws with the same point styles.
 // Screen-space thick lines (three's LineSegments2) over a preallocated buffer, so trails and paths can grow or be
 // replaced every message without allocating: write segments, bump the count.
 import * as THREE from "three"

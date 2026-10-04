@@ -34,7 +34,7 @@ pub fn parse_region(workspace: &Workspace, value: &Value) -> Result<Region> {
 
 fn view_region(workspace: &Workspace) -> Result<Region> {
     let matrix = &workspace.session.view["viewProjection"];
-    let matrix: [f32; 16] = serde_json::from_value(matrix.clone()).context("the page hasn't reported its view yet (is the Map Builder open?)")?;
+    let matrix: [f32; 16] = serde_json::from_value(matrix.clone()).context("the page hasn't reported its view yet (is the Map Editor open?)")?;
     Ok(Region::View { matrix })
 }
 

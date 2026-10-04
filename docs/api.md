@@ -1,4 +1,4 @@
-# Map Builder server API
+# Map Editor server API
 
 `dimos-app-server` serves the page and every action as an HTTP endpoint. The page calls these, and Desktop's agent
 calls the same ones: `server/src/api.rs` registers each route with its description and params (`routes.rs`), and that

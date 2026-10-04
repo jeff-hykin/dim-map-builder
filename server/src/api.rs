@@ -1,4 +1,4 @@
-//! Every Map Builder action as an HTTP endpoint (routes.rs): the page calls these, Desktop's agent calls the same ones
+//! Every Map Editor action as an HTTP endpoint (routes.rs): the page calls these, Desktop's agent calls the same ones
 //! (listed in the served agent.json and dimos.yaml's `agent:`). Session routes take a session id, or `current` for
 //! the recording open in the page. Edits go through App::mutate (autosave, undo, a `session` event to every page), so
 //! anyone's change shows up live. Errors are `{ "error": "..." }`. docs/api.md.
@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-pub const DESCRIPTION: &str = "Map Builder: build, clean, annotate and save a 3D voxel map of a robot's recording, in the 'map' frame: meters, +z up, \
+pub const DESCRIPTION: &str = "Map Editor: build, clean, annotate and save a 3D voxel map of a robot's recording, in the 'map' frame: meters, +z up, \
 the floor of the main storey near z = 0 once levelled. Session routes take {id}: `current` is the recording open in the page. \
 Workflow: GET api/view (where the user is looking + a labelled screenshot) or GET api/status (bounds, floors) -> query / find-objects to locate \
 things by geometry -> fit-box for a tight box around what's in a rough region (add=true adds it). fit-box keeps the connected piece nearest the \
@@ -149,7 +149,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .endpoint("GET", "api/status", "The open map, briefly: session id, recording, stage (raw = not built yet / map), voxel count, bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.", json!({ "session": s("session id (default: the recording open in the page)") }), status)
         .role("context")
         .endpoint("GET", "api/state", "What the page loads: the open session id, its full state (annotations, plans, job, history...) and Desktop's recordings folder.", json!({}), state)
-        .endpoint("POST", "api/open", "Open a recording (.mcap / .db) in the Map Builder: every open page switches to it (its saved map and edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the recordings folder.", json!({ "path": required(s("the recording file")), "name": s("display name"), "id": s("Desktop's recording id"), "writable": b("false for a read-only folder: saving copies it first (default true)") }), open)
+        .endpoint("POST", "api/open", "Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the recordings folder.", json!({ "path": required(s("the recording file")), "name": s("display name"), "id": s("Desktop's recording id"), "writable": b("false for a read-only folder: saving copies it first (default true)") }), open)
         .endpoint("GET", "api/build-defaults", "The default map build options (voxelSize, loopClosure, rayTracing, every, maxRange, tfTolerance, worldFrame, cloudStream, ray, pgo).", json!({}), |  | async { Json(json!(mapping::build::BuildOptions::default())) })
         .endpoint("GET", "api/view", "What the user is looking at: camera position/target, the map-frame bounds of the visible voxels, the selection, and (screenshot=true, default) a screenshot of the 3D view with a 1 m grid, axis labels and annotation labels drawn on it (images[0]).", json!({ "screenshot": b("default true"), "topDown": b("screenshot from straight above the current target instead of the user's angle (the user's camera is restored after)"), "session": s("default: the open one") }), get_view)
         .role("view")

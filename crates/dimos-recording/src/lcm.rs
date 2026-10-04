@@ -1,5 +1,5 @@
 //! dimos's LCM wire format for the handful of types a map needs: decode (what recordings hold) and encode (what the
-//! Map Builder saves back). Every message starts with its 8-byte fingerprint; integers are big-endian; strings are a
+//! Map Editor saves back). Every message starts with its 8-byte fingerprint; integers are big-endian; strings are a
 //! u32 length (including a trailing NUL) then the bytes; LCM hoists array lengths to the front of a struct.
 //! Reader and the decoders come from dim-live-viewer's server (msgs.rs).
 use anyhow::{bail, Result};

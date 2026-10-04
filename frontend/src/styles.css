@@ -1,7 +1,7 @@
 /* the 2D plan's backdrop: dark blueprint in Portal, paper in Research */
 :root { --plan-bg: #0a0f17; --plan-vignette: rgba(3, 5, 9, 0.75); }
 :root[data-dim-theme="research"] { --plan-bg: #f5f4ef; --plan-vignette: rgba(32, 33, 31, 0.12); }
-/* Map Builder: layout, plus the few looks the shared theme (theme.css, the dimOS "Science" theme) has no class for:
+/* Map Editor: layout, plus the few looks the shared theme (theme.css, the dimOS "Science" theme) has no class for:
    the orbs, the edit palette, the two-handle slider, the slicer's dial. Colors are the theme's tokens only; Portal (dark) / Research
    (light) comes from dim-app theme.js (body.science / body.science.dark). Components use the theme's .dim-* classes. */
 

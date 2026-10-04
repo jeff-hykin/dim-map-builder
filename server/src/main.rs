@@ -1,4 +1,4 @@
-//! Map Builder's `dimos-app-server` (dimOS Desktop app contract, docs/apps.md in dimos-desktop): serves the built
+//! Map Editor's `dimos-app-server` (dimOS Desktop app contract, docs/apps.md in dimos-desktop): serves the built
 //! page and every action as an HTTP endpoint (api.rs), listed in /agent.json for Desktop's agent. One compiled binary;
 //! no Python or dimos at runtime.
 mod api;
@@ -15,7 +15,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
-#[command(about = "Map Builder backend: build, clean, annotate and save maps from dimos recordings")]
+#[command(about = "Map Editor backend: build, clean, annotate and save maps from dimos recordings")]
 pub struct Args {
     /// serve HTTP on this unix socket (Desktop passes it)
     #[arg(long, env = "DIMOS_APP_SOCKET")]

@@ -1,4 +1,4 @@
-// The Map Builder page: a map viewer, [ 3D | Split | 2D ], with two orbs over it: Generate (the build settings, the only
+// The Map Editor page: a map viewer, [ 3D | Split | 2D ], with two orbs over it: Generate (the build settings, the only
 // step needed first) and Edit (a palette of tools: erase, draw, straighten walls, polygons, named points and areas,
 // 3D boxes, cleanup, saved 2D views), used in any order. All state lives server-side (the session), so a refresh comes
 // back to the same recording, view, tool, map, edits, cameras and selection; running jobs keep running and the page
@@ -503,7 +503,7 @@ export function App() {
     return (
         <div className={`app mode-${mode} ${sliding ? "sliding" : ""}`}>
             <header className="topbar">
-                <span className="dim-label title">Map Builder</span>
+                <span className="dim-label title">Map Editor</span>
                 <button type="button" className="dim-btn sm icon recording-name" title={session ? `${session.recordingPath} (open another)` : "Open a recording"} onClick={() => setModal("open")} data-action="open">
                     {session ? <><Icon name="chevron-down" /> {session.name}</> : "Open a recording…"}
                 </button>
@@ -650,7 +650,7 @@ export function App() {
                 )}
                 {uploads.panelOpen && <UploadsPanel uploads={uploads} />}
                 <div className="dim-toasts">{toast && <div className={`dim-toast ${toast.error ? "danger" : ""}`}>{toast.text}</div>}</div>
-                {!connected && <div className="dim-alert danger connection">Reconnecting to the Map Builder server…</div>}
+                {!connected && <div className="dim-alert danger connection">Reconnecting to the Map Editor server…</div>}
             </section>
             {uploads.loginOpen && (
                 <LoginDialog

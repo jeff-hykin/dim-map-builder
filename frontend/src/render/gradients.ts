@@ -1,4 +1,4 @@
-// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Builder draws with the same point styles.
+// Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Editor draws with the same point styles.
 // Color ramps for point clouds and other scalar coloring, as 256×1 textures the shaders sample.
 import * as THREE from "three"
 
