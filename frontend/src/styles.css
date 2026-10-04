@@ -89,7 +89,7 @@ button:focus { outline: none; }
 .orb-hint { position: absolute; left: 282px; top: 48px; z-index: 6; pointer-events: none; animation: palette-in 300ms ease-out; }
 .app.mode-2d .orb-hint, .app.mode-split .orb-hint { display: none; } /* the 2D slice bar sits there; slicing is a 3D step */
 @media (max-width: 600px) { .orb-hint { display: none; } } /* no room beside the orbs on a phone; the slicer orb still glows */
-.slicer-panel { position: absolute; left: 26px; top: 108px; width: 380px; z-index: 7; padding: 10px 14px 12px; border-color: color-mix(in srgb, var(--warn) 45%, transparent); box-shadow: var(--shadow-lg); }
+.slicer-panel { position: absolute; left: 26px; top: 108px; width: min(380px, calc(100% - 40px)); z-index: 7; padding: 10px 14px 12px; border-color: color-mix(in srgb, var(--warn) 45%, transparent); box-shadow: var(--shadow-lg); }
 .stepper { display: flex; gap: 10px; align-items: center; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-fg); }
 .stepper .dot b { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border); margin-right: 3px; font-weight: 600; }
 .stepper .dot.on { color: var(--warn); }

@@ -1,5 +1,5 @@
 /*
-  dim-app theme (v0.9.2) — dimOS Desktop's two design languages for apps, value for value from the design docs
+  dim-app theme (v0.9.3) — dimOS Desktop's two design languages for apps, value for value from the design docs
   (portal_design_language.html, research_design_language.html).
 
     Portal   (dark,  body.science.dark)  void #05070d, ink #ece8f0, one accent: Dimensional blue #7cc8ec.
@@ -907,6 +907,30 @@ body.science.dark .dim-check input:checked + .ring::after {
 /* bare checkboxes / radios / ranges get the accent (Research `.rc input{accent-color:var(--blue)}`) */
 :where(body.science) :where(input[type="checkbox"], input[type="radio"], input[type="range"], progress) {
     accent-color: var(--primary);
+}
+
+/* color pickers: a control box around the chosen color (the color itself is the user's) */
+:where(body.science) input[type="color"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 44px;
+    height: 26px;
+    padding: 2px;
+    cursor: pointer;
+    background: var(--input-bg);
+    border: 1px solid var(--input);
+    border-radius: var(--radius-sm);
+}
+:where(body.science) input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+:where(body.science) input[type="color"]::-webkit-color-swatch {
+    border: 0;
+    border-radius: calc(var(--radius-sm) - 2px);
+}
+:where(body.science) input[type="color"]::-moz-color-swatch {
+    border: 0;
+    border-radius: calc(var(--radius-sm) - 2px);
 }
 
 /* switch: Research `.toggle{width:34px;height:20px;border-radius:999px;background:#d9d7cd}`, knob 16px white circle;
