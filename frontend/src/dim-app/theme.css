@@ -1,5 +1,5 @@
 /*
-  dim-app theme (v0.9.0) — dimOS Desktop's two design languages for apps, value for value from the design docs
+  dim-app theme (v0.9.2) — dimOS Desktop's two design languages for apps, value for value from the design docs
   (portal_design_language.html, research_design_language.html).
 
     Portal   (dark,  body.science.dark)  void #05070d, ink #ece8f0, one accent: Dimensional blue #7cc8ec.
@@ -1056,6 +1056,8 @@ body.science.dark .dim-progress.info > span {
     display: inline-flex;
     gap: 3px;
     padding: 3px;
+    flex-wrap: wrap; /* in a narrow panel the segments take a second row instead of running out of it */
+    max-width: 100%;
     border-radius: 9px;
     background: var(--input-bg);
     border: 1px solid var(--line);
@@ -1075,9 +1077,12 @@ body.science.dark .dim-progress.info > span {
     letter-spacing: 0;
     text-transform: none;
     color: var(--muted-fg);
-    padding: 6px 12px;
+    padding: 6px 10px;
     white-space: nowrap;
     transition: all 0.14s ease;
+}
+.dim-tab > svg {
+    flex: none;
 }
 .dim-tab:hover {
     color: var(--fg);
@@ -1104,7 +1109,7 @@ body.science.dark .dim-tab {
     letter-spacing: 0.04em;
     border: 1px solid var(--line);
     padding: 8px 14px;
-    margin-left: -1px;
+    margin: 0 0 -1px -1px; /* joined hairlines, also across a wrapped row */
 }
 body.science.dark .dim-tabs.vertical .dim-tab {
     margin-left: 0;
