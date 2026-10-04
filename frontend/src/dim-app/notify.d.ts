@@ -1,4 +1,3 @@
-// vendored from jeff-hykin/dim-app v0.8.0 (notify.d.ts); edit it there, then copy
 // Types for notify.js
 export type Notification = {
     title: string

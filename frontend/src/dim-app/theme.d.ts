@@ -1,4 +1,3 @@
-// vendored from jeff-hykin/dim-app v0.8.0 (theme.d.ts); edit it there, then copy
 // Types for theme.js
 export type ThemeChoice = "dark" | "light" | "auto"
 export type ThemeDetail = { dark: boolean; theme: "portal" | "research"; choice: ThemeChoice }

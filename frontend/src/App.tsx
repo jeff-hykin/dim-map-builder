@@ -503,7 +503,7 @@ export function App() {
     return (
         <div className={`app mode-${mode} ${sliding ? "sliding" : ""}`}>
             <header className="topbar">
-                <span className="dim-label title">Map Editor</span>
+                <span className="dim-title title">Map Editor</span>
                 <button type="button" className="dim-btn sm icon recording-name" title={session ? `${session.recordingPath} (open another)` : "Open a recording"} onClick={() => setModal("open")} data-action="open">
                     {session ? <><Icon name="chevron-down" /> {session.name}</> : "Open a recording…"}
                 </button>

@@ -217,5 +217,3 @@ button:focus { outline: none; }
 .login-wait { display: flex; align-items: center; gap: 8px; margin: 12px 0; color: var(--muted-fg); flex-wrap: wrap; }
 .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); border-top-color: var(--primary); animation: orb-spin 0.9s linear infinite; display: inline-block; }
 .upload-numbers [data-eta] { margin-left: auto; }
-/* the app title in the display face: Instrument Serif on paper (Research); Portal keeps the tracked micro-label */
-:root[data-dim-theme="research"] .title { font: 400 22px var(--display); letter-spacing: -0.01em; text-transform: none; color: var(--fg); }

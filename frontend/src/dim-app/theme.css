@@ -1,167 +1,239 @@
-/* vendored from jeff-hykin/dim-app v0.8.0 (theme.css); edit it there, then copy */
 /*
-  dim-app theme (v0.8.0) — the dimOS Desktop mockup's two palettes for apps.
+  dim-app theme (v0.9.0) — dimOS Desktop's two design languages for apps, value for value from the design docs
+  (portal_design_language.html, research_design_language.html).
 
-    Research (light, on :root)        warm paper, white hairline cards, one blue accent (#293ce4),
-                                      Instrument Serif display + IBM Plex Mono micro-labels
-    Portal   (dark, body.science.dark) void #05070d, ink #ece8f0, Dimensional blue #7cc8ec,
-                                      panels rgba(14,12,19,.78), hairlines rgba(255,255,255,.08), Inter + IBM Plex Mono
+    Portal   (dark,  body.science.dark)  void #05070d, ink #ece8f0, one accent: Dimensional blue #7cc8ec.
+                                         Square corners everywhere, 1px hairlines, glow only on focus / active things.
+                                         Inter for UI, IBM Plex Mono for data, Michroma for small uppercase section heads.
+    Research (light, :root)              paper #f5f4ef, white hairline cards with a soft shadow, one accent #293ce4.
+                                         Gently rounded (8–14px cards and controls, pills for chips / toggles / bars).
+                                         Instrument Serif for titles, Inter for reading, uppercase Plex Mono micro-labels.
 
   theme.js picks one: prefers-color-scheme (dark → Portal, light → Research), or the app's own saved choice
   (localStorage "dim-app.theme:<app>"). It sets <body class="science [dark]"> and <html data-dim-theme="portal|research">.
 
-  Same component API as before (.dim-* classes). Every color is a CSS variable, so components never hard-code one.
+  Components are .dim-* classes; every color, radius and font is a variable below, so app CSS that uses the variables
+  follows both themes. Radius tokens are 0 in Portal, and Portal also squares every corner the way its doc does
+  (`*{border-radius:0!important}`), so an app's own rounded corner never leaks into it.
+  Color is status only: --ok and --warn; Portal has no red (its doc: "Other colors mean status (ok / warn) and nothing
+  else"), so --danger is the warn amber there and Research's red (#c2412f, its window-close red) on paper.
 */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Michroma&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Michroma&display=swap");
 
+/* ───────────────────────── Research (light) tokens ───────────────────────── */
 :root {
-    /* ── Research neutrals: paper page, white cards, warm hairlines ── */
-    --bg: #f5f4ef;
+    /* the doc's own names */
+    --void: #f5f4ef; /* paper: page background */
+    --ink: #20211f; /* primary text */
+    --dim: #6b6a63; /* secondary text, labels */
+    --line: #e2e0d7; /* card borders */
+    --hair: #eae9e2; /* row dividers */
+    --sel: rgba(41, 60, 228, 0.08); /* selected fill */
+    --mint: #2f9e5b; /* status: running / ok */
+    --amber: #d97a1e; /* status: warn / stopped */
+    --cyan: #3a5bd9; /* tool chips, links */
+    --agent-bg: #f7f6f1; /* agent message card */
+    --input-bg: #f5f4ef; /* the doc's --vs-input: input fill */
+    --bk: #f5f4ef; /* solid control fill */
+    --placeholder: #9a998f;
+
+    /* dim-app names (apps use these) */
+    --bg: var(--void);
     --card: #ffffff;
-    --panel: #ffffff; /* floating panels over content */
-    --fg: #20211f;
-    --muted: #efeee8;
-    --muted-fg: #6b6a63;
-    --accent: #f0efe9; /* hover surface */
-    --accent-fg: #20211f;
-    --secondary: #f5f4ef; /* chip surface */
-    --secondary-fg: #3d3e3a;
-    --border: #e2e0d7;
-    --hair: #eae9e2;
-    --input: #e2e0d7;
+    --panel: #ffffff;
+    --fg: var(--ink);
+    --muted: var(--input-bg);
+    --muted-fg: var(--dim);
+    --accent: #fbfaf7; /* hover surface (button:hover) */
+    --accent-fg: var(--ink);
+    --secondary: #ffffff; /* chip surface */
+    --secondary-fg: var(--dim);
+    --border: var(--line);
+    --border-strong: #cfccc0; /* hover border */
+    --input: var(--line); /* control borders (the doc's --vs-border) */
 
-    /* ── one blue accent; color otherwise reserved for status ── */
-    --primary: #293ce4;
-    --primary-hover: #1e2fc4;
-    --primary-soft: rgba(41, 60, 228, 0.08);
+    --primary: #293ce4; /* THE accent (the doc's --magenta / --rs-blue) */
+    --primary-hover: #2232c4;
+    --primary-soft: var(--sel);
     --primary-fg: #ffffff;
-    --info: #3a5bd9;
-    --ok: #2f9e5b;
-    --warn: #d97a1e;
-    --danger: #c8372d;
+    --info: var(--cyan);
+    --ok: var(--mint);
+    --warn: var(--amber);
+    --danger: #c2412f;
     --danger-fg: #ffffff;
-    --violet: #6b6a63;
-    --ring: #293ce4;
+    --violet: var(--cyan);
+    --ring: var(--primary);
+    --ring-soft: rgba(41, 60, 228, 0.12);
+    --ok-line: rgba(47, 158, 91, 0.35);
+    --warn-line: rgba(217, 122, 30, 0.35);
+    --danger-line: rgba(194, 65, 47, 0.35);
+    --track: #d9d7cd; /* switch track off */
+    --off: #c9c7bc; /* idle status dot */
 
-    /* ── type: Inter for UI, IBM Plex Mono for data + micro-labels, Instrument Serif for display ── */
-    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    /* type: the doc's three voices */
+    --hud: "Inter", ui-sans-serif, sans-serif;
+    --sans: var(--hud);
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
     --display: "Instrument Serif", Georgia, serif;
     --track-label: 0.14em;
-    --track-btn: 0.01em;
+    --track-btn: 0;
 
-    /* ── radius ── */
-    --radius: 6px;
-    --radius-sm: calc(var(--radius) - 2px);
-    --radius-lg: 10px;
+    /* radius: "Gently rounded: 8–14px on cards and controls, full pills for chips and the ask box" */
+    --radius: 8px; /* controls: buttons, inputs, selects */
+    --radius-sm: 6px; /* parts inside a control (segment, tooltip) */
+    --radius-lg: 10px; /* cards (the doc's --r) */
+    --radius-xl: 14px; /* sheets, modals, the dock */
+    --radius-pill: 999px; /* chips, badges, toggles, bars */
+    --radius-round: 50%; /* dots, switch knobs */
 
-    /* ── elevation: the research site's soft paper shadow ── */
-    --shadow-2xs: 0 1px 2px rgba(32, 33, 31, 0.04);
+    /* elevation: the soft paper shadow */
+    --shadow-2xs: none;
     --shadow-xs: 0 1px 2px rgba(32, 33, 31, 0.05);
-    --shadow-sm: 0 1px 2px rgba(32, 33, 31, 0.05), 0 4px 12px rgba(32, 33, 31, 0.04);
+    --shadow-sm: 0 1px 2px rgba(32, 33, 31, 0.05), 0 8px 24px rgba(32, 33, 31, 0.06);
     --shadow: 0 1px 2px rgba(32, 33, 31, 0.05), 0 8px 24px rgba(32, 33, 31, 0.06);
-    --shadow-md: 0 2px 6px rgba(32, 33, 31, 0.06), 0 12px 28px rgba(32, 33, 31, 0.08);
-    --shadow-lg: 0 8px 30px rgba(32, 33, 31, 0.12);
-
-    /* faint blue technical grid behind the page */
-    --grid-line: rgba(41, 60, 228, 0.045);
-    --ring-soft: rgba(41, 60, 228, 0.18);
+    --shadow-md: 0 12px 32px rgba(32, 33, 31, 0.12);
+    --shadow-lg: 0 24px 60px rgba(32, 33, 31, 0.14);
     --glow: none;
+    --glow-accent: none;
+    --grid-line: transparent;
 
-    /* ── code / syntax (traceback + log panels) ── */
-    --code-bg: #f7f6f1;
-    --code-fg: #20211f;
-    --code-line: #55564f;
-    --code-kw: #6a3fc4;
-    --code-str: #2f7d4a;
-    --code-num: #b5651a;
-    --code-com: #8f8e86;
-    --code-loc: #293ce4;
-    --code-func: #9a5b13;
+    /* code / syntax (traceback + log panels), from the palette */
+    --code-bg: var(--agent-bg);
+    --code-fg: var(--ink);
+    --code-line: var(--dim);
+    --code-kw: var(--primary);
+    --code-str: var(--mint);
+    --code-num: var(--amber);
+    --code-com: var(--placeholder);
+    --code-loc: var(--primary);
+    --code-func: var(--cyan);
 
-    /* ── categorical palette (module dots, charts) ── */
+    /* categorical (module dots, charts) */
     --cat-1: #293ce4;
     --cat-2: #2f9e5b;
-    --cat-3: #8a4fd8;
+    --cat-3: #3a5bd9;
     --cat-4: #d97a1e;
 
-    /* ── 3D / canvas backgrounds ── */
+    /* 3D / canvas backgrounds */
     --scene-bg: #f5f4ef;
-    --scene-grid: #dcdad0;
-    --scene-grid-major: #c8c6bb;
+    --scene-grid: #e2e0d7;
+    --scene-grid-major: #cfccc0;
 
-    /* ── terminal (live ANSI console): dark in both themes, the ANSI palette assumes it ── */
-    --term-bg: #0e0c13;
-    --term-fg: #ece8f0;
-    --term-dim: #8e8898;
+    /* terminal (live ANSI console): dark in both themes, the ANSI palette assumes it */
+    --term-bg: #20211f;
+    --term-fg: #f5f4ef;
+    --term-dim: #9a998f;
+
+    /* axis colors (URDF Editor, viewers) */
+    --axis-x: #c2412f;
+    --axis-y: #2f9e5b;
+    --axis-z: #293ce4;
 }
 
+/* ───────────────────────── Portal (dark) tokens ───────────────────────── */
 body.science.dark {
-    /* ── Portal neutrals: the night void, near-black violet panels, white hairlines ── */
     color-scheme: dark;
-    --bg: #05070d;
-    --card: #0e0c13;
-    --panel: rgba(14, 12, 19, 0.78);
-    --fg: #ece8f0;
-    --muted: #0b0a10;
-    --muted-fg: #8e8898;
-    --accent: rgba(124, 200, 236, 0.08); /* hover surface */
-    --accent-fg: #ece8f0;
-    --secondary: rgba(255, 255, 255, 0.04); /* chip surface */
-    --secondary-fg: #b8b4c0;
-    --border: rgba(255, 255, 255, 0.1);
-    --hair: rgba(255, 255, 255, 0.08);
-    --input: rgba(255, 255, 255, 0.16);
+    --void: #05070d; /* page / deepest background */
+    --ink: #ece8f0; /* primary text */
+    --dim: #8e8898; /* secondary text, idle borders */
+    --line: rgba(255, 255, 255, 0.1); /* hairlines */
+    --hair: rgba(255, 255, 255, 0.08); /* fainter hairlines */
+    --sel: rgba(124, 200, 236, 0.13); /* selected / pressed fill */
+    --mint: #8fd4a8; /* status: ok */
+    --amber: #e8bf6a; /* status: warn */
+    --cyan: #8fcfe0; /* data / tool chips */
+    --agent-bg: rgba(14, 12, 19, 0.92);
+    --input-bg: #0c0b10;
+    --bk: #0c0b10; /* solid control fill */
+    --placeholder: #8e8898;
 
-    /* Dimensional blue: the single accent */
-    --primary: #7cc8ec;
-    --primary-hover: #a5dbf3;
-    --primary-soft: rgba(124, 200, 236, 0.13);
+    --bg: var(--void);
+    --card: rgba(14, 12, 19, 0.92); /* the doc's --panel: containers */
+    --panel: rgba(14, 12, 19, 0.92);
+    --fg: var(--ink);
+    --muted: var(--bk);
+    --muted-fg: var(--dim);
+    --accent: rgba(255, 255, 255, 0.04); /* hover surface */
+    --accent-fg: var(--ink);
+    --secondary: transparent;
+    --secondary-fg: var(--dim);
+    --border: var(--line);
+    --border-strong: var(--dim);
+    --input: var(--line);
+
+    --primary: #7cc8ec; /* THE accent, Dimensional blue (the doc's --magenta) */
+    --primary-hover: #7cc8ec;
+    --primary-soft: var(--sel);
     --primary-fg: #05070d;
-    --info: #8fcfe0;
-    --ok: #8fd4a8;
-    --warn: #e8bf6a;
-    --danger: #f0707e;
+    --info: var(--cyan);
+    --ok: var(--mint);
+    --warn: var(--amber);
+    --danger: var(--amber);
     --danger-fg: #05070d;
-    --violet: #9fb4d8;
-    --ring: #7cc8ec;
+    --violet: #9fb4d8; /* agent */
+    --ring: var(--primary);
+    --ring-soft: rgba(124, 200, 236, 0.25);
+    --ok-line: rgba(143, 212, 168, 0.4);
+    --warn-line: rgba(232, 191, 106, 0.4);
+    --danger-line: rgba(232, 191, 106, 0.4);
+    --track: var(--bk);
+    --off: var(--dim);
 
-    --display: "Michroma", "Eurostile", "Arial Black", sans-serif;
+    --display: "Michroma", "Eurostile", sans-serif;
     --track-label: 0.2em;
+    --track-btn: 0.04em;
 
-    --shadow-2xs: 0 1px 2px rgba(0, 0, 0, 0.45);
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
-    --shadow-sm: 0 1px 2px -1px rgba(0, 0, 0, 0.6), 0 2px 8px -3px rgba(0, 0, 0, 0.55);
-    --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-    --shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.7);
-    --shadow-lg: 0 12px 36px -10px rgba(0, 0, 0, 0.8);
+    --radius: 0;
+    --radius-sm: 0;
+    --radius-lg: 0;
+    --radius-xl: 0;
+    --radius-pill: 0;
+    --radius-round: 0;
 
-    --grid-line: rgba(124, 200, 236, 0.03);
-    --ring-soft: rgba(124, 200, 236, 0.24);
-    --glow: none;
+    --shadow-2xs: none;
+    --shadow-xs: none;
+    --shadow-sm: none; /* "Glow is earned … Containers don't." */
+    --shadow: none;
+    --shadow-md: 0 12px 30px rgba(0, 0, 0, 0.6); /* menus */
+    --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.7); /* sheets */
+    --glow: 0 0 8px rgba(124, 200, 236, 0.6);
+    --glow-accent: 0 0 12px rgba(124, 200, 236, 0.3);
+    --grid-line: transparent;
 
-    --code-bg: #0b0a10;
-    --code-fg: #ece8f0;
-    --code-line: #b8b4c0;
-    --code-kw: #c9a8f0;
-    --code-str: #8fd4a8;
-    --code-num: #e8bf6a;
-    --code-com: #6c6776;
-    --code-loc: #7cc8ec;
-    --code-func: #f2b880;
+    --code-bg: #0c0b10;
+    --code-fg: var(--ink);
+    --code-line: var(--dim);
+    --code-kw: var(--violet);
+    --code-str: var(--mint);
+    --code-num: var(--amber);
+    --code-com: var(--dim);
+    --code-loc: var(--primary);
+    --code-func: var(--cyan);
 
     --cat-1: #7cc8ec;
     --cat-2: #8fd4a8;
-    --cat-3: #c9a8f0;
+    --cat-3: #9fb4d8;
     --cat-4: #e8bf6a;
 
     --scene-bg: #05070d;
-    --scene-grid: #1a1822;
-    --scene-grid-major: #2a2734;
+    --scene-grid: #0e0c13;
+    --scene-grid-major: #1c1a22;
 
     --term-bg: #05070d;
     --term-fg: #ece8f0;
-    --term-dim: #6c6776;
+    --term-dim: #8e8898;
+
+    --axis-x: #e8bf6a;
+    --axis-y: #8fd4a8;
+    --axis-z: #7cc8ec;
+}
+
+/* Portal: "Square corners, everywhere. No rounding." (the doc's `*{border-radius:0!important}`) */
+body.science.dark *,
+body.science.dark *::before,
+body.science.dark *::after,
+body.science.dark *::-webkit-scrollbar-thumb {
+    border-radius: 0 !important;
 }
 
 *,
@@ -174,17 +246,24 @@ body.science {
     color-scheme: light;
     margin: 0;
     color: var(--fg);
-    font: 14px/1.65 var(--sans);
-    letter-spacing: 0.005em;
+    background: var(--bg);
+    font: 14px/1.55 var(--hud);
     -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-    /* faint precision grid — the "lab bench" texture */
-    background-color: var(--bg);
-    background-image:
-        linear-gradient(var(--grid-line) 1px, transparent 1px),
-        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-    background-size: 28px 28px, 28px 28px;
+    font-feature-settings: "cv11", "ss01";
     transition: background-color 0.2s ease, color 0.2s ease;
+}
+body.science.dark {
+    color-scheme: dark;
+}
+/* the doc: `button,input,select,textarea,option{font-family:var(--hud)}` — zero specificity, so app classes win */
+:where(body.science) :where(button, input, select, textarea, option) {
+    font-family: var(--hud);
+}
+:where(body.science) :where(input, textarea)::placeholder {
+    color: var(--placeholder);
+}
+::selection {
+    background: var(--sel);
 }
 
 /* ───────────────────────── typography ───────────────────────── */
@@ -195,48 +274,89 @@ body.science {
     margin: 0;
     color: var(--fg);
 }
-/* display heading — large, light, airy (marque hero type) */
+/* titles: Instrument Serif on paper; Michroma, uppercase and tracked, in the Portal */
 .dim-h1 {
-    font-size: 30px;
-    font-weight: 300;
-    line-height: 1.18;
-    letter-spacing: 0.002em;
+    font: 400 30px/1.1 var(--display);
+    letter-spacing: -0.01em;
 }
-/* section labels — small, uppercase, widely tracked (instrument legend) */
-.dim-h2 {
-    font-size: 11.5px;
-    font-weight: 600;
-    line-height: 1.5;
-    letter-spacing: var(--track-label);
+body.science.dark .dim-h1 {
+    font: 400 18px/1.3 var(--display);
+    letter-spacing: 0.12em;
     text-transform: uppercase;
 }
-.dim-h3 {
-    font-size: 10px;
-    font-weight: 500;
-    line-height: 1.6;
-    letter-spacing: var(--track-label);
+/* an app's name in its own bar: Research's serif ("titles, greetings, the clock, card names"); Portal's Michroma
+   (uppercase, wide tracking, small sizes only) */
+.dim-title {
+    font: 400 22px/1.1 var(--display);
+    letter-spacing: -0.01em;
+    text-transform: none;
+    color: var(--fg);
+    white-space: nowrap;
+}
+body.science.dark .dim-title {
+    font: 400 12px/1.3 var(--display);
+    letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: var(--muted-fg);
 }
 
+/* section heads: Research `h2{font:500 10.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--blue)}`;
+   Portal `h2{font:13px var(--display);letter-spacing:.22em;text-transform:uppercase;color:var(--magenta)}` */
+.dim-h2,
+.dim-card-title {
+    font: 500 10.5px/1.5 var(--mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+body.science.dark .dim-h2 {
+    font: 400 12px/1.5 var(--display);
+    letter-spacing: 0.22em;
+}
+/* card heads + micro-labels: Research `.box h3` mono; Portal `.box h3{font:10px var(--display);letter-spacing:.2em;color:var(--dim)}` */
+.dim-h3,
 .dim-label {
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: var(--track-label);
+    font: 500 10.5px/1.5 var(--mono);
+    letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--muted-fg);
+}
+body.science.dark .dim-h3,
+body.science.dark .dim-label,
+body.science.dark .dim-card-title {
+    font: 400 10px/1.5 var(--display);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--dim);
 }
 .dim-muted {
     color: var(--muted-fg);
 }
-.dim-mono {
+.dim-mono,
+code,
+kbd,
+samp {
     font-family: var(--mono);
+}
+code {
+    font-size: 12.5px;
+    color: var(--cyan);
+}
+kbd {
+    font: 11px var(--mono);
+    padding: 0 5px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--bk);
+    color: var(--dim);
 }
 .dim-link {
     color: var(--primary);
     text-decoration: none;
     font-weight: 500;
-    border-bottom: 1px solid color-mix(in srgb, var(--primary) 35%, transparent);
+    border-bottom: 1px solid var(--primary-soft);
 }
 .dim-link:hover {
     border-color: var(--primary);
@@ -244,169 +364,344 @@ body.science {
 
 /* ───────────────────────── surfaces ──────────────────────────── */
 
+/* Research `.box{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}`;
+   Portal `.box{background:var(--panel);border:1px solid var(--line)}` */
 .dim-panel,
 .dim-card {
     background: var(--card);
     color: var(--fg);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-sm);
+    box-shadow: var(--shadow);
 }
 .dim-card {
-    padding: 26px;
+    padding: 18px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-}
-.dim-card-title {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: var(--track-label);
-    text-transform: uppercase;
-    color: var(--muted-fg);
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    gap: 12px;
 }
 .dim-card-desc {
     color: var(--muted-fg);
     font-size: 13px;
-    margin-top: -8px;
+    margin-top: -6px;
+}
+/* frosted panel floating over a 3D/video view */
+.dim-panel.glass {
+    background: var(--panel);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+/* sheets / modals: Research `.sheet{border-radius:14px;box-shadow:0 24px 60px rgba(32,33,31,.14)}`, Portal `0 20px 60px rgba(0,0,0,.7)` */
+.dim-sheet,
+.dim-modal {
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
+}
+.dim-sheet > header,
+.dim-modal > header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--hair);
+    font: 400 22px var(--display);
+}
+body.science.dark .dim-sheet > header,
+body.science.dark .dim-modal > header {
+    padding: 10px 14px;
+    border-bottom-color: var(--line);
+    font: 400 10px var(--display);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--dim);
+}
+.dim-sheet > footer,
+.dim-modal > footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--hair);
+}
+/* key / value rows */
+.dim-kv {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13.5px;
+    padding: 7px 0;
+    border-bottom: 1px solid var(--hair);
+}
+.dim-kv > :first-child {
+    color: var(--muted-fg);
+}
+.dim-kv > :last-child {
+    font: 12.5px var(--mono);
 }
 
 /* ───────────────────────── buttons ──────────────────────────── */
 
+/* Research `button{font-size:13px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 14px}`
+   Portal `button{font:12px var(--hud);letter-spacing:.04em;background:none;border:1px solid var(--line);padding:8px 14px}` */
 .dim-btn {
     appearance: none;
     cursor: pointer;
-    font-family: var(--sans);
-    font-size: 11px;
-    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font: 500 13px/1.25 var(--hud);
     letter-spacing: var(--track-btn);
-    text-transform: uppercase;
+    text-transform: none;
     color: var(--fg);
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 11px 22px;
-    box-shadow: var(--shadow-2xs);
+    padding: 8px 14px;
+    box-shadow: none;
     transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+body.science.dark .dim-btn {
+    font: 400 12px/1.25 var(--hud);
+    letter-spacing: 0.04em;
+    background: transparent;
 }
 .dim-btn:hover {
     background: var(--accent);
-    border-color: color-mix(in oklab, var(--border) 60%, var(--primary));
-}
-.dim-btn:active {
-    transform: translateY(0.5px);
+    border-color: var(--border-strong);
 }
 .dim-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px var(--ring-soft);
     border-color: var(--ring);
+    box-shadow: 0 0 0 3px var(--ring-soft);
+}
+body.science.dark .dim-btn:focus-visible {
+    box-shadow: 0 0 0 1px var(--primary), 0 0 14px rgba(124, 200, 236, 0.25);
 }
 .dim-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
     box-shadow: none;
 }
-
-.dim-btn.primary {
+/* Research `button.primary{background:var(--blue);border-color:var(--blue);color:#fff}`;
+   Portal `button.primary{border-color:var(--magenta);color:var(--magenta);background:var(--sel)}`, glow on hover */
+.dim-btn.primary,
+.dim-btn.accent {
     color: var(--primary-fg);
     background: var(--primary);
     border-color: var(--primary);
-    box-shadow:
-        var(--shadow-2xs),
-        var(--glow);
 }
-.dim-btn.primary:hover {
+.dim-btn.primary:hover,
+.dim-btn.accent:hover {
     background: var(--primary-hover);
     border-color: var(--primary-hover);
 }
-
-.dim-btn.accent {
-    color: var(--primary-fg);
-    background: var(--info);
-    border-color: var(--info);
+body.science.dark .dim-btn.primary,
+body.science.dark .dim-btn.accent {
+    color: var(--primary);
+    background: var(--sel);
+    border-color: var(--primary);
 }
-.dim-btn.accent:hover {
-    background: color-mix(in oklab, var(--info) 88%, black);
+body.science.dark .dim-btn.primary:hover,
+body.science.dark .dim-btn.accent:hover {
+    background: var(--sel);
+    box-shadow: var(--glow-accent);
 }
-
+/* Research `button.ghost{border-color:transparent;background:none;color:var(--dim)}` */
 .dim-btn.ghost {
     background: transparent;
     border-color: transparent;
-    box-shadow: none;
-    color: var(--fg);
+    color: var(--muted-fg);
 }
 .dim-btn.ghost:hover {
+    color: var(--fg);
+    background: var(--accent);
+    border-color: transparent;
+}
+body.science.dark .dim-btn.ghost:hover {
+    border-color: var(--dim);
+}
+/* destructive: Research's close red; Portal's warn amber */
+.dim-btn.danger {
+    color: var(--danger);
+    background: var(--card);
+    border-color: var(--danger-line);
+}
+.dim-btn.danger:hover {
+    border-color: var(--danger);
     background: var(--accent);
 }
-
-.dim-btn.danger {
+body.science.dark .dim-btn.danger {
+    background: transparent;
+}
+.dim-btn.danger.solid {
     color: var(--danger-fg);
     background: var(--danger);
     border-color: var(--danger);
 }
-.dim-btn.danger:hover {
-    background: color-mix(in oklab, var(--danger) 88%, black);
+/* pressed / selected toggle buttons */
+.dim-btn.on,
+.dim-btn[aria-pressed="true"] {
+    color: var(--primary);
+    background: var(--sel);
+    border-color: var(--primary);
 }
-
+.dim-btn.primary.on {
+    color: var(--primary-fg);
+    background: var(--primary-hover);
+}
+body.science.dark .dim-btn.primary.on {
+    color: var(--primary);
+    background: var(--sel);
+    box-shadow: var(--glow-accent);
+}
 .dim-btn.sm {
-    padding: 8px 15px;
-    font-size: 10px;
+    font-size: 12px;
+    padding: 4px 10px;
+}
+body.science.dark .dim-btn.sm {
+    font-size: 11px;
+    padding: 4px 9px;
+}
+.dim-btn.lg {
+    padding: 12px 22px;
+    font-size: 14px;
+    font-weight: 600;
 }
 .dim-btn.icon {
-    padding: 10px 14px;
+    padding: 6px 9px;
     letter-spacing: normal;
 }
+/* circle icon button (a square in the Portal) */
+.dim-btn.round {
+    border-radius: var(--radius-pill);
+    padding: 0;
+    width: 30px;
+    height: 30px;
+}
+/* badge that is also a button */
+button.dim-badge {
+    cursor: pointer;
+}
+button.dim-badge:hover {
+    border-color: var(--border-strong);
+}
 
-/* ───────────────────────── badges ──────────────────────────── */
+/* ───────────────────────── chips + badges ──────────────────────────── */
 
-.dim-badge {
+/* chips (multi-select, status): Research `.chip{font:12px var(--mono);padding:3px 10px;border:1px solid var(--line);
+   border-radius:999px;color:var(--dim);background:#fff}`; Portal `.chip{font:11.5px var(--mono);padding:3px 8px;
+   border:1px solid var(--line);color:var(--dim)}` */
+.dim-badge,
+.dim-chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-family: var(--sans);
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    padding: 4px 10px;
-    border-radius: 999px;
+    font: 400 12px/1.4 var(--mono);
+    letter-spacing: 0;
+    text-transform: none;
+    padding: 2px 10px;
     border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
     color: var(--secondary-fg);
     background: var(--secondary);
+    white-space: nowrap;
 }
+body.science.dark .dim-badge,
+body.science.dark .dim-chip {
+    font-size: 11.5px;
+    padding: 2px 8px;
+}
+.dim-chip {
+    cursor: pointer;
+    user-select: none;
+}
+.dim-chip.on,
+.dim-chip[aria-pressed="true"],
+.dim-badge.info,
+.dim-badge.on {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: var(--sel);
+}
+body.science.dark .dim-chip.on,
+body.science.dark .dim-chip[aria-pressed="true"] {
+    color: var(--fg);
+}
+.dim-badge.ok,
+.dim-chip.ok {
+    color: var(--ok);
+    border-color: var(--ok-line);
+}
+.dim-badge.warn,
+.dim-chip.warn {
+    color: var(--warn);
+    border-color: var(--warn-line);
+}
+.dim-badge.danger,
+.dim-chip.danger {
+    color: var(--danger);
+    border-color: var(--danger-line);
+}
+/* counts / NEW: Research `.badge{font:500 10px var(--mono);padding:1px 7px;border-radius:999px;background:var(--blue);color:#fff}` */
 .dim-badge.solid {
-    background: var(--primary);
+    font: 500 10px/1.5 var(--mono);
+    padding: 1px 7px;
     color: var(--primary-fg);
+    background: var(--primary);
     border-color: var(--primary);
 }
-.dim-badge.info {
-    color: color-mix(in oklab, var(--info) 72%, var(--fg));
-    border-color: color-mix(in srgb, var(--info) 38%, transparent);
-    background: color-mix(in oklab, var(--info) 14%, var(--card));
+.dim-badge.solid.ok {
+    background: var(--ok);
+    border-color: var(--ok);
+    color: var(--primary-fg);
 }
-.dim-badge.ok {
-    color: color-mix(in oklab, var(--ok) 82%, var(--fg));
-    border-color: color-mix(in srgb, var(--ok) 50%, transparent);
-    background: color-mix(in oklab, var(--ok) 28%, var(--card));
+.dim-badge.solid.warn {
+    background: var(--warn);
+    border-color: var(--warn);
+    color: var(--primary-fg);
 }
-.dim-badge.warn {
-    color: color-mix(in oklab, var(--warn) 74%, var(--fg));
-    border-color: color-mix(in srgb, var(--warn) 52%, transparent);
-    background: color-mix(in oklab, var(--warn) 32%, var(--card));
+.dim-badge.solid.danger {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: var(--danger-fg);
 }
-.dim-badge.danger {
-    color: color-mix(in oklab, var(--danger) 80%, var(--fg));
-    border-color: color-mix(in srgb, var(--danger) 38%, transparent);
-    background: color-mix(in oklab, var(--danger) 12%, var(--card));
-}
-.dim-badge .dot {
+/* status dot: Research circle, Portal a square with a glow */
+.dim-badge .dot,
+.dim-dot {
+    display: inline-block;
     width: 7px;
     height: 7px;
-    border-radius: 50%;
+    flex: none;
+    border-radius: var(--radius-round);
     background: currentColor;
+}
+.dim-dot {
+    background: var(--ok);
+}
+.dim-dot.warn {
+    background: var(--warn);
+}
+.dim-dot.danger {
+    background: var(--danger);
+}
+.dim-dot.off {
+    background: var(--off);
+    box-shadow: none !important;
+}
+body.science.dark .dim-dot,
+body.science.dark .dim-badge .dot {
+    box-shadow: 0 0 6px currentColor;
+}
+body.science.dark .dim-dot {
+    color: var(--ok);
+}
+body.science.dark .dim-dot.warn,
+body.science.dark .dim-dot.danger {
+    color: var(--warn);
 }
 
 /* ───────────────────────── form fields ─────────────────────── */
@@ -414,39 +709,57 @@ body.science {
 .dim-field {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 5px;
 }
+/* Research `label.l{font-size:12.5px;color:var(--dim)}` */
 .dim-field > label {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--fg);
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--muted-fg);
 }
-
+/* Research `input{background:var(--input);border:1px solid var(--line);border-radius:8px;font-size:14px;padding:9px 12px}`
+   Portal `input{background:var(--bk);border:1px solid var(--line);font:14px var(--hud);padding:9px 11px}` */
 .dim-input,
 .dim-textarea,
 .dim-select {
     appearance: none;
-    font-family: var(--sans);
-    font-size: 14px;
+    font: 400 14px/1.3 var(--hud);
     color: var(--fg);
-    background: var(--card);
+    background: var(--input-bg);
     border: 1px solid var(--input);
     border-radius: var(--radius);
     padding: 9px 12px;
     outline: none;
     width: 100%;
-    box-shadow: var(--shadow-2xs);
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+body.science.dark .dim-input,
+body.science.dark .dim-textarea,
+body.science.dark .dim-select {
+    padding: 9px 11px;
+}
+.dim-input.dim-mono,
+.dim-textarea.dim-mono {
+    font-family: var(--mono);
 }
 .dim-input::placeholder,
 .dim-textarea::placeholder {
-    color: var(--muted-fg);
+    color: var(--placeholder);
 }
+/* Research focus: blue border + 3px ring + white fill; Portal: accent border + 1px ring + soft glow */
 .dim-input:focus,
 .dim-textarea:focus,
 .dim-select:focus {
     border-color: var(--ring);
     box-shadow: 0 0 0 3px var(--ring-soft);
+    background: var(--card);
+}
+body.science.dark .dim-input:focus,
+body.science.dark .dim-textarea:focus,
+body.science.dark .dim-select:focus {
+    background: var(--bk);
+    box-shadow: 0 0 0 1px var(--primary), 0 0 14px rgba(124, 200, 236, 0.25);
 }
 .dim-textarea {
     resize: vertical;
@@ -463,15 +776,66 @@ body.science {
     background-repeat: no-repeat;
     padding-right: 34px;
 }
+.dim-select option {
+    background: var(--card);
+    color: var(--fg);
+}
+body.science.dark .dim-select option {
+    background: var(--bk);
+}
+/* the ask box: Research a white pill with a soft shadow; Portal a bright hairline with a blue glow */
+.dim-ask {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-pill);
+    padding: 4px 4px 4px 14px;
+    box-shadow: var(--shadow);
+}
+.dim-ask > input {
+    flex: 1;
+    min-width: 0;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: none !important;
+    padding: 6px 0;
+    outline: none;
+    font: 14px var(--hud);
+    color: var(--fg);
+}
+.dim-ask > button {
+    border-radius: var(--radius-pill);
+}
+body.science.dark .dim-ask {
+    gap: 0;
+    padding: 0;
+    background: var(--bk);
+    border-color: rgba(236, 232, 240, 0.55);
+    box-shadow: 0 0 18px rgba(124, 200, 236, 0.18);
+}
+body.science.dark .dim-ask > input {
+    padding: 9px 11px;
+}
+body.science.dark .dim-ask > button {
+    border: 0;
+    border-left: 1px solid var(--line);
+    align-self: stretch;
+}
 
-/* checkbox + radio */
+/* checkbox + radio: Research native-feeling (blue fill); Portal `.rc input{width:14px;height:14px;border:1px solid var(--dim);
+   background:var(--bk)} :checked{border-color:var(--magenta)} :checked::after{6px square, accent, glow}` */
 .dim-check {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
     cursor: pointer;
-    font-size: 13.5px;
+    font-size: 14px;
     color: var(--fg);
+}
+body.science.dark .dim-check {
+    font-size: 13.5px;
 }
 .dim-check input {
     position: absolute;
@@ -481,48 +845,72 @@ body.science {
 }
 .dim-check .box,
 .dim-check .ring {
-    width: 17px;
-    height: 17px;
-    border: 1px solid var(--input);
-    border-radius: var(--radius-sm);
+    width: 15px;
+    height: 15px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
     background: var(--card);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex: none;
-    box-shadow: var(--shadow-2xs);
     transition: all 0.13s ease;
 }
 .dim-check .ring {
-    border-radius: 50%;
+    border-radius: var(--radius-round);
 }
 .dim-check input:checked + .box {
     background: var(--primary);
     border-color: var(--primary);
 }
 .dim-check input:checked + .box::after {
-    content: "✓";
-    color: var(--primary-fg);
-    font-size: 12px;
-    line-height: 1;
+    content: "";
+    width: 4px;
+    height: 8px;
+    margin-top: -2px;
+    border: solid var(--primary-fg);
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
 }
 .dim-check input:checked + .ring {
     border-color: var(--primary);
-}
-.dim-check input:checked + .ring::after {
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--primary);
+    border-width: 4.5px;
 }
 .dim-check input:focus-visible + .box,
 .dim-check input:focus-visible + .ring {
     box-shadow: 0 0 0 3px var(--ring-soft);
     border-color: var(--ring);
 }
+body.science.dark .dim-check .box,
+body.science.dark .dim-check .ring {
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--dim);
+    background: var(--bk);
+}
+body.science.dark .dim-check input:checked + .box,
+body.science.dark .dim-check input:checked + .ring {
+    border: 1px solid var(--primary);
+    background: var(--bk);
+}
+body.science.dark .dim-check input:checked + .box::after,
+body.science.dark .dim-check input:checked + .ring::after {
+    content: "";
+    width: 6px;
+    height: 6px;
+    margin: 0;
+    border: 0;
+    transform: none;
+    background: var(--primary);
+    box-shadow: 0 0 6px var(--primary);
+}
+/* bare checkboxes / radios / ranges get the accent (Research `.rc input{accent-color:var(--blue)}`) */
+:where(body.science) :where(input[type="checkbox"], input[type="radio"], input[type="range"], progress) {
+    accent-color: var(--primary);
+}
 
-/* switch */
+/* switch: Research `.toggle{width:34px;height:20px;border-radius:999px;background:#d9d7cd}`, knob 16px white circle;
+   Portal `.toggle{width:38px;height:18px;border:1px solid var(--dim);background:var(--bk)}`, 12px knob, accent + glow on */
 .dim-switch {
     display: inline-flex;
     align-items: center;
@@ -536,78 +924,106 @@ body.science {
     height: 0;
 }
 .dim-switch .track {
-    width: 42px;
-    height: 24px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--muted);
+    width: 34px;
+    height: 20px;
+    flex: none;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--track);
     position: relative;
-    transition: all 0.16s ease;
+    transition: all 0.15s ease;
 }
 .dim-switch .track::after {
     content: "";
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: var(--card);
-    box-shadow: var(--shadow-sm);
-    transition: all 0.16s ease;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-round);
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    transition: all 0.15s ease;
 }
 .dim-switch input:checked + .track {
     background: var(--primary);
-    border-color: var(--primary);
-    box-shadow: var(--glow);
 }
 .dim-switch input:checked + .track::after {
-    left: 20px;
+    left: 16px;
+}
+.dim-switch input:focus-visible + .track {
+    box-shadow: 0 0 0 3px var(--ring-soft);
+}
+body.science.dark .dim-switch .track {
+    width: 38px;
+    height: 18px;
+    border: 1px solid var(--dim);
+    background: var(--bk);
+}
+body.science.dark .dim-switch .track::after {
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: var(--dim);
+    box-shadow: none;
+}
+body.science.dark .dim-switch input:checked + .track {
+    border-color: var(--primary);
+    background: var(--sel);
+}
+body.science.dark .dim-switch input:checked + .track::after {
+    left: 22px;
+    background: var(--primary);
+    box-shadow: 0 0 8px var(--primary);
 }
 
-/* slider */
+/* slider: Research native with the blue accent; Portal `height:2px;background:var(--line)`, 12px square accent thumb + glow */
 .dim-range {
     width: 100%;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+body.science.dark .dim-range {
     appearance: none;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--muted);
+    height: 2px;
+    background: var(--line);
     outline: none;
-    cursor: pointer;
 }
-.dim-range::-webkit-slider-thumb {
+body.science.dark .dim-range::-webkit-slider-thumb {
     appearance: none;
-    width: 17px;
-    height: 17px;
-    border-radius: 50%;
+    width: 12px;
+    height: 12px;
+    border: 0;
     background: var(--primary);
-    border: 2px solid var(--card);
-    box-shadow: var(--shadow);
+    box-shadow: 0 0 8px var(--primary);
     cursor: pointer;
 }
-.dim-range::-moz-range-thumb {
-    width: 17px;
-    height: 17px;
-    border-radius: 50%;
-    border: 2px solid var(--card);
+body.science.dark .dim-range::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: 0;
+    border-radius: 0;
     background: var(--primary);
-    box-shadow: var(--shadow);
+    box-shadow: 0 0 8px var(--primary);
     cursor: pointer;
 }
 
 /* ───────────────────────── progress ────────────────────────── */
 
+/* Research `.bar{height:6px;border-radius:999px;background:rgba(0,0,0,.08)}`; Portal `.bar{height:4px;background:var(--hair)}`
+   with an accent fill that glows */
 .dim-progress {
     width: 100%;
-    height: 8px;
-    border-radius: 999px;
-    background: var(--muted);
+    height: 6px;
+    border-radius: var(--radius-pill);
+    background: rgba(0, 0, 0, 0.08);
     overflow: hidden;
 }
 .dim-progress > span {
     display: block;
     height: 100%;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     background: var(--primary);
 }
 .dim-progress.info > span {
@@ -619,43 +1035,205 @@ body.science {
 .dim-progress.ok > span {
     background: var(--ok);
 }
+body.science.dark .dim-progress {
+    height: 4px;
+    background: var(--hair);
+}
+body.science.dark .dim-progress > span {
+    box-shadow: 0 0 8px rgba(124, 200, 236, 0.6);
+}
+body.science.dark .dim-progress.ok > span,
+body.science.dark .dim-progress.warn > span,
+body.science.dark .dim-progress.info > span {
+    box-shadow: none;
+}
 
 /* ───────────────────────── tabs ─────────────────────────────── */
 
+/* .dim-tabs is the doc's segmented control (`.seg`): Research a paper well (radius 9, padding 3) with a white raised
+   segment; Portal joined hairline buttons, the pressed one in --sel with an accent border */
 .dim-tabs {
     display: inline-flex;
     gap: 3px;
     padding: 3px;
-    border-radius: var(--radius);
-    background: var(--muted);
-    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--input-bg);
+    border: 1px solid var(--line);
 }
 .dim-tab {
     appearance: none;
     cursor: pointer;
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
-    font-family: var(--sans);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font: 500 13px/1.25 var(--hud);
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--muted-fg);
-    padding: 8px 16px;
+    padding: 6px 12px;
+    white-space: nowrap;
     transition: all 0.14s ease;
 }
 .dim-tab:hover {
     color: var(--fg);
 }
-.dim-tab[aria-selected="true"] {
+.dim-tab[aria-selected="true"],
+.dim-tab[aria-pressed="true"],
+.dim-tab.active,
+.dim-tab.on {
     color: var(--fg);
     background: var(--card);
-    box-shadow: var(--shadow-2xs);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.dim-tabs.vertical {
+    flex-direction: column;
+}
+body.science.dark .dim-tabs {
+    gap: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+}
+body.science.dark .dim-tab {
+    font: 400 12px/1.25 var(--hud);
+    letter-spacing: 0.04em;
+    border: 1px solid var(--line);
+    padding: 8px 14px;
+    margin-left: -1px;
+}
+body.science.dark .dim-tabs.vertical .dim-tab {
+    margin-left: 0;
+    margin-top: -1px;
+}
+body.science.dark .dim-tab:hover {
+    border-color: var(--dim);
+    background: rgba(255, 255, 255, 0.04);
+    position: relative;
+}
+body.science.dark .dim-tab[aria-selected="true"],
+body.science.dark .dim-tab[aria-pressed="true"],
+body.science.dark .dim-tab.active,
+body.science.dark .dim-tab.on {
+    color: var(--ink);
+    background: var(--sel);
+    border-color: var(--primary);
+    box-shadow: none;
+    position: relative;
+}
+/* underline tabs (the doc's `.tabs`): `.dim-tabs.line` */
+.dim-tabs.line {
+    display: flex;
+    gap: 18px;
+    padding: 0;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+}
+.dim-tabs.line .dim-tab {
+    flex: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    padding: 8px 0;
+    margin: 0;
+    color: var(--dim);
+}
+.dim-tabs.line .dim-tab[aria-selected="true"],
+.dim-tabs.line .dim-tab.active,
+.dim-tabs.line .dim-tab.on {
+    color: var(--ink);
+    background: transparent;
+    border-bottom-color: var(--primary);
+}
+body.science.dark .dim-tabs.line {
+    gap: 0;
+}
+body.science.dark .dim-tabs.line .dim-tab {
+    padding: 8px 14px;
+}
+
+/* ───────────────────────── menus / dropdowns ───────────────────── */
+
+/* Research `.menu{background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 12px 32px rgba(32,33,31,.12);
+   padding:4px}`, rows radius 7; Portal `.menu{background:var(--panel);border:1px solid var(--line);
+   box-shadow:0 12px 30px rgba(0,0,0,.6)}` */
+.dim-menu {
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: 4px;
+    z-index: 20;
+}
+.dim-menu > *,
+.dim-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    font: 400 14px/1.3 var(--hud);
+    color: var(--fg);
+    background: transparent;
+    border: 0;
+    border-radius: 7px;
+    cursor: pointer;
+}
+.dim-menu > :hover,
+.dim-menu-item:hover {
+    background: var(--input-bg);
+}
+.dim-menu > .on,
+.dim-menu-item.on {
+    color: var(--primary);
+}
+body.science.dark .dim-menu {
+    padding: 0;
+}
+body.science.dark .dim-menu > *,
+body.science.dark .dim-menu-item {
+    padding: 8px 11px;
+    font-size: 13.5px;
+}
+body.science.dark .dim-menu > :hover,
+body.science.dark .dim-menu-item:hover {
+    background: var(--sel);
+}
+
+/* tooltip: Research a dark ink pill-ish label; Portal `.tip .t{background:var(--bk);border:1px solid var(--line);font:11px var(--hud)}` */
+.dim-tooltip {
+    position: absolute;
+    z-index: 30;
+    pointer-events: none;
+    white-space: nowrap;
+    font: 11.5px var(--hud);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--ink);
+    color: #ffffff;
+}
+body.science.dark .dim-tooltip {
+    font-size: 11px;
+    background: var(--bk);
+    color: var(--ink);
+    border: 1px solid var(--line);
 }
 
 /* ───────────────────────── table ───────────────────────────── */
 
+/* Research `th{font:500 10px var(--mono);letter-spacing:.14em;color:var(--dim);text-transform:uppercase}`,
+   `td{padding:9px 14px;border-bottom:1px solid var(--hair)}`; Portal `th{font:10px var(--display);letter-spacing:.18em}`,
+   `td{padding:8px 12px}` */
 .dim-table {
     width: 100%;
     border-collapse: collapse;
@@ -663,17 +1241,17 @@ body.science {
 }
 .dim-table th {
     text-align: left;
-    font-weight: 600;
-    font-size: 9.5px;
-    letter-spacing: 0.12em;
+    font: 500 10px/1.4 var(--mono);
+    letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--muted-fg);
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--hair);
+    white-space: nowrap;
 }
 .dim-table td {
-    padding: 15px 18px;
-    border-bottom: 1px solid var(--border);
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--hair);
     color: var(--fg);
     font-variant-numeric: tabular-nums;
 }
@@ -681,7 +1259,18 @@ body.science {
     border-bottom: none;
 }
 .dim-table tr:hover td {
-    background: var(--muted);
+    background: var(--sel);
+}
+body.science.dark .dim-table {
+    font-size: 13px;
+}
+body.science.dark .dim-table th {
+    font: 400 10px/1.4 var(--display);
+    letter-spacing: 0.18em;
+    padding: 8px 12px;
+}
+body.science.dark .dim-table td {
+    padding: 8px 12px;
 }
 
 /* ───────────────────────── avatar ──────────────────────────── */
@@ -693,7 +1282,7 @@ body.science {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 50%;
+    border-radius: var(--radius-round);
     font-size: 12px;
     font-weight: 600;
     color: var(--primary-fg);
@@ -709,61 +1298,83 @@ body.science {
 /* ───────────────────────── status dot ──────────────────────── */
 
 .dim-live-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: var(--info);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--info) 50%, transparent);
-    animation: sci-pulse 2.4s ease-out infinite;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-round);
+    background: var(--ok);
+    animation: dim-pulse 2.4s ease-out infinite;
 }
-@keyframes sci-pulse {
+@keyframes dim-pulse {
     0% {
-        box-shadow: 0 0 0 0 color-mix(in srgb, var(--info) 45%, transparent);
+        box-shadow: 0 0 0 0 var(--ok-line);
     }
     70% {
-        box-shadow: 0 0 0 8px color-mix(in srgb, var(--info) 0%, transparent);
+        box-shadow: 0 0 0 7px transparent;
     }
     100% {
-        box-shadow: 0 0 0 0 color-mix(in srgb, var(--info) 0%, transparent);
+        box-shadow: 0 0 0 0 transparent;
     }
 }
 
-/* ───────────────────────── alert ───────────────────────────── */
+/* ───────────────────────── alert / note ───────────────────────────── */
 
+/* Research `.note{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow)}`
+   with a status dot; Portal `.note{border-left:2px solid var(--mint);background:var(--panel);padding:10px 14px}` + hairlines */
 .dim-alert {
     display: flex;
     gap: 12px;
-    padding: 14px 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    align-items: baseline;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
     background: var(--card);
     color: var(--fg);
     font-size: 13.5px;
-    box-shadow: var(--shadow-2xs);
-    border-left: 3px solid var(--primary);
+    box-shadow: var(--shadow);
 }
-.dim-alert.info {
-    border-color: color-mix(in srgb, var(--info) 35%, transparent);
-    background: color-mix(in oklab, var(--info) 8%, var(--card));
+.dim-alert::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: var(--radius-round);
+    background: var(--primary);
+    transform: translateY(-1px);
+}
+.dim-alert.ok::before {
+    background: var(--ok);
+}
+.dim-alert.info::before {
+    background: var(--info);
+}
+.dim-alert.warn::before {
+    background: var(--warn);
+}
+.dim-alert.danger::before {
+    background: var(--danger);
+}
+body.science.dark .dim-alert {
+    padding: 10px 14px;
+    border: 1px solid var(--hair);
+    border-left: 2px solid var(--primary);
+    background: var(--panel);
+}
+body.science.dark .dim-alert::before {
+    display: none;
+}
+body.science.dark .dim-alert.ok {
+    border-left-color: var(--ok);
+}
+body.science.dark .dim-alert.info {
     border-left-color: var(--info);
 }
-.dim-alert.danger {
-    border-color: color-mix(in srgb, var(--danger) 35%, transparent);
-    background: color-mix(in oklab, var(--danger) 8%, var(--card));
-    border-left-color: var(--danger);
-}
-.dim-alert.warn {
-    border-color: color-mix(in srgb, var(--warn) 38%, transparent);
-    background: color-mix(in oklab, var(--warn) 12%, var(--card));
+body.science.dark .dim-alert.warn,
+body.science.dark .dim-alert.danger {
     border-left-color: var(--warn);
 }
 .dim-alert .dim-alert-title {
-    font-weight: 600;
-    font-size: 10px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--muted-fg);
-    margin-bottom: 4px;
+    font-weight: 500;
+    white-space: nowrap;
 }
 
 /* ───────────────────────── stepper ─────────────────────────── */
@@ -774,17 +1385,15 @@ body.science {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
-    box-shadow: var(--shadow-2xs);
+    background: var(--card);
 }
 .dim-stepper button {
     appearance: none;
     cursor: pointer;
     width: 42px;
-    font-family: var(--sans);
-    font-size: 18px;
-    line-height: 1;
+    font: 18px/1 var(--hud);
     color: var(--fg);
-    background: var(--card);
+    background: transparent;
     border: none;
     transition: background 0.12s ease;
 }
@@ -793,14 +1402,11 @@ body.science {
 }
 .dim-stepper .val {
     min-width: 104px;
-    padding: 14px 12px;
+    padding: 12px;
     text-align: center;
-    font-family: var(--mono);
-    font-size: 32px;
-    font-weight: 300;
+    font: 400 28px var(--mono);
     color: var(--fg);
     font-variant-numeric: tabular-nums;
-    letter-spacing: 0.01em;
     border-left: 1px solid var(--border);
     border-right: 1px solid var(--border);
 }
@@ -815,13 +1421,11 @@ body.science {
 }
 .dim-bars .bar {
     flex: 1;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    background: color-mix(in oklab, var(--primary) 24%, var(--muted));
+    border-radius: 4px 4px 0 0;
+    background: var(--sel);
     transition: background 0.14s ease;
 }
-.dim-bars .bar:hover {
-    background: color-mix(in oklab, var(--primary) 48%, var(--muted));
-}
+.dim-bars .bar:hover,
 .dim-bars .bar.hot {
     background: var(--primary);
 }
@@ -835,7 +1439,7 @@ body.science {
     overflow: visible;
 }
 .dim-chart .grid line {
-    stroke: var(--border);
+    stroke: var(--hair);
     stroke-width: 1;
 }
 .dim-chart .axis {
@@ -845,7 +1449,7 @@ body.science {
 }
 .dim-chart .series {
     fill: none;
-    stroke-width: 2.5;
+    stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
 }
@@ -899,12 +1503,10 @@ body.science {
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-sm);
-    font-family: var(--mono);
-    font-size: 13px;
+    font: 13px var(--mono);
     color: var(--fg);
     background: transparent;
     border: 1px solid transparent;
-    transition: all 0.12s ease;
 }
 .dim-cal-grid .day:hover {
     background: var(--accent);
@@ -915,121 +1517,14 @@ body.science {
     cursor: default;
 }
 .dim-cal-grid .day.range {
-    background: color-mix(in oklab, var(--primary) 14%, var(--card));
+    background: var(--sel);
 }
 .dim-cal-grid .day.sel {
     background: var(--primary);
     color: var(--primary-fg);
-    box-shadow: var(--glow);
 }
 
-@media (prefers-reduced-motion: reduce) {
-    * {
-        animation-duration: 0.001ms !important;
-        transition-duration: 0.001ms !important;
-    }
-}
-
-/* Scrollbars — thin, transparent track, subtle rounded thumb that darkens on hover */
-* {
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--muted-fg) 45%, transparent) transparent;
-}
-::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-}
-::-webkit-scrollbar-track {
-    background: transparent;
-}
-::-webkit-scrollbar-corner {
-    background: transparent;
-}
-::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--muted-fg) 40%, transparent);
-    border-radius: 999px;
-    border: 2px solid transparent;
-    background-clip: padding-box;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--muted-fg) 70%, transparent);
-    background-clip: padding-box;
-}
-
-/* ───────────────────────── additions (component unification, 2026-10) ───────────────────────── */
-
-/* axis colors (URDF Editor, viewers): tokens, not literals */
-:root {
-    --axis-x: oklch(0.6 0.19 25);
-    --axis-y: oklch(0.62 0.17 145);
-    --axis-z: oklch(0.58 0.16 255);
-}
-body.science.dark {
-    --axis-x: #ff6b6b;
-    --axis-y: #5be37a;
-    --axis-z: #5aa9ff;
-}
-
-/* pressed / selected state for toggle buttons */
-.dim-btn.on,
-.dim-btn[aria-pressed="true"] {
-    color: var(--primary);
-    background: var(--primary-soft);
-    border-color: color-mix(in srgb, var(--primary) 55%, transparent);
-}
-.dim-btn.primary.on {
-    color: var(--primary-fg);
-    background: var(--primary-hover);
-}
-/* big hold-to-act buttons (arm, stop) */
-.dim-btn.lg {
-    padding: 14px 26px;
-    font-size: 12.5px;
-    font-weight: 600;
-}
-/* circle icon button */
-.dim-btn.round {
-    border-radius: 999px;
-    padding: 0;
-    width: 30px;
-    height: 30px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-.dim-btn.icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-}
-
-/* tabs: class-based selection, and a vertical stack */
-.dim-tab.active,
-.dim-tab.on {
-    color: var(--fg);
-    background: var(--card);
-    box-shadow: var(--shadow-2xs);
-}
-.dim-tabs.vertical {
-    flex-direction: column;
-}
-
-/* badge that is also a button */
-button.dim-badge {
-    cursor: pointer;
-    font-family: var(--sans);
-}
-button.dim-badge:hover {
-    border-color: color-mix(in oklab, var(--border) 50%, var(--primary));
-}
-
-/* frosted panel floating over a 3D/video view */
-.dim-panel.glass {
-    background: color-mix(in srgb, var(--card) 80%, transparent);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-}
+/* ───────────────────────── icons, toasts ──────────────────────── */
 
 /* line icons (dim-icons.js): size follows font-size, color follows text */
 .dim-icon {
@@ -1044,7 +1539,7 @@ button.dim-badge:hover {
     stroke-linejoin: round;
 }
 
-/* toast: bottom-center stack, same look as the shell's */
+/* toast: bottom-center stack. Research the doc's dark "finished" pill (`.strip`); Portal a --bk hairline block */
 .dim-toasts {
     position: fixed;
     bottom: 24px;
@@ -1058,25 +1553,34 @@ button.dim-badge:hover {
     pointer-events: none;
 }
 .dim-toast {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 8px 16px;
-    font-family: var(--sans);
-    font-size: 12.5px;
-    color: var(--fg);
-    box-shadow: var(--shadow-lg);
+    background: var(--ink);
+    color: #ffffff;
+    border: 1px solid var(--ink);
+    border-radius: var(--radius-pill);
+    padding: 5px 14px;
+    font: 12px var(--mono);
+    box-shadow: var(--shadow-md);
     animation: dim-toast-in 0.2s ease;
 }
 .dim-toast.ok {
-    border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+    border-color: var(--ok);
 }
-.dim-toast.warn {
-    border-color: color-mix(in srgb, var(--warn) 55%, transparent);
-}
+.dim-toast.warn,
 .dim-toast.danger {
-    border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-    color: color-mix(in oklab, var(--danger) 70%, var(--fg));
+    border-color: var(--warn);
+}
+body.science.dark .dim-toast {
+    background: var(--bk);
+    color: var(--ink);
+    border-color: var(--line);
+    border-left: 2px solid var(--primary);
+}
+body.science.dark .dim-toast.ok {
+    border-left-color: var(--ok);
+}
+body.science.dark .dim-toast.warn,
+body.science.dark .dim-toast.danger {
+    border-left-color: var(--warn);
 }
 @keyframes dim-toast-in {
     from {
@@ -1085,127 +1589,57 @@ button.dim-badge:hover {
     }
 }
 
-/* filled status badges (e.g. ARMED); later in the file than .dim-badge.danger so they win */
-.dim-badge.solid.danger {
-    color: var(--danger-fg);
-    background: var(--danger);
-    border-color: var(--danger);
-}
-.dim-badge.solid.ok {
-    color: var(--primary-fg);
-    background: var(--ok);
-    border-color: var(--ok);
-}
-.dim-badge.solid.warn {
-    color: var(--primary-fg);
-    background: var(--warn);
-    border-color: var(--warn);
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.001ms !important;
+        transition-duration: 0.001ms !important;
+    }
 }
 
-/* ───────────────────────── palette layer: the mockup's type + surfaces (v0.8.0) ───────────────────────── */
-
-body.science {
-    font-family: var(--sans);
-    font-size: 13.5px;
-    letter-spacing: 0;
+/* Scrollbars: thin, transparent track (Portal `scrollbar-color:rgba(255,255,255,.18) transparent`) */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(32, 33, 31, 0.18) transparent;
 }
-::selection {
-    background: color-mix(in srgb, var(--primary) 20%, transparent);
+body.science.dark * {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
 
-/* display: Instrument Serif on paper, Michroma in the Portal */
-.dim-h1 {
-    font-family: var(--display);
-    font-weight: 400;
-    font-size: 34px;
-    letter-spacing: -0.01em;
-}
-body.science.dark .dim-h1 {
-    font-size: 20px;
-    letter-spacing: 0.08em;
-}
+/* ───────────────────────── the in-app Portal / Research toggle (theme.js mountThemeToggle) ───────────────────────── */
 
-/* section headers + micro-labels: Plex Mono, uppercase, tracked; headers in the accent blue */
-.dim-h2,
-.dim-card-title {
-    font: 500 10.5px var(--mono);
-    letter-spacing: var(--track-label);
-    text-transform: uppercase;
-    color: var(--primary);
-}
-.dim-h3,
-.dim-label {
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.12em;
-}
-body.science.dark .dim-h2,
-body.science.dark .dim-card-title {
-    font-family: var(--sans);
-    font-weight: 500;
-    font-size: 11px;
-}
-
-/* buttons, badges: sentence case, no wide tracking (the mockup's professional pass) */
-.dim-btn {
-    font-size: 12.5px;
-    letter-spacing: var(--track-btn);
-    text-transform: none;
-    padding: 8px 16px;
-}
-.dim-btn.sm {
-    font-size: 11.5px;
-    padding: 5px 11px;
-}
-.dim-badge {
-    font-family: var(--mono);
-    font-weight: 500;
-    letter-spacing: 0.06em;
-}
-
-/* hairline cards: white on paper; translucent near-black over the void */
-.dim-panel,
-.dim-card {
-    border-color: var(--border);
-    box-shadow: var(--shadow-sm);
-}
-body.science.dark .dim-panel,
-body.science.dark .dim-card {
-    border-color: var(--hair);
-    box-shadow: var(--shadow);
-}
-
-/* data is mono */
-.dim-mono,
-code,
-kbd,
-samp {
-    font-family: var(--mono);
-}
-
-/* the in-app Portal / Research toggle (theme.js mountThemeToggle) */
+/* a small control: the doc's chip in Research (white pill), the doc's window-control button in the Portal */
 .dim-theme-toggle {
     appearance: none;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font: 500 11px var(--mono);
-    letter-spacing: 0.06em;
+    font: 500 11.5px/1.4 var(--hud);
+    letter-spacing: 0;
     color: var(--muted-fg);
-    background: transparent;
+    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 3px 10px;
+    border-radius: var(--radius-pill);
+    padding: 2px 10px;
+    white-space: nowrap;
 }
 .dim-theme-toggle:hover {
     color: var(--fg);
-    border-color: var(--primary);
+    border-color: var(--border-strong);
 }
 .dim-theme-toggle::before {
     content: "";
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
+    width: 7px;
+    height: 7px;
+    border-radius: var(--radius-round);
     background: var(--primary);
+}
+body.science.dark .dim-theme-toggle {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    background: transparent;
+    padding: 3px 9px;
+}
+body.science.dark .dim-theme-toggle::before {
+    box-shadow: 0 0 6px var(--primary);
 }
