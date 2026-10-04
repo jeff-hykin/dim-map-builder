@@ -9,6 +9,9 @@
 import * as THREE from "three"
 import { gradientTexture } from "./gradients.ts"
 
+/** What far points fog toward: the page behind the canvas (the viewer sets it from the theme's --scene-bg). Shared by every material. */
+export const POINT_BACKGROUND = new THREE.Color(0x05070d)
+
 /**
  * The point styles. Each is a shader path selected by `uStyle` (and a `#define` when its shading differs). Adding a style (EDL, splats, AO, ...) = one entry here + its branch in the shaders below; the settings
  * editor lists whatever is here.
@@ -230,7 +233,7 @@ export function makePointMaterial(pixelsPerMeter: { value: number }): THREE.Shad
             uLightWorld: { value: new THREE.Vector3() },
             uKeep: { value: 1 },
             uFog: { value: new THREE.Vector2(10, 40) },
-            uBackground: { value: new THREE.Color(0x06090f) },
+            uBackground: { value: POINT_BACKGROUND },
             uCubeShade: { value: 0 },
             uClipMin: { value: new THREE.Vector3(-1e9, -1e9, -1e9) },
             uClipMax: { value: new THREE.Vector3(1e9, 1e9, 1e9) },

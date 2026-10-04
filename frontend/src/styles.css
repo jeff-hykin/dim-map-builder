@@ -1,6 +1,6 @@
 /* Map Builder: layout, plus the few looks the shared theme (theme.css, the dimOS "Science" theme) has no class for:
-   the orbs, the edit palette, the two-handle slider, the slicer's dial. Colors are the theme's tokens only; light/dark
-   comes from dim-theme.js (body.science / body.science.dark). Components use the theme's .dim-* classes. */
+   the orbs, the edit palette, the two-handle slider, the slicer's dial. Colors are the theme's tokens only; Portal (dark) / Research
+   (light) comes from dim-app theme.js (body.science / body.science.dark). Components use the theme's .dim-* classes. */
 
 html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 body { font-size: 12px; line-height: 1.45; }

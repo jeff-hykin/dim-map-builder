@@ -25,6 +25,8 @@ import { Icon } from "./ui/Icon.tsx"
 import { useUploads, isActive } from "./ui/useUploads.ts"
 import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
 import { LoginDialog } from "./ui/LoginDialog.tsx"
+import { ThemeToggle } from "./ThemeToggle.tsx"
+import { notify } from "./dim-app/notify.js"
 
 const MODES: { id: ViewMode; label: string }[] = [
     { id: "3d", label: "3D" },
@@ -79,6 +81,26 @@ export function App() {
     )
 
     const uploads = useUploads(say)
+
+    // a save job this page watched run → a Desktop notification when it finishes (⌘S, the Save panel or the agent)
+    const watchedSave = useRef<number | null>(null)
+    useEffect(() => {
+        const job = session?.job
+        if (!session || job?.kind !== "save") {
+            return
+        }
+        if (job.state === "running") {
+            watchedSave.current = job.id
+        } else if (watchedSave.current === job.id) {
+            watchedSave.current = null
+            if (job.state === "done") {
+                notify({ title: "Map saved", body: `Saved into ${session.name}`, kind: "ok" })
+            } else if (job.state === "failed") {
+                notify({ title: "Map save failed", body: job.error ?? `Couldn't save into ${session.name}`, kind: "warn" })
+            }
+        }
+    }, [session])
+
 
     /** uploads the open recording to Dimensional cloud (the backend saves first if asked, then queues it in Desktop) */
     const uploadRecording = useCallback(
@@ -532,6 +554,7 @@ export function App() {
                         {activeUploads > 0 ? <span className="count" data-upload-count>{activeUploads}</span> : uploadFailed ? <Icon name="warn" /> : null}
                     </button>
                 )}
+                <ThemeToggle />
             </header>
             <section className="view" ref={viewBox}>
                 <div className="pane pane-3d" style={{ width: target[0] }}>

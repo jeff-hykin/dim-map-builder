@@ -1,157 +1,167 @@
+/* vendored from jeff-hykin/dim-app v0.8.0 (theme.css); edit it there, then copy */
 /*
-  DimOS UI theme — "Science" variant.
-  A professional, high-tech laboratory design system. Dark is the default look
-  (MemWorld's near-black navy, dimOS blue accent, mint for status); light remains.
+  dim-app theme (v0.8.0) — the dimOS Desktop mockup's two palettes for apps.
 
-  Same component API as the other themes (.dim-* classes). Light tokens sit on
-  :root; add `dark` to <body class="science"> (every dim app does) for dark mode.
-  Every color is a CSS variable — light values on :root, dark overrides on
-  body.science.dark — so components never hard-code a color.
+    Research (light, on :root)        warm paper, white hairline cards, one blue accent (#293ce4),
+                                      Instrument Serif display + IBM Plex Mono micro-labels
+    Portal   (dark, body.science.dark) void #05070d, ink #ece8f0, Dimensional blue #7cc8ec,
+                                      panels rgba(14,12,19,.78), hairlines rgba(255,255,255,.08), Inter + IBM Plex Mono
+
+  theme.js picks one: prefers-color-scheme (dark → Portal, light → Research), or the app's own saved choice
+  (localStorage "dim-app.theme:<app>"). It sets <body class="science [dark]"> and <html data-dim-theme="portal|research">.
+
+  Same component API as before (.dim-* classes). Every color is a CSS variable, so components never hard-code one.
 */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Michroma&display=swap");
 
 :root {
-    /* ── neutrals (light · warm pearl showroom) ──
-       Warm ivory rather than clinical white — the inside of a luxury cabin
-       in daylight: soft, expensive, a faint champagne warmth in every grey. */
-    --bg: oklch(0.985 0.0015 250);
-    --card: oklch(0.998 0.001 250);
-    --fg: oklch(0.24 0.006 262); /* neutral graphite */
-    --muted: oklch(0.963 0.0025 250);
-    --muted-fg: oklch(0.505 0.008 258);
-    --accent: oklch(0.955 0.004 250); /* hover surface */
-    --accent-fg: oklch(0.24 0.006 262);
-    --secondary: oklch(0.943 0.005 252); /* chip surface */
-    --secondary-fg: oklch(0.4 0.014 260);
-    --border: oklch(0.903 0.004 254);
-    --input: oklch(0.88 0.005 254);
+    /* ── Research neutrals: paper page, white cards, warm hairlines ── */
+    --bg: #f5f4ef;
+    --card: #ffffff;
+    --panel: #ffffff; /* floating panels over content */
+    --fg: #20211f;
+    --muted: #efeee8;
+    --muted-fg: #6b6a63;
+    --accent: #f0efe9; /* hover surface */
+    --accent-fg: #20211f;
+    --secondary: #f5f4ef; /* chip surface */
+    --secondary-fg: #3d3e3a;
+    --border: #e2e0d7;
+    --hair: #eae9e2;
+    --input: #e2e0d7;
 
-    /* ── dimOS blue is the accent (interactive + identity); green is status only ── */
-    --primary: #1f6fd6; /* dimOS blue */
-    --primary-hover: #185bb3;
-    --primary-soft: rgba(31, 111, 214, 0.14);
+    /* ── one blue accent; color otherwise reserved for status ── */
+    --primary: #293ce4;
+    --primary-hover: #1e2fc4;
+    --primary-soft: rgba(41, 60, 228, 0.08);
     --primary-fg: #ffffff;
-    --info: oklch(0.6 0.068 212); /* muted cyan, data / live */
-    --ok: oklch(0.58 0.092 158);
-    --warn: oklch(0.69 0.105 75); /* amber (status only) */
-    --danger: oklch(0.55 0.15 28);
-    --danger-fg: oklch(0.99 0.001 250);
-    --violet: oklch(0.52 0.09 292); /* tertiary */
-    --ring: #1f6fd6;
+    --info: #3a5bd9;
+    --ok: #2f9e5b;
+    --warn: #d97a1e;
+    --danger: #c8372d;
+    --danger-fg: #ffffff;
+    --violet: #6b6a63;
+    --ring: #293ce4;
 
-    /* ── type — a refined neutral grotesque, the way marque digital clusters set
-       text: Helvetica Neue / Neue Haas feel, with system fallbacks ── */
-    --sans: "Helvetica Neue", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-    --mono: ui-monospace, "SF Mono", "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
-    /* tracking scale — luxury sets labels wide and airy */
-    --track-label: 0.18em;
-    --track-btn: 0.12em;
+    /* ── type: Inter for UI, IBM Plex Mono for data + micro-labels, Instrument Serif for display ── */
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --display: "Instrument Serif", Georgia, serif;
+    --track-label: 0.14em;
+    --track-btn: 0.01em;
 
-    /* ── radius — crisp, engineered ── */
-    --radius: 0.375rem;
+    /* ── radius ── */
+    --radius: 6px;
     --radius-sm: calc(var(--radius) - 2px);
-    --radius-lg: calc(var(--radius) + 2px);
+    --radius-lg: 10px;
 
-    /* ── elevation — soft, cool-tinted ── */
-    --shadow-2xs: 0 1px 2px 0 oklch(0.5 0.05 260 / 0.04);
-    --shadow-xs: 0 1px 2px 0 oklch(0.5 0.05 260 / 0.06);
-    --shadow-sm: 0 1px 2px -1px oklch(0.5 0.05 260 / 0.08), 0 2px 6px -1px oklch(0.5 0.05 260 / 0.06);
-    --shadow: 0 1px 3px 0 oklch(0.5 0.05 260 / 0.08), 0 4px 12px -2px oklch(0.5 0.05 260 / 0.07);
-    --shadow-md: 0 2px 6px -1px oklch(0.5 0.05 260 / 0.1), 0 8px 20px -4px oklch(0.5 0.05 260 / 0.08);
-    --shadow-lg: 0 8px 30px -6px oklch(0.5 0.05 260 / 0.12);
+    /* ── elevation: the research site's soft paper shadow ── */
+    --shadow-2xs: 0 1px 2px rgba(32, 33, 31, 0.04);
+    --shadow-xs: 0 1px 2px rgba(32, 33, 31, 0.05);
+    --shadow-sm: 0 1px 2px rgba(32, 33, 31, 0.05), 0 4px 12px rgba(32, 33, 31, 0.04);
+    --shadow: 0 1px 2px rgba(32, 33, 31, 0.05), 0 8px 24px rgba(32, 33, 31, 0.06);
+    --shadow-md: 0 2px 6px rgba(32, 33, 31, 0.06), 0 12px 28px rgba(32, 33, 31, 0.08);
+    --shadow-lg: 0 8px 30px rgba(32, 33, 31, 0.12);
 
-    /* faint cool grid behind the page */
-    --grid-line: oklch(0.5 0.01 256 / 0.04);
-    --ring-soft: rgba(31, 111, 214, 0.25);
+    /* faint blue technical grid behind the page */
+    --grid-line: rgba(41, 60, 228, 0.045);
+    --ring-soft: rgba(41, 60, 228, 0.18);
     --glow: none;
 
-    /* ── code / syntax highlighting (traceback + log panels) ──
-       Light code well: a soft slate on the page, dark-on-light tokens. */
-    --code-bg: oklch(0.965 0.003 250);
-    --code-fg: oklch(0.30 0.008 260);
-    --code-line: oklch(0.46 0.01 258); /* dim monospace log text */
-    --code-kw: oklch(0.50 0.16 300); /* keywords — violet */
-    --code-str: oklch(0.52 0.11 150); /* strings — green */
-    --code-num: oklch(0.55 0.14 60); /* numbers — amber */
-    --code-com: oklch(0.62 0.01 260); /* comments — grey */
-    --code-loc: oklch(0.50 0.14 250); /* file:line link — blue */
-    --code-func: oklch(0.53 0.11 70); /* function name — bronze */
+    /* ── code / syntax (traceback + log panels) ── */
+    --code-bg: #f7f6f1;
+    --code-fg: #20211f;
+    --code-line: #55564f;
+    --code-kw: #6a3fc4;
+    --code-str: #2f7d4a;
+    --code-num: #b5651a;
+    --code-com: #8f8e86;
+    --code-loc: #293ce4;
+    --code-func: #9a5b13;
 
-    /* ── categorical palette (module dots, future charts) ── */
-    --cat-1: oklch(0.62 0.15 250);
-    --cat-2: oklch(0.62 0.10 190);
-    --cat-3: oklch(0.55 0.15 300);
-    --cat-4: oklch(0.62 0.14 60);
+    /* ── categorical palette (module dots, charts) ── */
+    --cat-1: #293ce4;
+    --cat-2: #2f9e5b;
+    --cat-3: #8a4fd8;
+    --cat-4: #d97a1e;
 
-    /* ── terminal (live ANSI console) — always dark in both themes, since the
-       ANSI 16-color palette assumes a dark background ── */
-    --term-bg: oklch(0.145 0.006 256);
-    --term-fg: oklch(0.87 0.012 250);
-    --term-dim: oklch(0.5 0.01 256);
+    /* ── 3D / canvas backgrounds ── */
+    --scene-bg: #f5f4ef;
+    --scene-grid: #dcdad0;
+    --scene-grid-major: #c8c6bb;
+
+    /* ── terminal (live ANSI console): dark in both themes, the ANSI palette assumes it ── */
+    --term-bg: #0e0c13;
+    --term-fg: #ece8f0;
+    --term-dim: #8e8898;
 }
 
 body.science.dark {
-    /* ── neutrals (dark · MemWorld HUD, matching dim-live-viewer) ──
-       Near-black navy page, slightly lifted panels, cool steel hairlines. */
+    /* ── Portal neutrals: the night void, near-black violet panels, white hairlines ── */
     color-scheme: dark;
-    --bg: #06090f;
-    --card: #0b1018;
-    --fg: #e6eef7;
-    --muted: #0e1520;
-    --muted-fg: #8fa3b8;
-    --accent: #142030; /* hover surface */
-    --accent-fg: #e6eef7;
-    --secondary: #0e1520; /* chip surface */
-    --secondary-fg: #b9c7d6;
-    --border: #22324a;
-    --input: #2a3d58;
+    --bg: #05070d;
+    --card: #0e0c13;
+    --panel: rgba(14, 12, 19, 0.78);
+    --fg: #ece8f0;
+    --muted: #0b0a10;
+    --muted-fg: #8e8898;
+    --accent: rgba(124, 200, 236, 0.08); /* hover surface */
+    --accent-fg: #ece8f0;
+    --secondary: rgba(255, 255, 255, 0.04); /* chip surface */
+    --secondary-fg: #b8b4c0;
+    --border: rgba(255, 255, 255, 0.1);
+    --hair: rgba(255, 255, 255, 0.08);
+    --input: rgba(255, 255, 255, 0.16);
 
-    /* dimOS blue accent (interactive + identity), mint only for status/success */
-    --primary: #4da3ff; /* dimOS blue */
-    --primary-hover: #7fc8ff;
-    --primary-soft: rgba(77, 163, 255, 0.16);
-    --primary-fg: #06090f;
-    --info: #7fc8ff;
-    --ok: #7af0a8;
-    --warn: #ffd166;
-    --danger: #ff5f6d;
-    --danger-fg: #06090f;
-    --violet: #b79cff;
-    --ring: #4da3ff;
+    /* Dimensional blue: the single accent */
+    --primary: #7cc8ec;
+    --primary-hover: #a5dbf3;
+    --primary-soft: rgba(124, 200, 236, 0.13);
+    --primary-fg: #05070d;
+    --info: #8fcfe0;
+    --ok: #8fd4a8;
+    --warn: #e8bf6a;
+    --danger: #f0707e;
+    --danger-fg: #05070d;
+    --violet: #9fb4d8;
+    --ring: #7cc8ec;
 
-    /* deep, neutral elevation */
-    --shadow-2xs: 0 1px 2px 0 rgba(0, 0, 0, 0.45);
-    --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.5);
+    --display: "Michroma", "Eurostile", "Arial Black", sans-serif;
+    --track-label: 0.2em;
+
+    --shadow-2xs: 0 1px 2px rgba(0, 0, 0, 0.45);
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-sm: 0 1px 2px -1px rgba(0, 0, 0, 0.6), 0 2px 8px -3px rgba(0, 0, 0, 0.55);
-    --shadow: 0 2px 6px -2px rgba(0, 0, 0, 0.6), 0 10px 30px -10px rgba(0, 0, 0, 0.65);
+    --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
     --shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.7);
     --shadow-lg: 0 12px 36px -10px rgba(0, 0, 0, 0.8);
 
-    /* faint sky grid + a soft blue focus ring */
-    --grid-line: rgba(127, 200, 255, 0.03);
-    --ring-soft: rgba(77, 163, 255, 0.24);
+    --grid-line: rgba(124, 200, 236, 0.03);
+    --ring-soft: rgba(124, 200, 236, 0.24);
     --glow: none;
 
-    /* ── code / syntax highlighting — deep well, luminous tokens ── */
-    --code-bg: #0e1520;
-    --code-fg: #e6eef7;
-    --code-line: #b9c7d6;
-    --code-kw: #c49cff; /* violet */
-    --code-str: #7af0a8; /* mint */
-    --code-num: #ffd166; /* amber */
-    --code-com: #5f7189; /* grey */
-    --code-loc: #7fc8ff; /* sky */
-    --code-func: #f2b880; /* bronze */
+    --code-bg: #0b0a10;
+    --code-fg: #ece8f0;
+    --code-line: #b8b4c0;
+    --code-kw: #c9a8f0;
+    --code-str: #8fd4a8;
+    --code-num: #e8bf6a;
+    --code-com: #6c6776;
+    --code-loc: #7cc8ec;
+    --code-func: #f2b880;
 
-    /* ── categorical palette (module dots, future charts) ── */
-    --cat-1: #7fc8ff;
-    --cat-2: #7af0a8;
-    --cat-3: #c49cff;
-    --cat-4: #ffd166;
+    --cat-1: #7cc8ec;
+    --cat-2: #8fd4a8;
+    --cat-3: #c9a8f0;
+    --cat-4: #e8bf6a;
 
-    /* ── terminal (live ANSI console) — dark in both themes ── */
-    --term-bg: #06090f;
-    --term-fg: #e6eef7;
-    --term-dim: #5f7189;
+    --scene-bg: #05070d;
+    --scene-grid: #1a1822;
+    --scene-grid-major: #2a2734;
+
+    --term-bg: #05070d;
+    --term-fg: #ece8f0;
+    --term-dim: #6c6776;
 }
 
 *,
@@ -946,14 +956,7 @@ body.science {
     background-clip: padding-box;
 }
 
-/* ───────────────────────── additions (component unification, 2026-10) ─────────────────────────
-   Appended to every app's copy of theme.css; merge into the Desktop shell's ui/src/assets/theme.css.
-
-   Light/dark: the shell stores the choice in localStorage "dimos.themeChoice" ("light" | "dark", missing = dark)
-   and toggles body.science.dark on its own page. Apps are same-origin iframes (/apps/<pkg>/), so each app runs
-   dim-theme.js, which reads that key and listens for the `storage` event (fired in every other same-origin
-   document, iframes included, when the shell writes it). No postMessage needed.
-*/
+/* ───────────────────────── additions (component unification, 2026-10) ───────────────────────── */
 
 /* axis colors (URDF Editor, viewers): tokens, not literals */
 :root {
@@ -1097,4 +1100,112 @@ button.dim-badge:hover {
     color: var(--primary-fg);
     background: var(--warn);
     border-color: var(--warn);
+}
+
+/* ───────────────────────── palette layer: the mockup's type + surfaces (v0.8.0) ───────────────────────── */
+
+body.science {
+    font-family: var(--sans);
+    font-size: 13.5px;
+    letter-spacing: 0;
+}
+::selection {
+    background: color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+/* display: Instrument Serif on paper, Michroma in the Portal */
+.dim-h1 {
+    font-family: var(--display);
+    font-weight: 400;
+    font-size: 34px;
+    letter-spacing: -0.01em;
+}
+body.science.dark .dim-h1 {
+    font-size: 20px;
+    letter-spacing: 0.08em;
+}
+
+/* section headers + micro-labels: Plex Mono, uppercase, tracked; headers in the accent blue */
+.dim-h2,
+.dim-card-title {
+    font: 500 10.5px var(--mono);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--primary);
+}
+.dim-h3,
+.dim-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+}
+body.science.dark .dim-h2,
+body.science.dark .dim-card-title {
+    font-family: var(--sans);
+    font-weight: 500;
+    font-size: 11px;
+}
+
+/* buttons, badges: sentence case, no wide tracking (the mockup's professional pass) */
+.dim-btn {
+    font-size: 12.5px;
+    letter-spacing: var(--track-btn);
+    text-transform: none;
+    padding: 8px 16px;
+}
+.dim-btn.sm {
+    font-size: 11.5px;
+    padding: 5px 11px;
+}
+.dim-badge {
+    font-family: var(--mono);
+    font-weight: 500;
+    letter-spacing: 0.06em;
+}
+
+/* hairline cards: white on paper; translucent near-black over the void */
+.dim-panel,
+.dim-card {
+    border-color: var(--border);
+    box-shadow: var(--shadow-sm);
+}
+body.science.dark .dim-panel,
+body.science.dark .dim-card {
+    border-color: var(--hair);
+    box-shadow: var(--shadow);
+}
+
+/* data is mono */
+.dim-mono,
+code,
+kbd,
+samp {
+    font-family: var(--mono);
+}
+
+/* the in-app Portal / Research toggle (theme.js mountThemeToggle) */
+.dim-theme-toggle {
+    appearance: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 500 11px var(--mono);
+    letter-spacing: 0.06em;
+    color: var(--muted-fg);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 10px;
+}
+.dim-theme-toggle:hover {
+    color: var(--fg);
+    border-color: var(--primary);
+}
+.dim-theme-toggle::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--primary);
 }

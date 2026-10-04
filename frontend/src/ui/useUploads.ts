@@ -44,8 +44,8 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
     const refresh = useCallback(async () => {
         try {
             const body = await uploadsApi.list()
-            setList(body.uploads)
-            setWaiting(body.waitingForLogin)
+            setList(body.uploads ?? []) // outside Desktop (no /dimos/uploads) the answer has no list
+            setWaiting(Boolean(body.waitingForLogin))
             setProblem(null)
         } catch (error) {
             setProblem((error as Error).message)
