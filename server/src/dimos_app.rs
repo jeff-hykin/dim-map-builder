@@ -18,6 +18,8 @@ pub struct DimosApp {
     pub dimos_dir: Option<String>,
     pub dimos_python: Option<String>,
     pub recordings_dir: Option<String>,
+    pub zenoh_namespace: Option<String>,
+    pub zenoh_prefix: Option<String>,
 }
 
 pub fn parse(json: &str) -> Result<DimosApp, serde_json::Error> {

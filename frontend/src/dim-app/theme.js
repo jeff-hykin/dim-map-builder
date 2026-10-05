@@ -1,7 +1,7 @@
 // dim-app theme: picks the app's palette and keeps it current.
 //
 //     import "./theme.css"   // (or <link rel="stylesheet" href=".../theme.css">)
-//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.9.5/theme.js"
+//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.10.1/theme.js"
 //     initTheme()                                   // body.science [+ .dark], html[data-dim-theme]
 //     mountThemeToggle(document.querySelector("header"))   // optional in-app Portal / Research toggle
 //     onThemeChange(({ dark }) => renderer.setClearColor(themeColors().sceneBg))

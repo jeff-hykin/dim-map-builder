@@ -8,12 +8,10 @@ use crate::routes::Routes;
 use crate::workspace::{Modify, Region, Workspace};
 use anyhow::Context;
 use axum::body::Bytes;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{FromRequest, Path, Query, Request, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use futures::{SinkExt, Stream, StreamExt};
 use mapping::voxels::Box3;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -180,12 +178,11 @@ pub fn routes() -> Routes<Arc<App>> {
         .endpoint("POST", "api/sessions/{id}/redo", "Redo the last undone edit.", with_id(json!({})), redo)
         .endpoint("POST", "api/sessions/{id}/save", "Write the map and every annotation into the recording file (a background job; a read-only recording is copied into the recordings folder first).", with_id(json!({})), save)
         .endpoint("POST", "api/sessions/{id}/upload", "Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /dimos/uploads shows progress; it waits for a login if there is none). saveFirst (default true) saves unsaved edits into it first.", with_id(json!({ "saveFirst": b("default true") })), upload)
-        // the page's plumbing: binary map data, its reports, the event socket
+        // the page's plumbing: binary map data, its reports (events reach it over zenoh: desktop::spawn_relay)
         .plumbing("GET", "api/sessions/{id}/points.bin", points)
         .plumbing("GET", "api/sessions/{id}/preview.bin", preview)
         .plumbing("PUT", "api/sessions/{id}/view", report_view)
         .plumbing("POST", "api/captures/{request}", capture)
-        .plumbing("GET", "api/events/ws", events_ws)
         .plumbing("GET", "agent.json", || async { Json(routes().manifest(DESCRIPTION)) })
 }
 
@@ -739,47 +736,6 @@ async fn capture(State(app): State<Arc<App>>, Path(request): Path<u64>, body: By
     Ok(Json(json!({ "delivered": app.deliver_capture(request, image) })))
 }
 
-/// every server event from now on, as JSON; a subscriber that falls behind skips what it missed
-fn event_stream(app: &App) -> impl Stream<Item = Value> {
-    futures::stream::unfold(app.events.subscribe(), |mut receiver| async move {
-        loop {
-            match receiver.recv().await {
-                Ok(event) => return Some((event, receiver)),
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(_) => return None,
-            }
-        }
-    })
-}
-
-/// the standard dimOS app event channel (dim-app events.js): one JSON event per text message
-async fn events_ws(State(app): State<Arc<App>>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| forward_events(socket, app))
-}
-
-async fn forward_events(socket: WebSocket, app: Arc<App>) {
-    let (mut sender, mut receiver) = socket.split();
-    let mut events = Box::pin(event_stream(&app));
-    loop {
-        tokio::select! {
-            event = events.next() => match event {
-                Some(event) => {
-                    if sender.send(Message::Text(event.to_string().into())).await.is_err() {
-                        return;
-                    }
-                }
-                None => break,
-            },
-            // the page never sends anything meaningful; this only notices it going away
-            incoming = receiver.next() => match incoming {
-                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
-                Some(Ok(_)) => {}
-            },
-        }
-    }
-    let _ = sender.send(Message::Close(None)).await;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -901,25 +857,5 @@ mod tests {
         let (status, body) = call(&router, "GET", "/api/view?screenshot=false", None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body.get("images").is_none());
-    }
-
-    #[tokio::test]
-    async fn websocket_carries_each_event_as_one_json_message() {
-        let (app, router, _dir) = app();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/api/events/ws")).await.unwrap();
-        let received = async {
-            loop {
-                app.emit(json!({ "type": "session", "id": "x", "revision": 3 }));
-                if let Ok(message) = tokio::time::timeout(std::time::Duration::from_millis(100), socket.next()).await {
-                    return message;
-                }
-            }
-        };
-        let message = received.await.unwrap().unwrap();
-        let event: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
-        assert_eq!(event, json!({ "type": "session", "id": "x", "revision": 3 }));
     }
 }

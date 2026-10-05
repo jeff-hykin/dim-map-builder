@@ -1,7 +1,9 @@
 // Log in to Dimensional cloud: Desktop starts dimos's device login, we show the page to open and the code to enter
-// there (from any signed-in browser: this laptop, a phone), and wait until it's approved.
+// there (from any signed-in browser: this laptop, a phone), and wait until it's approved: the dimos server says so on
+// its zenoh event <ns>/dimos/events/cloud-login (the page's one zenoh-web connection; re-read after a reconnect).
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, type LoginState } from "../core/api.ts"
+import { getZenoh } from "../dim-app/zenoh.js"
 import { Icon } from "./Icon.tsx"
 
 function Copy({ text, action, label }: { text: string; action: string; label: string }) {
@@ -64,16 +66,21 @@ export function LoginDialog({ reason, onApproved, onClose }: { reason: string | 
         if (!waiting || problem) {
             return
         }
-        const timer = window.setInterval(() => {
-            setNow(Date.now())
+        const reread = () =>
             cloud
                 .loginState()
                 .then(setLogin)
                 .catch((error) => setProblem((error as Error).message))
-        }, 1500)
+        const zenoh = getZenoh()
+        const offs = [
+            zenoh.subscribeDimos<{ login?: LoginState }>("cloud-login", (event) => (event.login ? setLogin(event.login) : reread())),
+            zenoh.onReconnect(reread),
+        ]
+        reread() // anything that happened before the subscription was up
+        // the countdown to the code's expiry (a clock, not a poll)
         const clock = window.setInterval(() => setNow(Date.now()), 1000)
         return () => {
-            window.clearInterval(timer)
+            offs.forEach((off) => off())
             window.clearInterval(clock)
         }
     }, [waiting, problem])

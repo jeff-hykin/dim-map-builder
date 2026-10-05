@@ -82,6 +82,10 @@ async fn main() -> Result<()> {
     eprintln!("map builder: page {}, sessions {}, recordings {}", frontend.display(), data.display(), recordings.display());
     let state = app::App::new(data, recordings);
     let _ = state.desktop_url.set(args.desktop_url.clone());
+    match dimos_app::get().and_then(|app| app.name.clone()) {
+        Some(name) if !args.desktop_url.is_empty() => desktop::spawn_relay(state.clone(), args.desktop_url.clone(), name),
+        _ => eprintln!("map builder: no Desktop URL or app name (DIMOS_APP): events reach no page"),
+    }
     let router = api::routes()
         .router
         .with_state(state.clone())

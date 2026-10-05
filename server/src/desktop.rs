@@ -27,6 +27,46 @@ pub async fn post(base: &str, path: &str, body: &Value) -> Result<Value> {
     Ok(value)
 }
 
+/// Backend → page (Desktop's docs/events.md): forwards every event the app emits to Desktop's relay,
+/// `POST <desktopUrl>/desktop/frontend/<name>/events`, which publishes it on `<ns>/apps/<name>/frontend/events` for the
+/// page's zenoh-web connection (dim-app's appEvents). One task, one POST at a time, so events arrive in order; a failure
+/// is logged once per message and never stops it.
+pub fn spawn_relay(app: std::sync::Arc<crate::app::App>, desktop_url: String, name: String) {
+    let path = relay_path(&name, "events");
+    let mut receiver = app.events.subscribe();
+    drop(app);
+    tokio::spawn(async move {
+        let mut warned = std::collections::HashSet::new();
+        loop {
+            let event = match receiver.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("relay: {n} events dropped (Desktop slow)");
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            if let Err(error) = post(&desktop_url, &path, &event).await {
+                if warned.insert(error.to_string()) {
+                    eprintln!("relay: POST {path}: {error}");
+                }
+            }
+        }
+    });
+}
+
+/// `/desktop/frontend/<name>/<topic>`, the name percent-encoded
+pub fn relay_path(name: &str, topic: &str) -> String {
+    let name: String = name
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    format!("/desktop/frontend/{name}/{topic}")
+}
+
 /// (status, body) of an HTTP/1.1 response, with a chunked body put back together.
 fn parse_response(raw: &[u8]) -> Result<(u16, Vec<u8>)> {
     let split = raw.windows(4).position(|w| w == b"\r\n\r\n").context("not an HTTP response")?;
@@ -53,6 +93,37 @@ fn parse_response(raw: &[u8]) -> Result<(u16, Vec<u8>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_paths() {
+        assert_eq!(relay_path("dim-map-builder", "events"), "/desktop/frontend/dim-map-builder/events");
+        assert_eq!(relay_path("a b", "events"), "/desktop/frontend/a%20b/events");
+    }
+
+    #[tokio::test]
+    async fn relay_posts_each_event_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::app::App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        spawn_relay(app.clone(), url, "maps".into());
+        for n in 0..3 {
+            app.emit(serde_json::json!({ "type": "session", "n": n }));
+        }
+        for n in 0..3 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !String::from_utf8_lossy(&raw).contains("}") {
+                let read = stream.read(&mut buf).await.unwrap();
+                raw.extend_from_slice(&buf[..read]);
+            }
+            let text = String::from_utf8_lossy(&raw).to_string();
+            assert!(text.starts_with("POST /desktop/frontend/maps/events HTTP/1.1"), "{text}");
+            assert!(text.ends_with(&format!("{{\"n\":{n},\"type\":\"session\"}}")), "{text}");
+            stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 11\r\n\r\n{\"ok\":true}").await.unwrap();
+        }
+    }
 
     #[test]
     fn plain_and_chunked_bodies() {

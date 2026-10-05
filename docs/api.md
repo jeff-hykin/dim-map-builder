@@ -48,8 +48,10 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 The page's plumbing, not actions (not in agent.json): `GET api/sessions/{id}/points.bin` (f32 xyz of the visible
 voxels), `GET api/sessions/{id}/preview.bin` (the raw recording at a glance; 202 while it's read), `PUT
 api/sessions/{id}/view` (the page reports its camera and UI state, saved with the session), `POST api/captures/{n}` (the
-page answering a screenshot request), and `GET api/events/ws` (one JSON event per message: `job`, `session`, `preview`,
-`opened`, `discarded`, `ui`, `setView`, `capture`, `upload`).
+page answering a screenshot request). Events reach the page over zenoh (Desktop's docs/events.md): the server POSTs each
+to Desktop's relay (`/desktop/frontend/<name>/events`), which publishes it on `<ns>/apps/<name>/frontend/events`, and
+the page hears it on its one zenoh-web connection (dim-app's appEvents), in order: `job`, `session`, `preview`,
+`opened`, `discarded`, `ui`, `setView`, `capture`, `upload`. After that connection comes back the page re-reads.
 
 Jobs: `{ id, kind: "build" | "preview" | "save", state: "running" | "done" | "failed" | "cancelled", progress: { stage,
 stageIndex, stageCount, done, total, note }, fraction, elapsed, etaSeconds, error }`.
@@ -114,10 +116,11 @@ type Upload = {
   login resumes the queue by itself. `errorCode: "not_logged_in"` on a failed item (e.g. a key revoked mid-upload) gets
   a Log in button beside Retry.
 - Upload button: checks `GET /dimos/cloud/account` first; not logged in → the login dialog (open the URL, enter the
-  code, polled every 1.5 s), then `POST api/sessions/{id}/upload`. Unsaved edits → "Save, then upload" (the backend
+  code; approval arrives as the dimos server's `cloud-login` zenoh event), then `POST api/sessions/{id}/upload`. Unsaved edits → "Save, then upload" (the backend
   waits for the save job, then queues it) or "Upload as last saved".
-- The page polls `GET /dimos/uploads` every second while anything is active or the drawer is open, every 10 s otherwise
-  (Desktop also pushes `{type: "upload"}` on `/dimos/events`; the page doesn't hold that SSE connection).
+- The page reads `GET /dimos/uploads` once, then follows the dimos server's zenoh events (`<ns>/dimos/events/upload`
+  carries the whole upload, progress included; `uploads` and `upload-removed` make it re-read), and re-reads after its
+  zenoh-web connection comes back. No polling.
 - A 404 / 405 from these means a Desktop from before them: the page says it needs a newer Desktop.
 - Page errors go to Desktop's error feed (`POST ../../api/errors`, dim-app `errors.js`) for its agent.
 

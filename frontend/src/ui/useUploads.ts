@@ -1,7 +1,9 @@
-// Uploads to Dimensional cloud: Desktop's queue (../../dimos/uploads), polled every second while anything is queued or
-// uploading or the panel is open (every 10 s otherwise, so uploads the agent starts show up too), plus the login flow.
+// Uploads to Dimensional cloud: Desktop's queue (../../dimos/uploads), read once and again whenever the dimos server says
+// it changed (its zenoh events <ns>/dimos/events/upload, uploads, upload-removed, on the page's one zenoh-web
+// connection; also after that connection comes back), so uploads the agent starts show up too; plus the login flow.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, uploads as uploadsApi, type CloudAccount, type Upload } from "../core/api.ts"
+import { getZenoh } from "../dim-app/zenoh.js"
 
 export interface Uploads {
     list: Upload[]
@@ -52,12 +54,32 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
         }
     }, [])
 
-    const active = list.some(isActive)
     useEffect(() => {
         refresh()
-        const timer = window.setInterval(refresh, active || panelOpen ? 1000 : 10000)
-        return () => window.clearInterval(timer)
-    }, [refresh, active, panelOpen])
+        const zenoh = getZenoh()
+        // an `upload` event carries the whole upload (progress included): apply it; the others say "re-read"
+        let timer: number | undefined
+        const reread = () => {
+            window.clearTimeout(timer)
+            timer = window.setTimeout(refresh, 100)
+        }
+        const offs = [
+            zenoh.subscribeDimos<{ upload?: Upload }>("upload", (event) => {
+                const upload = event.upload
+                if (!upload?.id) {
+                    return reread()
+                }
+                setList((list) => (list.some((u) => u.id === upload.id) ? list.map((u) => (u.id === upload.id ? upload : u)) : [...list, upload]))
+            }),
+            zenoh.subscribeDimos("uploads", reread),
+            zenoh.subscribeDimos("upload-removed", reread),
+            zenoh.onReconnect(reread),
+        ]
+        return () => {
+            window.clearTimeout(timer)
+            offs.forEach((off) => off())
+        }
+    }, [refresh])
 
     const refreshAccount = useCallback(async () => {
         try {
