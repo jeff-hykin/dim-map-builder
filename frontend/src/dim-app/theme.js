@@ -1,7 +1,7 @@
 // dim-app theme: picks the app's palette and keeps it current.
 //
 //     import "./theme.css"   // (or <link rel="stylesheet" href=".../theme.css">)
-//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.11.2/theme.js"
+//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.12.0/theme.js"
 //     initTheme()                                   // body.science [+ .dark], html[data-dim-theme]
 //     mountThemeToggle(document.querySelector("header"))   // optional in-app Portal / Research toggle
 //     onThemeChange(({ dark }) => renderer.setClearColor(themeColors().sceneBg))
@@ -136,7 +136,27 @@ export function initTheme() {
         }
     }
     apply()
+    signalReady()
     return themeName()
+}
+
+let readySent = false
+/** Tells Desktop (the page around an app's frame) that the app has painted in its theme, so the shell fades the frame
+ * in now instead of waiting for the frame's load event: `{type: "dimos-ready"}`, once, two frames after initTheme(). */
+function signalReady() {
+    if (readySent || globalThis.parent === globalThis.self) {
+        return
+    }
+    readySent = true
+    requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+            try {
+                parent.postMessage({ type: "dimos-ready" }, location.origin)
+            } catch {
+                // not Desktop's origin: nothing to tell
+            }
+        })
+    )
 }
 
 const INSET_SIDES = ["top", "bottom", "left", "right"]
@@ -181,7 +201,9 @@ export function initInsets() {
 /** The current insets in px, `{ top, bottom, left, right }` (all 0 outside Desktop). */
 export function insets() {
     const style = document.documentElement.style
-    return Object.fromEntries(INSET_SIDES.map((side) => [side, parseFloat(style.getPropertyValue(`--dim-inset-${side}`)) || 0]))
+    return Object.fromEntries(
+        INSET_SIDES.map((side) => [side, parseFloat(style.getPropertyValue(`--dim-inset-${side}`)) || 0]),
+    )
 }
 
 /** Saves this app's choice ("dark" | "light" | "auto") and applies it. */

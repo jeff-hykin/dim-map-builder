@@ -2,6 +2,41 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
+        <!-- dim-app first-paint (dim-app vendor.js keeps this block current): the theme's page color before any CSS or JS
+             loads, so the app never flashes white. Portal (dark) #05070d, Research (light) paper #f5f4ef; the OS preference,
+             or the app's own saved choice (localStorage "dim-app.theme:<app>"), as theme.js picks. -->
+        <style>
+            html {
+                background: #05070d;
+                color-scheme: dark;
+            }
+            @media (prefers-color-scheme: light) {
+                html {
+                    background: #f5f4ef;
+                    color-scheme: light;
+                }
+            }
+            html[data-dim-first-paint="dark"] {
+                background: #05070d;
+                color-scheme: dark;
+            }
+            html[data-dim-first-paint="light"] {
+                background: #f5f4ef;
+                color-scheme: light;
+            }
+        </style>
+        <script>
+            try {
+                const app = (location.pathname.match(/^\/apps\/([^/]+)/) || [])[1] || "app"
+                const choice = localStorage.getItem("dim-app.theme:" + decodeURIComponent(app))
+                if (choice === "dark" || choice === "light") {
+                    document.documentElement.dataset.dimFirstPaint = choice
+                }
+            } catch {
+                // storage unavailable: the OS preference
+            }
+        </script>
+        <!-- /dim-app first-paint -->
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="color-scheme" content="light dark" />
         <link rel="icon" href="./icon.svg" />
