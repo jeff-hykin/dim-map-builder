@@ -601,8 +601,12 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 body = { tool: "straighten", floor: storey, from, to, width: state.band, thickness: state.thickness, ...reach }
             }
             modifyTool.update({ busy: true })
-            await run(api.modify(session.id, body), (r) => `${r.label}: ${r.changed.toLocaleString()} voxels changed (⌘Z undoes)`)
+            const result = await run(api.modify(session.id, body), (r) => `${r.label}: ${r.changed.toLocaleString()} voxels changed (⌘Z undoes)`)
             modifyTool.update({ busy: false })
+            // the edit shows now, not when (or if) the session event arrives
+            if (result?.changed) {
+                await current().refresh()
+            }
         }
         const down = (event: MouseEvent) => {
             const [x, y] = local(event)

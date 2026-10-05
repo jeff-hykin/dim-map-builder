@@ -7,7 +7,7 @@ import type { Context } from "./context.ts"
 import { modifyTool } from "./tools.ts"
 
 const ABOUT: Record<string, string> = {
-    erase: "Brush away what stands on the floor: a couch, a person, clutter. The floor under it is filled in from the floor around.",
+    erase: "Brush away what stands on the floor: a couch, a person, clutter, a lone speck. One stroke takes everything under the brush; the floor stays and nothing is added.",
     brush: "Brush voxels onto the floor, up to the height below.",
     line: "Drag a straight line of voxels (a wall the robot should see).",
     straighten: "Drag along a noisy wall. Inside the band you drag, it becomes one straight slab of the wall's own thickness; specks, fringe and doubled scans there go. Nothing outside the band changes.",
@@ -45,7 +45,7 @@ export function ModifyPanel({ context }: { context: Context }) {
                         <input type="checkbox" checked={state.fullColumn} onChange={(event) => modifyTool.update({ fullColumn: event.target.checked })} data-modify="fullColumn" />
                         full column
                     </label>
-                    <div className="hint">Erases from one voxel over the local floor up to {reachText}.</div>
+                    <div className="hint">Erases everything over the local floor up to {reachText}.</div>
                 </>
             )}
             {(tool === "brush" || tool === "line") && (

@@ -186,7 +186,7 @@ export function App() {
     )
 
     /** reloads the session summary, and the map / paths when they changed */
-    const refresh = useCallback(async () => {
+    const refreshOnce = useCallback(async () => {
         const current = sessionRef.current
         if (!current || !scene) {
             return
@@ -218,6 +218,27 @@ export function App() {
             scene.setSlice(fresh.annotations.slice ?? null)
         }
     }, [scene])
+    /** one refresh at a time: a call while one runs makes one more run after it (a stroke's own refresh and its
+     * session event then fetch the map once, not twice) */
+    const refreshing = useRef<{ running: Promise<void> | null; again: boolean }>({ running: null, again: false })
+    const refresh = useCallback(async (): Promise<void> => {
+        const state = refreshing.current
+        if (state.running) {
+            state.again = true
+            return state.running
+        }
+        state.running = (async () => {
+            try {
+                do {
+                    state.again = false
+                    await refreshOnce()
+                } while (state.again)
+            } finally {
+                state.running = null
+            }
+        })()
+        return state.running
+    }, [refreshOnce])
 
     const adopt = useCallback(
         async (fresh: Session) => {
