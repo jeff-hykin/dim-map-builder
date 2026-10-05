@@ -54,7 +54,7 @@ page answering a screenshot request), and `GET api/events/ws` (one JSON event pe
 Jobs: `{ id, kind: "build" | "preview" | "save", state: "running" | "done" | "failed" | "cancelled", progress: { stage,
 stageIndex, stageCount, done, total, note }, fraction, elapsed, etaSeconds, error }`.
 
-Sessions are autosaved under `$DIMOS_APP_DATA/sessions/<id>/` (`session.json`, `map.bin`, `removed.bin`) on every change.
+Sessions are autosaved under `<dataDir>/sessions/<id>/` (the app data dir in Desktop's `DIMOS_APP`) (`session.json`, `map.bin`, `removed.bin`) on every change.
 
 ## How to box an object well
 

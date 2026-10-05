@@ -1,4 +1,4 @@
-//! Calls to Desktop's own HTTP API (`--desktop-url`, e.g. `http://127.0.0.1:7077`): a plain HTTP/1.1 request on
+//! Calls to Desktop's own HTTP API (DIMOS_APP's `desktopUrl`, e.g. `http://127.0.0.1:7077`): a plain HTTP/1.1 request on
 //! loopback, enough for its JSON endpoints, so the server needs no HTTP client library.
 use anyhow::{bail, Context, Result};
 use serde_json::Value;

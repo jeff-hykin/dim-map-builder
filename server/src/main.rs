@@ -4,6 +4,7 @@
 mod api;
 mod app;
 mod desktop;
+mod dimos_app;
 mod persist;
 mod probe;
 mod routes;
@@ -17,7 +18,8 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone)]
 #[command(about = "Map Editor backend: build, clean, annotate and save maps from dimos recordings")]
 pub struct Args {
-    /// serve HTTP on this unix socket (Desktop passes it)
+    /// serve HTTP on this unix socket (Desktop passes it in DIMOS_APP; these flags and env vars are the older
+    /// Desktops' way, and DIMOS_APP wins over them)
     #[arg(long, env = "DIMOS_APP_SOCKET")]
     socket: Option<PathBuf>,
     /// serve HTTP on this TCP port instead (development, tests)
@@ -36,7 +38,7 @@ pub struct Args {
     /// the built page (vite's dist); the nix wrapper sets it
     #[arg(long, env = "MAP_BUILDER_FRONTEND")]
     frontend: Option<PathBuf>,
-    /// where working sessions are autosaved [default: $DIMOS_APP_DATA, else ~/.dimos/data/apps/dim-map-builder]
+    /// where working sessions are autosaved [default: DIMOS_APP's dataDir, else ~/.dimos/data/apps/dim-map-builder]
     #[arg(long, env = "DIMOS_APP_DATA")]
     data: Option<PathBuf>,
     /// Desktop's shared recordings folder
@@ -53,7 +55,23 @@ fn dimos_home() -> PathBuf {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
+    if let Some(app) = dimos_app::get() {
+        let set = |to: &mut String, from: &Option<String>| {
+            if let Some(value) = from {
+                *to = value.clone();
+            }
+        };
+        let path = |from: &Option<String>| from.as_ref().map(PathBuf::from);
+        args.socket = path(&app.socket).or(args.socket);
+        args.data = path(&app.data_dir).or(args.data);
+        args.recordings = path(&app.recordings_dir).or(args.recordings);
+        set(&mut args.desktop_url, &app.desktop_url);
+        set(&mut args.zenoh_web_url, &app.zenoh_web_url);
+        set(&mut args.zenoh_connect, &app.zenoh_connect);
+        set(&mut args.dimos_dir, &app.dimos_dir);
+        set(&mut args.dimos_python, &app.dimos_python);
+    }
     if args.agent_json {
         println!("{}", serde_json::to_string_pretty(&api::routes().manifest(api::DESCRIPTION))?);
         return Ok(());

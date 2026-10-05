@@ -46,7 +46,7 @@ pub struct App {
     /// the session a page has open now (the agent's default target)
     pub active: Mutex<Option<String>>,
     captures: Mutex<HashMap<u64, oneshot::Sender<String>>>,
-    /// Desktop's own HTTP API (its upload queue), from --desktop-url
+    /// Desktop's own HTTP API (its upload queue), from DIMOS_APP's desktopUrl
     pub desktop_url: std::sync::OnceLock<String>,
     next_job: AtomicU64,
     next_capture: AtomicU64,

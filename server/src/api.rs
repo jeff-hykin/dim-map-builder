@@ -694,7 +694,7 @@ async fn upload(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body):
     };
     let desktop = app.desktop_url.get().cloned().unwrap_or_default();
     if desktop.is_empty() {
-        bail_api(StatusCode::SERVICE_UNAVAILABLE, "uploads go through dimOS Desktop's queue, and this server wasn't started by Desktop (no --desktop-url)")?;
+        bail_api(StatusCode::SERVICE_UNAVAILABLE, "uploads go through dimOS Desktop's queue, and this server wasn't started by Desktop (no desktopUrl in DIMOS_APP)")?;
     }
     if body["saveFirst"].as_bool().unwrap_or(true) && unsaved && built {
         let job = app.save(&id)?;
