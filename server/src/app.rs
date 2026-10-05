@@ -325,8 +325,12 @@ impl App {
             if workspace.discarded {
                 return Ok(());
             }
-            app.store.save_map(&workspace.session.id, &map)?;
             workspace.set_map(map);
+            // what was erased stays erased in the new map
+            let carried = workspace.carry_erased();
+            if let Some(map) = &workspace.map {
+                app.store.save_map(&workspace.session.id, map)?;
+            }
             let session = &mut workspace.session;
             session.build = Some(summary.clone());
             session.build_options = Some(options);
@@ -336,6 +340,9 @@ impl App {
             session.plans.clear();
             session.revision += 1;
             session.history.push(format!("Built the global map: {n} voxels, {} loop closures, {} scans in {:.0} s", summary.loops, summary.scans_used, summary.seconds));
+            if carried > 0 {
+                session.history.push(format!("Kept {carried} erased voxels erased"));
+            }
             app.store.save(session)?;
             app.emit(json!({ "type": "session", "id": session.id, "revision": session.revision }));
             Ok(())

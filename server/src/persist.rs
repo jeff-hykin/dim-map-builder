@@ -36,6 +36,9 @@ pub struct SavedState {
     /// floor index → stream / topic holding its OccupancyGrid
     pub floor_streams: Vec<String>,
     pub build: Option<BuildSummary>,
+    /// what the erase tool removed (recording frame): a rebuild after reopening keeps it erased
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub erased: Vec<[f32; 3]>,
 }
 
 pub const PREFIX: &str = "map/";
@@ -86,6 +89,7 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
         annotations: session.annotations.clone(),
         floor_streams: floors.iter().map(|(name, _)| name.clone()).collect(),
         build: session.build.clone(),
+        erased: session.erased.clone(),
     };
     let annotations_payload = lcm::encode_string(&serde_json::to_string(&state)?);
     let mut writes: Vec<(String, String, Vec<u8>)> = vec![
@@ -192,6 +196,7 @@ pub fn load(recording: &Recording, mut session: Session) -> Result<Option<(Sessi
     session.annotations = state.annotations;
     session.plans = plans;
     session.build = state.build;
+    session.erased = state.erased;
     session.saved_at = Some(state.saved_at);
     session.history.push(format!("Restored from the recording's saved map ({} voxels)", n));
     let map = MapData { voxel_size: state.voxel_size, points, normals, removed: vec![false; n], raw_path: Vec::new(), corrected_path, loops: Vec::new() };
@@ -226,6 +231,10 @@ mod tests {
         // Modify edits (added voxels), a polygon and a saved view go into the recording too
         let drawn = ws.modify(&crate::workspace::Modify::Draw { floor: 0, path: vec![[1.0, 1.0], [2.0, 1.0]], width: 0.1, height: 1.0 }).unwrap();
         assert!(drawn.changed > 100);
+        // an erase of part of the table: after reopening from the recording and building again, it stays erased
+        let table = ws.visible_points().1.into_iter().find(|p| (p[2] - 0.775).abs() < 0.01).unwrap();
+        let erased = ws.modify(&crate::workspace::Modify::Erase { floor: 0, path: vec![[table[0], table[1]]], radius: 0.2, reach: crate::workspace::ZEnd { z_end: Some(1.8), relative: true, full_column: false } }).unwrap();
+        assert!(erased.changed > 20, "{}", erased.changed);
         ws.add_prism(0, "desk", vec![[1.0, 3.0], [2.0, 3.0], [2.0, 4.0]], 0.8, None, "user").unwrap();
         ws.add_view(crate::session::SavedView { name: "walls".into(), floor: 0, follow: true, z_min: 0.1, z_max: 1.8, ..Default::default() }).unwrap();
         ws.set_slice(Some(crate::session::Slice { z_min: -0.2, z_max: 2.0, yaw: 0.3, x_min: 0.0, x_max: 5.0, y_min: 0.5, y_max: 6.0 })).unwrap();
@@ -247,6 +256,10 @@ mod tests {
         assert_eq!(restored.plans.len(), 1);
         assert_eq!(restored.plans[0].cells, ws.session.plans[0].cells);
         // the restored map, put through its transform, lands where the saved one was
+        assert_eq!(restored.erased, ws.session.erased);
+        let mut rebuilt = Workspace::new(restored.clone(), Some(map.clone()));
+        rebuilt.set_map(room_map());
+        assert_eq!(rebuilt.carry_erased(), erased.changed, "erased voxels stay erased in a rebuilt map");
         let again = Workspace::new(restored, Some(map));
         let (_, a, _) = again.visible_points();
         let (_, b, _) = ws.visible_points();

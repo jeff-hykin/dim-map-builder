@@ -138,31 +138,101 @@ pub(crate) fn column_floor(surfaces: &AHashSet<Key>, column: (i32, i32), voxel: 
     estimate
 }
 
-/// Erase: every voxel in the stroke's columns from one voxel over the local floor up to `reach`, then a floor voxel
-/// in each stroked column that has none, at the local floor's height (so an erased couch leaves floor, not a hole).
+/// How far under the local floor an erase reaches (a speck sunk into the floor goes, what's under the floor stays).
+const FLOOR_DEPTH: f32 = 0.15;
+/// How far from the floor model's estimate a column's own floor may be (the page's 2D view searches as far).
+const FLOOR_SEARCH: f32 = 0.3;
+
+/// Erase: one stroke removes every voxel in the columns the brush touches (a column's center within `radius` plus
+/// half a voxel of the stroke, and the column under each stroke point, so a click always takes the voxel under it)
+/// from just under the local floor (`FLOOR_DEPTH`, never under `reach.bottom`, the storey's band) up to `reach.top`
+/// over the local floor (the slice's z-end), except the column's floor: its floor voxel and what is under it stay.
+/// A column's floor is what the page's 2D view takes as its floor (frontend `columnFloors`: the highest voxel within
+/// `FLOOR_SEARCH` of the floor model with 7 of its 3 x 3 columns occupied at that height and at most 3 just above), else
+/// the up-facing voxel nearest the model's estimate that is part of a horizontal sheet (4 of its 8 neighbouring columns
+/// occupied within a voxel of its height). Where neither is found, a voxel less than a voxel over the model's floor
+/// with company (3 of its 8 neighbouring columns occupied within a voxel of its height) stays: the floor itself.
+/// Anything else goes: a lone speck at floor height, clutter where no floor was seen. Where `floor_at` has no estimate
+/// the column is cleared from `reach.bottom` to `reach.top` (the server passes the storey's level as the estimate
+/// there). What counts as a floor depends on the neighbours, so this repeats until nothing more goes: a second stroke
+/// over the same spot finds (almost) nothing left. Erase never adds a voxel.
 pub fn erase(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Stroke, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
-    let columns: AHashSet<(i32, i32)> = stroke.columns(voxel).into_iter().collect();
+    // what counts as a column's floor depends on its neighbours: once clutter next to it is gone, a voxel that looked
+    // like a floor (a top surface) may stop being one, and the page would show it. Repeat until nothing more goes, so
+    // one stroke leaves what a second one would.
+    let mut removed: AHashSet<u32> = AHashSet::new();
+    let original: AHashSet<Key> = points.iter().map(|p| key_of(*p, voxel)).collect();
+    let company = |key: Key| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| (*dx, *dy) != (0, 0) && (-1..=1).any(|dz| original.contains(&(key.0 + dx, key.1 + dy, key.2 + dz)))).count();
+    for _ in 0..8 {
+        let keep: Vec<u32> = (0..points.len() as u32).filter(|i| !removed.contains(i)).collect();
+        let kept_points: Vec<[f32; 3]> = keep.iter().map(|i| points[*i as usize]).collect();
+        let kept_normals: Vec<[f32; 3]> = keep.iter().map(|i| normals[*i as usize]).collect();
+        let pass = erase_once(&kept_points, &kept_normals, voxel, stroke, &floor_at, reach, &company);
+        if pass.remove.is_empty() {
+            break;
+        }
+        removed.extend(pass.remove.iter().map(|i| keep[*i as usize]));
+    }
+    let mut edit = Edit { remove: removed.into_iter().collect(), ..Default::default() };
+    edit.remove.sort_unstable();
+    edit
+}
+
+fn erase_once(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Stroke, floor_at: &impl Fn(f32, f32) -> Option<f32>, reach: Reach, company: &impl Fn(Key) -> usize) -> Edit {
+    let touching = Stroke { path: stroke.path.clone(), radius: stroke.radius + voxel * 0.5 };
+    let mut columns: AHashSet<(i32, i32)> = touching.columns(voxel).into_iter().collect();
+    columns.extend(stroke.path.iter().map(|p| ((p[0] / voxel).floor() as i32, (p[1] / voxel).floor() as i32)));
     let members = by_column(points, voxel, &columns);
-    let surfaces = surfaces(points, normals, voxel, &columns);
+    // every voxel in and one column around the brushed ones, to tell a floor from a speck
+    let around: AHashSet<(i32, i32)> = columns.iter().flat_map(|c| (-1..=1).flat_map(move |dx| (-1..=1).map(move |dy| (c.0 + dx, c.1 + dy)))).collect();
+    let occupied: AHashSet<Key> = by_column(points, voxel, &around).values().flatten().map(|i| key_of(points[*i as usize], voxel)).collect();
+    let count = |column: (i32, i32), layer: i32| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| occupied.contains(&(column.0 + dx, column.1 + dy, layer))).count();
+    let sheet = |key: Key| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| (*dx, *dy) != (0, 0) && (-1..=1).any(|dz| occupied.contains(&(key.0 + dx, key.1 + dy, key.2 + dz)))).count() >= 4;
     let mut edit = Edit::default();
     for column in &columns {
+        let Some(here) = members.get(column) else { continue };
         let (x, y) = ((column.0 as f32 + 0.5) * voxel, (column.1 as f32 + 0.5) * voxel);
-        let Some(estimate) = floor_at(x, y) else { continue };
-        let empty = Vec::new();
-        let here = members.get(column).unwrap_or(&empty);
-        let floor = column_floor(&surfaces, *column, voxel, estimate);
-        let top = reach.top(floor);
-        let mut has_floor = false;
+        let estimate = floor_at(x, y);
+        let floor = estimate.and_then(|estimate| {
+            let near = || here.iter().map(|i| (*i as usize, points[*i as usize])).filter(move |(_, p)| (p[2] - estimate).abs() <= FLOOR_SEARCH);
+            // the page's own floor: a top surface
+            let top_surface = near()
+                .filter(|(_, p)| {
+                    let layer = (p[2] / voxel).floor() as i32;
+                    count(*column, layer) >= 7 && count(*column, layer + 1) <= 3
+                })
+                .map(|(_, p)| p[2])
+                .max_by(f32::total_cmp);
+            // else a piece of floor: up-facing, in a horizontal sheet, nearest the estimate
+            top_surface.or_else(|| {
+                near()
+                    .filter(|(i, p)| normals[*i][2] > 0.8 && sheet(key_of(*p, voxel)))
+                    .map(|(_, p)| p[2])
+                    .min_by(|a, b| (a - estimate).abs().total_cmp(&(b - estimate).abs()))
+            })
+        });
+        let base = floor.or(estimate);
+        // the slice's top over whichever is higher, the column's floor or the model's (as the page's slice reaches)
+        let top = match (floor, estimate) {
+            (Some(floor), Some(estimate)) => reach.top(floor.max(estimate)),
+            (_, Some(estimate)) => reach.top(estimate),
+            _ => reach.top,
+        };
+        // no deeper than just under the local floor: a staircase's underside and the room under it aren't in this slice
+        let bottom = base.map_or(reach.bottom, |base| reach.bottom.max(base - FLOOR_DEPTH));
         for index in here {
-            let z = points[*index as usize][2];
-            if z > floor + voxel * 0.5 && z <= top && z >= reach.bottom {
+            let p = points[*index as usize];
+            let z = p[2];
+            // the floor and what's under it; where no floor was found, a voxel less than a voxel over the model's floor
+            // that had company before this stroke (3 of the 8 neighbouring columns occupied within a voxel of its
+            // height): floor, not a speck
+            let is_floor = match floor {
+                Some(floor) => z <= floor + voxel * 0.5,
+                None => base.is_some_and(|base| z < base + voxel && company(key_of(p, voxel)) >= 3),
+            };
+            if !is_floor && z >= bottom && z <= top {
                 edit.remove.push(*index);
-            } else if (z - floor).abs() <= voxel * 1.5 {
-                has_floor = true;
             }
-        }
-        if !has_floor {
-            edit.push(center((column.0, column.1, (floor / voxel).floor() as i32), voxel), [0.0, 0.0, 1.0]);
         }
     }
     edit.remove.sort_unstable();
@@ -238,15 +308,15 @@ mod tests {
     }
 
     #[test]
-    fn erase_leaves_floor() {
+    fn erase_takes_the_blob_and_leaves_the_floor() {
         let (points, normals) = room();
         let floor = |_x: f32, _y: f32| Some(at(0));
         let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.0, 1.0]], radius: 0.3 }, floor, Reach { above_floor: Some(2.0), top: f32::MAX, bottom: f32::MIN });
         assert_eq!(edit.remove.len(), 6 * 6 * 33, "the whole blob");
-        assert!(edit.add.len() >= 36 && edit.add.iter().all(|p| (p[2] - at(0)).abs() < 1e-4), "floor patched under it: {}", edit.add.len());
+        assert!(edit.add.is_empty(), "erase never adds (no floor is invented under the blob)");
         // capped at 1 m above the floor, the blob's top stays
         let capped = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.0, 1.0]], radius: 0.3 }, floor, Reach { above_floor: Some(1.0), top: f32::MAX, bottom: f32::MIN });
-        assert_eq!(capped.remove.len(), 6 * 6 * 20);
+        assert!(capped.remove.len() >= 6 * 6 * 19 && capped.remove.iter().all(|i| points[*i as usize][2] <= at(0) + 1.05), "{}", capped.remove.len());
     }
 
     /// on stairs the floor model can be a riser low; erasing must still keep every tread
@@ -270,6 +340,92 @@ mod tests {
         let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[0.2, 0.5], [2.8, 0.5]], radius: 0.4 }, model_low, Reach { above_floor: Some(1.8), top: f32::MAX, bottom: f32::MIN });
         assert!(edit.remove.iter().all(|i| *i as usize >= treads), "a tread was erased");
         assert_eq!(edit.remove.len(), 29, "the person goes");
+    }
+
+    // ---- erase: one stroke takes everything in the brush volume, never adds, and gets a lone speck in one click ----
+
+    /// a 2 x 2 m floor at z = at(0) (x, y in 0..2 m), clutter on it, and specks: at floor height in the open, one off
+    /// the floor model's edge, one just over the floor
+    fn cluttered() -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
+        let (mut points, mut normals) = (Vec::new(), Vec::new());
+        for i in 0..40 {
+            for j in 0..40 {
+                points.push([at(i), at(j), at(0)]);
+                normals.push([0.0, 0.0, 1.0]);
+            }
+        }
+        // a box 30 cm square, 10 to 60 cm tall, with a flat top (a surface), and a cable lying on the floor (1 voxel up)
+        for i in 10..16 {
+            for j in 10..16 {
+                for k in 2..13 {
+                    points.push([at(i), at(j), at(k)]);
+                    normals.push([0.0, 0.0, if k == 12 { 1.0 } else { 0.0 }]);
+                }
+            }
+        }
+        for i in 20..30 {
+            points.push([at(i), at(25), at(1)]);
+            normals.push([0.0, 0.0, 1.0]);
+        }
+        // a lamp up to 2.5 m: above the 1.8 m slice top its head stays
+        for k in 1..50 {
+            points.push([at(30), at(10), at(k)]);
+            normals.push([1.0, 0.0, 0.0]);
+        }
+        (points, normals)
+    }
+
+    const SLICE: Reach = Reach { above_floor: Some(1.8), top: 3.0, bottom: -0.5 };
+    fn on_the_floor(x: f32, y: f32) -> Option<f32> {
+        ((0.0..2.0).contains(&x) && (0.0..2.0).contains(&y)).then_some(at(0))
+    }
+
+    #[test]
+    fn erase_takes_everything_in_the_brush_volume() {
+        let (points, normals) = cluttered();
+        let stroke = Stroke { path: vec![[0.4, 0.4], [1.6, 1.4]], radius: 0.35 };
+        let edit = erase(&points, &normals, 0.05, &stroke, on_the_floor, SLICE);
+        assert!(edit.add.is_empty(), "erase never adds");
+        let removed: AHashSet<u32> = edit.remove.iter().copied().collect();
+        for (index, p) in points.iter().enumerate() {
+            let column = ((p[0] / 0.05).floor() as i32, (p[1] / 0.05).floor() as i32);
+            let brushed = Stroke { path: stroke.path.clone(), radius: stroke.radius + 0.025 }.columns(0.05).contains(&column);
+            let in_volume = brushed && p[2] > at(0) + 0.01 && p[2] <= at(0) + 1.8;
+            assert_eq!(removed.contains(&(index as u32)), in_volume, "{p:?} (brushed {brushed})");
+        }
+        // the box (its flat top is a surface, but not the floor) and the brushed part of the cable go in one stroke
+        assert!(edit.remove.len() >= 6 * 6 * 11, "{}", edit.remove.len());
+    }
+
+    #[test]
+    fn erase_never_adds_where_there_was_no_floor() {
+        let (points, normals) = room();
+        let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.0, 1.0], [3.5, 3.5]], radius: 0.4 }, |_, _| Some(at(0)), SLICE);
+        assert!(edit.add.is_empty());
+        assert!(!edit.remove.is_empty());
+    }
+
+    #[test]
+    fn erase_a_lone_voxel_in_one_click() {
+        let (mut points, mut normals) = cluttered();
+        // off the floor model's edge (no floor estimate there), at floor height in the open (no floor around it), and
+        // one voxel over the floor; the click lands off each voxel's center, with a brush smaller than a voxel
+        let specks = [[at(80), at(80), at(0)], [at(60), at(5), at(0)], [at(5), at(35), at(1)]];
+        let first = points.len() as u32;
+        for p in specks {
+            points.push(p);
+            normals.push([0.0, 0.0, 1.0]);
+        }
+        let floor = |x: f32, y: f32| ((0.0..3.5).contains(&x) && (0.0..2.0).contains(&y)).then_some(at(0));
+        for (n, p) in specks.iter().enumerate() {
+            let click = Stroke { path: vec![[p[0] + 0.02, p[1] - 0.015]], radius: 0.01 };
+            let edit = erase(&points, &normals, 0.05, &click, floor, SLICE);
+            assert_eq!(edit.remove, vec![first + n as u32], "speck {n} at {p:?}");
+            assert!(edit.add.is_empty());
+        }
+        // a click on the open floor takes nothing: it is floor
+        let edit = erase(&points, &normals, 0.05, &Stroke { path: vec![[1.02, 0.4]], radius: 0.01 }, floor, SLICE);
+        assert!(edit.remove.is_empty() && edit.add.is_empty());
     }
 
     #[test]

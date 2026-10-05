@@ -384,11 +384,14 @@ impl Workspace {
         };
         let band = model.storeys.get(storey).with_context(|| format!("no floor {storey} (floors: 0..{})", model.storeys.len()))?.band;
         let floor_at = |x: f32, y: f32| model.height_at(storey, x, y);
+        // erase: where the floor model has no estimate (off its edge), the storey's level stands in for the floor
+        let level = model.storeys[storey].level;
+        let erase_floor_at = |x: f32, y: f32| Some(model.height_at(storey, x, y).unwrap_or(level));
+        // the storey's top: the next storey's band, or 3 m over the top storey's floor (not its roof)
+        let storey_top = if storey + 1 < model.storeys.len() { band[1] } else { band[0] + 3.25 };
         let reach = |z: &ZEnd| -> Result<Reach> {
             if z.full_column {
-                // up to the next storey's band, or 3 m over the top storey's floor (not its roof)
-                let top = if storey + 1 < model.storeys.len() { band[1] } else { band[0] + 3.25 };
-                return Ok(Reach { above_floor: None, top, bottom: band[0] });
+                return Ok(Reach { above_floor: None, top: storey_top, bottom: band[0] });
             }
             let end = z.z_end.context("zEnd (or fullColumn) is required")?;
             Ok(if z.relative { Reach { above_floor: Some(end), top: f32::MAX, bottom: band[0] } } else { Reach { above_floor: None, top: end, bottom: band[0] } })
@@ -398,7 +401,7 @@ impl Workspace {
                 if path.is_empty() {
                     bail!("erase needs a path");
                 }
-                let edit = mapping::edit::erase(&points, &normals, voxel, &Stroke { path: path.clone(), radius: *radius }, floor_at, reach(z)?);
+                let edit = mapping::edit::erase(&points, &normals, voxel, &Stroke { path: path.clone(), radius: *radius }, erase_floor_at, reach(z)?);
                 (format!("Erase (r {:.2} m)", radius), edit)
             }
             Modify::Draw { path, width, height, .. } => {
@@ -419,7 +422,40 @@ impl Workspace {
                 (format!("Straighten wall ({:.1} m)", (to[0] - from[0]).hypot(to[1] - from[1])), edit)
             }
         };
-        self.apply_edit(&label, edit)
+        let erasing = matches!(request, Modify::Erase { .. });
+        let entries = self.session.undo.len();
+        let result = self.apply_edit(&label, edit)?;
+        if erasing && self.session.undo.len() > entries {
+            // what an erase removed stays removed when the map is built again (`carry_erased`)
+            let points = &self.require_map()?.points;
+            let flipped = &self.session.undo[entries].flipped;
+            let erased: Vec<[f32; 3]> = flipped.iter().map(|i| points[*i as usize]).collect();
+            self.session.erased.extend(erased.iter().copied());
+            self.session.undo[entries].erased = erased;
+        }
+        Ok(result)
+    }
+
+    /// After a rebuild: hides the new map's voxels where an erase removed one before (by voxel, in the recording's
+    /// frame), so erasing outlives "Generate". Returns how many it hid.
+    pub fn carry_erased(&mut self) -> usize {
+        let Some(map) = self.map.as_mut() else { return 0 };
+        if self.session.erased.is_empty() {
+            return 0;
+        }
+        let voxel = map.voxel_size;
+        let erased: std::collections::HashSet<voxels::Key> = self.session.erased.iter().map(|p| voxels::key_of(*p, voxel)).collect();
+        let mut hidden = 0;
+        for (index, p) in map.points.iter().enumerate() {
+            if !map.removed[index] && erased.contains(&voxels::key_of(*p, voxel)) {
+                map.removed[index] = true;
+                hidden += 1;
+            }
+        }
+        if hidden > 0 {
+            self.map_version += 1;
+        }
+        hidden
     }
 
     /// Applies an edit computed on `visible_points()` (indices into that list) as one undoable step.
@@ -470,6 +506,13 @@ impl Workspace {
     }
 
     fn unapply(&mut self, entry: &UndoEntry, undo: bool) {
+        // an erase's voxels leave (undo) or rejoin (redo) the list carried over a rebuild; undo is last-in-first-out
+        if undo {
+            let keep = self.session.erased.len().saturating_sub(entry.erased.len());
+            self.session.erased.truncate(keep);
+        } else {
+            self.session.erased.extend(entry.erased.iter().copied());
+        }
         if let Some(map) = self.map.as_mut() {
             for i in &entry.flipped {
                 map.removed[*i as usize] = !undo;
@@ -887,7 +930,7 @@ pub mod tests {
         assert_eq!(ws.remaining(), total + drawn.changed);
         // erase it again: the floor under it stays
         let erased = ws.modify(&Modify::Erase { floor: 0, path: vec![[1.0, 1.0], [2.0, 1.0]], radius: 0.15, reach: ZEnd { z_end: Some(1.8), relative: true, full_column: false } }).unwrap();
-        assert!(erased.changed >= drawn.changed);
+        assert!(erased.changed >= drawn.changed, "{} {}", erased.changed, drawn.changed);
         let floor_left = ws.visible_points().1.iter().filter(|p| (p[1] - 1.0).abs() < 0.1 && (1.1..1.9).contains(&p[0])).count();
         assert!(floor_left >= 16 * 4, "{floor_left}");
         ws.undo();
@@ -906,6 +949,34 @@ pub mod tests {
         ws.undo();
         ws.undo();
         assert!(ws.session.annotations.prisms.is_empty());
+    }
+
+    /// an erase removes what it covers in one stroke, adds nothing, and stays erased through undo / redo and a rebuild
+    #[test]
+    fn erase_outlives_a_rebuild() {
+        let mut ws = Workspace::new(Session { stage: "map".into(), ..Default::default() }, Some(room_map()));
+        ws.rotate_yaw(30.0).unwrap();
+        let total = ws.remaining();
+        let points_before = ws.map.as_ref().unwrap().points.len();
+        // the two floating specks at (3.0, 1.0), 1.6 m up, in one click-sized stroke (map frame: the map turned 30°)
+        let speck = ws.visible_points().1.into_iter().find(|p| p[2] > 1.6 && p[2] < 1.65).unwrap();
+        let erased = ws.modify(&Modify::Erase { floor: 0, path: vec![[speck[0], speck[1]]], radius: 0.06, reach: ZEnd { z_end: Some(1.8), relative: true, full_column: false } }).unwrap();
+        assert!(erased.changed >= 1, "{}", erased.changed);
+        assert_eq!(ws.remaining(), total - erased.changed);
+        assert_eq!(ws.map.as_ref().unwrap().points.len(), points_before, "erase never adds a voxel");
+        assert_eq!(ws.session.erased.len(), erased.changed);
+        ws.undo();
+        assert!(ws.session.erased.is_empty());
+        ws.redo();
+        assert_eq!(ws.session.erased.len(), erased.changed);
+        // "Generate" again: a fresh map of the same recording; what was erased stays erased
+        let mut rebuilt = ws.clone();
+        rebuilt.set_map(room_map());
+        assert_eq!(rebuilt.carry_erased(), erased.changed);
+        assert_eq!(rebuilt.remaining(), total - erased.changed);
+        // the session (erased list included) survives its JSON on disk
+        let reloaded: Session = serde_json::from_str(&serde_json::to_string(&ws.session).unwrap()).unwrap();
+        assert_eq!(reloaded.erased, ws.session.erased);
     }
 
     #[test]

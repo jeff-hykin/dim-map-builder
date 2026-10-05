@@ -17,8 +17,8 @@ everything else is optional and in any order.
   the whole map, then cuts it to a height band (live), turns it so the walls line up with x and y (a top-down x-ray
   over a grid, with an "auto" angle from the walls' directions), crops x / y with a draggable rectangle, and flies back
   to the result. 3D, 2D and the minimap all show it; it's saved as seven numbers (`map/slice`).
-- **Edit** (the green orb): a palette of tools. **Erase** (brush what stands on the floor away; the floor under it is
-  filled in from around), **Draw** / **Line** (voxels from the floor up to a height), **Straighten wall** (drag along
+- **Edit** (the green orb): a palette of tools. **Erase** (one stroke takes everything the brush covers, from the floor
+  up to the slice's top, the floor itself stays; a lone speck goes in one click; nothing is ever added), **Draw** / **Line** (voxels from the floor up to a height), **Straighten wall** (drag along
   a noisy wall: the wall in the band becomes one clean slab of its own thickness; nothing outside the band changes), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
   **named points and areas** (no-go zones), **3D boxes, planes and points**, **Clean up** (floating specks, outliers,
   floor, walls, crop, level), **Saved views**. All undoable.

@@ -349,9 +349,10 @@ agent:
             description: >-
                 Brush edits on a storey (undoable), map-frame x, y meters. tool=erase: remove what stands on the floor
                 along path [[x, y], ...] of radius, up to zEnd (m over the local floor when relative, default 1.8;
-                fullColumn = everything up to the next storey), patching the floor under it. tool=draw: add voxels along
-                path of width (default 0.1) up to height (default 1 m). tool=straighten: replace a noisy wall along
-                from..to (width band, default 0.4) with one straight slab (thickness = the wall's own unless given).
+                fullColumn = everything up to the next storey): every voxel in the columns the brush touches goes but
+                the floor (a lone speck goes in one click), nothing is added. tool=draw: add voxels along path of width
+                (default 0.1) up to height (default 1 m). tool=straighten: replace a noisy wall along from..to (width
+                band, default 0.4) with one straight slab (thickness = the wall's own unless given).
             params:
                 floor:
                     description: storey index
@@ -751,7 +752,6 @@ agent:
                 saveFirst:
                     description: default true
                     type: boolean
-# prebuilt cross builds Desktop downloads (if a cache above has them) before building dimosApp, per machine type
 nix:
     cache:
         aarch64-linux:

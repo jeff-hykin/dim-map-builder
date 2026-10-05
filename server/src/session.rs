@@ -205,6 +205,9 @@ pub struct UndoEntry {
     pub transform: Option<(Transform, Transform)>,
     #[serde(default)]
     pub plans: Option<(Vec<FloorPlan>, Vec<FloorPlan>)>,
+    /// an erase's removed voxels (recording frame), for `Session::erased`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub erased: Vec<[f32; 3]>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -248,6 +251,9 @@ pub struct Session {
     pub redo: Vec<UndoEntry>,
     /// a short log of what happened, newest last (shown in the UI, and to the agent)
     pub history: Vec<String>,
+    /// every voxel the erase tool removed (recording frame, the voxel centers): a rebuild hides them again, so an
+    /// erase outlives "Generate"; saved into the recording with the map
+    pub erased: Vec<[f32; 3]>,
 }
 
 /// The built map: arrays too big for JSON.
