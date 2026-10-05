@@ -40,6 +40,8 @@ export interface UiState {
     tool: ToolId
     /** the storey the 2D view and its tools work on */
     planFloor: number
+    /** the 3D view shows only planFloor's voxels (its band in the floor model); false = every floor */
+    floorOnly: boolean
     slice: SliceRange
     view2d: View2d | null
     floorOverlay: boolean
@@ -56,6 +58,7 @@ export const DEFAULT_UI: UiState = {
     paletteOpen: false,
     tool: "select",
     planFloor: 0,
+    floorOnly: false,
     slice: AUTO_RANGE,
     view2d: null,
     floorOverlay: false,

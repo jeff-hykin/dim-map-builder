@@ -43,6 +43,8 @@ export class Viewer {
     /** view size in CSS pixels; thick-line materials share it (their widths are CSS pixels) */
     readonly resolution = new THREE.Vector2(1, 1)
     fixedFrame = "world"
+    /** a hidden view (the Map Editor's 2D mode) draws nothing; what changed meanwhile is drawn once it's shown */
+    paused = false
     /** where the camera follows (a TF frame); set by the app each frame */
     followTarget: THREE.Vector3 | null = null
 
@@ -93,6 +95,19 @@ export class Viewer {
 
         new ResizeObserver(() => this.#resize()).observe(host)
         this.#resize()
+        // the window moved to a screen of another density (a retina laptop and an external monitor): draw at the new one
+        const watchRatio = () => {
+            matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener(
+                "change",
+                () => {
+                    this.renderer.setPixelRatio(Math.min(2, devicePixelRatio))
+                    this.#resize()
+                    watchRatio()
+                },
+                { once: true },
+            )
+        }
+        watchRatio()
         requestAnimationFrame(this.#loop)
     }
 
@@ -209,7 +224,7 @@ export class Viewer {
         for (const listener of this.#listeners) {
             listener(info)
         }
-        if (this.#dirty) {
+        if (this.#dirty && !this.paused) {
             this.#dirty = false
             this.renderer.render(this.scene, this.camera)
             this.labels.render(this.scene, this.camera)

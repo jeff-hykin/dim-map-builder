@@ -80,16 +80,43 @@ export function columnFloors(points: Float32Array, model: FloorModel, storey: nu
     const width = Math.ceil((model.width * model.cell) / resolution)
     const height = Math.ceil((model.height * model.cell) / resolution)
     const floors = new Float32Array(width * height).fill(NaN)
-    // occupancy by (column, row, layer)
-    const occupied = new Set<number>()
-    const plane = width * height
-    const keyOf = (column: number, row: number, layer: number) => (layer + 4000) * plane + row * width + column
+    // occupancy near the floor only (what the test below reads): per column, a 32-layer bit mask starting a little
+    // under the floor model's height at the column's center (typed arrays: no hash set of every voxel)
+    const base = new Int32Array(width * height)
+    const known = new Uint8Array(width * height)
+    for (let row = 0; row < height; row++) {
+        for (let column = 0; column < width; column++) {
+            const grid = floorAt(model, storey, origin[0] + (column + 0.5) * resolution, origin[1] + (row + 0.5) * resolution)
+            if (grid !== null) {
+                base[row * width + column] = Math.floor(grid / resolution) - BELOW
+                known[row * width + column] = 1
+            }
+        }
+    }
+    const bits = new Uint32Array(width * height)
     for (let index = 0; index < points.length; index += 3) {
         const column = Math.floor((points[index] - origin[0]) / resolution)
         const row = Math.floor((points[index + 1] - origin[1]) / resolution)
         if (column >= 0 && row >= 0 && column < width && row < height) {
-            occupied.add(keyOf(column, row, Math.floor(points[index + 2] / resolution)))
+            const pixel = row * width + column
+            const offset = Math.floor(points[index + 2] / resolution) - base[pixel]
+            if (known[pixel] && offset >= 0 && offset < 32) {
+                bits[pixel] |= 1 << offset
+            }
         }
+    }
+    const count = (column: number, row: number, layer: number) => {
+        let n = 0
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const pixel = (row + dy) * width + column + dx
+                const offset = layer - base[pixel]
+                if (known[pixel] && offset >= 0 && offset < 32 && bits[pixel] & (1 << offset)) {
+                    n++
+                }
+            }
+        }
+        return n
     }
     for (let index = 0; index < points.length; index += 3) {
         const [x, y, z] = [points[index], points[index + 1], points[index + 2]]
@@ -99,7 +126,7 @@ export function columnFloors(points: Float32Array, model: FloorModel, storey: nu
             continue
         }
         const pixel = row * width + column
-        if (floors[pixel] >= z) {
+        if (floors[pixel] >= z || !known[pixel]) {
             continue
         }
         const grid = floorAt(model, storey, x, y)
@@ -107,24 +134,16 @@ export function columnFloors(points: Float32Array, model: FloorModel, storey: nu
             continue
         }
         const layer = Math.floor(z / resolution)
-        const count = (l: number) => {
-            let n = 0
-            for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
-                    if (occupied.has(keyOf(column + dx, row + dy, l))) {
-                        n++
-                    }
-                }
-            }
-            return n
-        }
         // a top surface: 7 of the 3 x 3 here, little just above (a wall isn't one)
-        if (count(layer) >= 7 && count(layer + 1) <= 3) {
+        if (count(column, row, layer) >= 7 && count(column, row, layer + 1) <= 3) {
             floors[pixel] = z
         }
     }
     return floors
 }
+
+/** how many layers under the floor model's height a column's occupancy mask starts (0.3 m and a voxel of slack) */
+const BELOW = 9
 
 export function computeSlice(points: Float32Array, model: FloorModel, storey: number, range: SliceRange, resolution = 0.05, clip: MapSlice | null = null, ownFloors: Float32Array | null = null): Slice {
     const [cos, sin] = [Math.cos(clip?.yaw ?? 0), Math.sin(clip?.yaw ?? 0)]
@@ -175,7 +194,8 @@ const PLAN_STYLES = {
         floor: [21, 33, 50],
         wallRim: [130, 212, 255],
         wallBody: [38, 78, 122],
-        glow: "drop-shadow(0 0 4px rgba(80, 170, 255, 0.45))",
+        /** the walls' glow: their silhouette blurred (in raster cells) and tinted, drawn under them */
+        glow: { color: "rgba(80, 170, 255, 0.45)", cells: 2 } as { color: string; cells: number } | null,
         grid: "rgba(140, 180, 230, 0.07)",
         gridText: "rgba(140, 180, 230, 0.5)",
     },
@@ -183,7 +203,7 @@ const PLAN_STYLES = {
         floor: [234, 233, 226],
         wallRim: [41, 60, 228],
         wallBody: [168, 178, 238],
-        glow: "none",
+        glow: null,
         grid: "rgba(32, 33, 31, 0.08)",
         gridText: "rgba(32, 33, 31, 0.5)",
     },
@@ -194,8 +214,10 @@ export function setPlanTheme(dark: boolean) {
     Object.assign(PLAN_STYLE, dark ? PLAN_STYLES.dark : PLAN_STYLES.light)
 }
 
-/** Two canvases (row 0 at the top = highest y) from per-cell kinds: 0 unknown, 1 floor, 2 wall. */
-export function rasterLayers(kindAt: (column: number, row: number) => number, width: number, height: number) {
+/** Canvases from per-cell kinds (0 unknown, 1 floor, 2 wall; row 0 at the top = highest y): a floor, walls as a rim
+ * around a body, and (Portal) the walls' glow, baked once here instead of a canvas filter on every frame drawn (a
+ * full-screen blur per pan step was most of the 2D view's frame time). Bytes are written straight into the images. */
+function paintLayers(kinds: Uint8Array, width: number, height: number, withGlow: boolean) {
     const floor = document.createElement("canvas")
     const walls = document.createElement("canvas")
     for (const canvas of [floor, walls]) {
@@ -204,29 +226,59 @@ export function rasterLayers(kindAt: (column: number, row: number) => number, wi
     }
     const floorImage = floor.getContext("2d")!.createImageData(width, height)
     const wallImage = walls.getContext("2d")!.createImageData(width, height)
-    const isWall = (column: number, row: number) => column >= 0 && row >= 0 && column < width && row < height && kindAt(column, row) === 2
+    const floorBytes = floorImage.data
+    const wallBytes = wallImage.data
+    const [fr, fg, fb] = PLAN_STYLE.floor
+    const [rr, rg, rb] = PLAN_STYLE.wallRim
+    const [br, bg, bb] = PLAN_STYLE.wallBody
+    const isWall = (column: number, row: number) => column >= 0 && row >= 0 && column < width && row < height && kinds[row * width + column] === 2
     for (let row = 0; row < height; row++) {
         for (let column = 0; column < width; column++) {
-            const kind = kindAt(column, row)
+            const kind = kinds[row * width + column]
             if (kind === 0) {
                 continue
             }
             const offset = (row * width + column) * 4
             if (kind === 2) {
                 const rim = !isWall(column - 1, row) || !isWall(column + 1, row) || !isWall(column, row - 1) || !isWall(column, row + 1)
-                wallImage.data.set([...(rim ? PLAN_STYLE.wallRim : PLAN_STYLE.wallBody), 255], offset)
+                wallBytes[offset] = rim ? rr : br
+                wallBytes[offset + 1] = rim ? rg : bg
+                wallBytes[offset + 2] = rim ? rb : bb
+                wallBytes[offset + 3] = 255
             }
-            floorImage.data.set([...PLAN_STYLE.floor, 255], offset)
+            floorBytes[offset] = fr
+            floorBytes[offset + 1] = fg
+            floorBytes[offset + 2] = fb
+            floorBytes[offset + 3] = 255
         }
     }
     floor.getContext("2d")!.putImageData(floorImage, 0, 0)
     walls.getContext("2d")!.putImageData(wallImage, 0, 0)
-    return { floor, walls }
+    let glow: HTMLCanvasElement | null = null
+    if (PLAN_STYLE.glow && withGlow) {
+        glow = document.createElement("canvas")
+        glow.width = width
+        glow.height = height
+        const g = glow.getContext("2d")!
+        g.filter = `blur(${PLAN_STYLE.glow.cells}px)`
+        g.drawImage(walls, 0, 0)
+        g.filter = "none"
+        g.globalCompositeOperation = "source-in"
+        g.fillStyle = PLAN_STYLE.glow.color
+        g.fillRect(0, 0, width, height)
+    }
+    return { floor, walls, glow }
 }
 
-export function sliceLayers(slice: Slice) {
+/** `withGlow`: bake the walls' glow too (the main 2D view; the minimap has none) */
+export function sliceLayers(slice: Slice, withGlow: boolean) {
     const { width, height, cells } = slice
-    return rasterLayers((column, row) => cells[(height - 1 - row) * width + column], width, height)
+    // cells' row 0 is the lowest y; the images' row 0 is the top
+    const kinds = new Uint8Array(width * height)
+    for (let row = 0; row < height; row++) {
+        kinds.set(cells.subarray((height - 1 - row) * width, (height - row) * width), row * width)
+    }
+    return paintLayers(kinds, width, height, withGlow)
 }
 
 /** The storey's floor heights as a colored image (top row = highest y): measured cells solid, filled ones faded. */

@@ -25,6 +25,7 @@ import { Icon } from "./ui/Icon.tsx"
 import { useUploads, isActive } from "./ui/useUploads.ts"
 import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
 import { LoginDialog } from "./ui/LoginDialog.tsx"
+import { FloorPicker } from "./ui/FloorPicker.tsx"
 import { ThemeToggle } from "./ThemeToggle.tsx"
 import { notify } from "./dim-app/notify.js"
 
@@ -48,6 +49,11 @@ export function App() {
     const [slicing, setSlicing] = useState(false)
     const slicingRef = useRef(false)
     slicingRef.current = slicing
+    /** the slicer's step; its align step (2) is done in the 2D view, the 3D camera held still */
+    const [slicerStep, setSlicerStep] = useState(0)
+    const aligning = slicing && slicerStep === 2
+    const aligningRef = useRef(false)
+    aligningRef.current = aligning
     const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null)
     const [connected, setConnected] = useState(true)
     const [stats, setStats] = useState("")
@@ -58,6 +64,8 @@ export function App() {
     sessionRef.current = session
     const loaded = useRef<{ id: string; mapVersion: number } | null>(null)
     const restoredCamera = useRef<string | null>(null)
+    /** the floor key (floorKeyOf) the floor model was last fetched for */
+    const floorFor = useRef("")
 
     const say = useCallback((text: string, error = false) => {
         setToast({ text, error })
@@ -184,14 +192,24 @@ export function App() {
             return
         }
         const fresh = await api.session(current.id)
-        setSession(fresh)
         const last = loaded.current
         const mapChanged = !last || last.id !== fresh.id || last.mapVersion !== fresh.mapVersion
-        if (fresh.stage === "map" && mapChanged) {
-            const [points, paths] = await Promise.all([api.points(fresh.id), api.paths(fresh.id)])
+        const withMap = fresh.stage === "map" && mapChanged
+        if (withMap) {
+            // the floor model comes with the voxels (not from the floor effect), so the 2D view re-rasters once per edit
+            floorFor.current = floorKeyOf(fresh)
+        }
+        setSession(fresh)
+        if (withMap) {
+            const [points, paths, model] = await Promise.all([api.points(fresh.id), api.paths(fresh.id), api.floor(fresh.id).catch(() => null)])
             scene.setMap(points, fresh.voxelSize ?? 0.05)
             scene.setPaths(paths)
             scene.setRaw(null, null)
+            if (model) {
+                setFloor(model)
+            } else {
+                floorFor.current = ""
+            }
         }
         loaded.current = { id: fresh.id, mapVersion: fresh.mapVersion }
         scene.setAnnotations(fresh.annotations)
@@ -263,13 +281,18 @@ export function App() {
             .catch((error) => say(String(error), true))
     }, [scene, adopt, say])
 
-    // the local floor follows the map and the storeys
-    const floorKey = session?.stage === "map" ? `${session.id}:${session.mapVersion}:${session.annotations.floors.map((f) => f.z).join(",")}` : ""
+    // the local floor follows the map and the storeys (refresh fetches it with a new map; this catches the rest)
+    const floorKey = session ? floorKeyOf(session) : ""
     useEffect(() => {
         if (!floorKey || !session) {
+            floorFor.current = ""
             setFloor(null)
             return
         }
+        if (floorFor.current === floorKey) {
+            return
+        }
+        floorFor.current = floorKey
         let cancelled = false
         api.floor(session.id)
             .then((model) => !cancelled && setFloor(model))
@@ -410,8 +433,9 @@ export function App() {
             if (mod || event.altKey) {
                 return
             }
-            const hasMap = current?.stage === "map"
-            const mode = uiRef.current.mode
+            const aligning = aligningRef.current
+            const hasMap = current?.stage === "map" && !aligning
+            const mode = aligning ? "2d" : uiRef.current.mode
             const tool = TOOLS.find((t) => t.key === event.key && t.key.length === 1)
             if (event.key === "v" && hasMap) {
                 setUi({ mode: mode === "2d" ? "3d" : "2d" })
@@ -459,7 +483,18 @@ export function App() {
     const hasMap = session?.stage === "map"
     const job = session?.job
     const running = job?.state === "running" ? job : null
-    const mode: ViewMode = hasMap ? ui.mode : "3d"
+    // the slicer's align step shows the 2D view whatever the mode (the mode itself is kept for after)
+    const mode: ViewMode = aligning ? "2d" : hasMap ? ui.mode : "3d"
+
+    // a hidden 3D view draws nothing, and map edits reach its points when it shows again
+    useEffect(() => {
+        scene?.setShown(mode !== "2d")
+    }, [scene, mode])
+    // the 3D view shows the picked floor alone (its band in the floor model), or every floor; the slicer sees them all
+    const floorBand = ui.floorOnly && !slicing ? floor?.storeys[Math.min(ui.planFloor, floor.storeys.length - 1)]?.band ?? null : null
+    useEffect(() => {
+        scene?.setFloorBand(floorBand ? [floorBand[0], floorBand[1]] : null)
+    }, [scene, floorBand?.[0], floorBand?.[1]])
 
     // the panes: 3D on the left, 2D on the right; their widths slide between modes
     const [width, setWidth] = useState(0)
@@ -510,7 +545,7 @@ export function App() {
                 <span className="spacer" />
                 <div className="dim-tabs mode-switch" role="tablist" aria-label="view" data-mode-switch={mode}>
                     {MODES.map((m) => (
-                        <button key={m.id} type="button" role="tab" aria-selected={mode === m.id} className={`dim-tab ${mode === m.id ? "on" : ""}`} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ mode: m.id })} data-mode={m.id} title={m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)"}>
+                        <button key={m.id} type="button" role="tab" aria-selected={mode === m.id} className={`dim-tab ${mode === m.id ? "on" : ""}`} disabled={!hasMap || aligning} onMouseDown={keepFocus} onClick={() => setUi({ mode: m.id })} data-mode={m.id} title={m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)"}>
                             {m.label}
                         </button>
                     ))}
@@ -573,8 +608,8 @@ export function App() {
                 </div>
                 <div className="pane pane-2d" style={{ width: target[1] }}>
                     <div className="pane-inner" style={{ width: inner[1] }}>
-                        {hasMap && <View2D key={twoDKind} context={context} kind={twoDKind} />}
-                        {hasMap && mode === "2d" && <SliceBar context={context} />}
+                        {hasMap && <View2D key={twoDKind} context={context} kind={twoDKind} aligning={aligning} />}
+                        {hasMap && mode === "2d" && !aligning && <SliceBar context={context} />}
                         {hasMap && mode === "2d" && (
                             <div className="view-tools">
                                 <button type="button" className="dim-btn sm icon" title="Frame the map (F)" onClick={() => window.dispatchEvent(new Event(FIT_2D))}>
@@ -615,7 +650,8 @@ export function App() {
                         <Icon name="arrow-left" /> Recommended: slice your map
                     </div>
                 )}
-                {slicing && hasMap && <SlicerWizard context={context} onClose={() => setSlicing(false)} />}
+                {slicing && hasMap && <SlicerWizard context={context} onClose={() => setSlicing(false)} onStep={setSlicerStep} />}
+                {hasMap && !slicing && <FloorPicker context={context} mode={mode} />}
                 {hasMap && ui.paletteOpen && !slicing && (
                     <div className="dim-panel glass palette" role="toolbar" aria-label="edit tools" data-palette>
                         {TOOLS.map((tool) => (
@@ -694,6 +730,11 @@ export function App() {
             )}
         </div>
     )
+}
+
+/** what the floor model depends on: the map's version and the storeys the user set */
+function floorKeyOf(session: Session): string {
+    return session.stage === "map" ? `${session.id}:${session.mapVersion}:${session.annotations.floors.map((f) => f.z).join(",")}` : ""
 }
 
 /** The split's divider: drag it to give the 2D pane more or less of the width. */

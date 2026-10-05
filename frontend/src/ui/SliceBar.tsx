@@ -1,5 +1,5 @@
-// The 2D view's slice controls: which storey, z-start / z-end (a two-handle range and numbers), over the local floor
-// or absolute, "auto" (local floor +0.1 to +1.8 m), and the floor-height overlay.
+// The 2D view's slice controls: z-start / z-end (a two-handle range and numbers), over the local floor or absolute,
+// "auto" (local floor +0.1 to +1.8 m), and the floor-height overlay. The floor itself is picked bottom right (FloorPicker).
 import { AUTO_RANGE, type SliceRange } from "../core/slice.ts"
 import type { Context } from "./context.ts"
 
@@ -22,15 +22,6 @@ export function SliceBar({ context }: { context: Context }) {
     const percent = (value: number) => `${((value - low) / (high - low)) * 100}%`
     return (
         <div className="dim-panel glass slice-bar" data-slice-bar>
-            {levels.length > 1 && (
-                <div className="dim-tabs seg" title="storey">
-                    {levels.map((level, index) => (
-                        <button key={index} type="button" className={`dim-tab ${storey === index ? "on" : ""}`} data-storey={index} onClick={() => setUi({ planFloor: index })}>
-                            {`F${index + 1}`} <span className="dim">{level.toFixed(1)}</span>
-                        </button>
-                    ))}
-                </div>
-            )}
             <span className="dim">z</span>
             <input className="dim-input number" type="number" step={0.05} value={range.z0} data-slice="z0" onChange={(event) => event.target.value !== "" && set({ z0: Number(event.target.value) })} title="z-start (m)" />
             <div className="dual-range" title="drag either handle">

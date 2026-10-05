@@ -1,6 +1,6 @@
 // The Slicer: a step-by-step view of the map (not an edit: no voxel is removed). It flies out to the whole map, then
-// 1/4 cuts it to a height band (live, in the shader), 2/4 turns it so the walls line up with x and y (a top-down
-// x-ray where walls glow, over a grid, with an "auto" angle from the walls' directions), 3/4 crops x / y in that turned
+// 1/4 cuts it to a height band (live, in the shader), 2/4 turns it so the walls line up with x and y (in the 2D view,
+// over a grid, the 3D camera held still; with an "auto" angle from the walls' directions), 3/4 crops x / y in that turned
 // frame (a draggable rectangle), and 4/4 saves it (map/slice) and flies back to the cropped, aligned map.
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import * as THREE from "three"
@@ -35,7 +35,8 @@ function DualRange({ low, high, min, max, onChange }: { low: number; high: numbe
     )
 }
 
-export function SlicerWizard({ context, onClose }: { context: Context; onClose: () => void }) {
+/** `onStep` hears each step (App shows the 2D view for the align step) */
+export function SlicerWizard({ context, onClose, onStep }: { context: Context; onClose: () => void; onStep?: (step: number) => void }) {
     const { session, scene, run } = context
     const bounds = session?.bounds ?? [[-5, -5, -1], [5, 5, 3]]
     const previous = useRef<Slice | null>(scene?.slice ?? null)
@@ -63,6 +64,20 @@ export function SlicerWizard({ context, onClose }: { context: Context; onClose: 
         return { min: new THREE.Vector3(x0, y0, slice.zMin), max: new THREE.Vector3(x1, y1, slice.zMax) }
     }
 
+    useEffect(() => {
+        onStep?.(step)
+    }, [step])
+    // the align step happens in the 2D view: the 3D camera stays where it was, for after
+    useEffect(() => {
+        if (!scene || step !== 2) {
+            return
+        }
+        scene.viewer.controls.enabled = false
+        return () => {
+            scene.viewer.controls.enabled = true
+        }
+    }, [scene, step])
+
     // 0: fly out to the whole map, then the first step
     useEffect(() => {
         if (!scene) {
@@ -81,17 +96,23 @@ export function SlicerWizard({ context, onClose }: { context: Context; onClose: 
         if (!scene || !session) {
             return
         }
-        if (next === 2 || next === 3) {
+        if (next === 2) {
+            scene.setXray(false)
+            scene.setSlice(draftRef.current, false)
+            setStep(2)
+            return
+        }
+        if (next === 3) {
             scene.setXray(true)
             let current = draftRef.current
-            if (next === 3 && !cropped) {
+            if (!cropped) {
                 const box = mapBox(current)
                 const pad = 0.3
                 current = { ...current, xMin: box.min.x - pad, xMax: box.max.x + pad, yMin: box.min.y - pad, yMax: box.max.y + pad }
                 setDraftState(current)
             }
             scene.setSlice(current, false)
-            const box = next === 3 ? { min: new THREE.Vector3(current.xMin, current.yMin, current.zMin), max: new THREE.Vector3(current.xMax, current.yMax, current.zMax) } : mapBox(current)
+            const box = { min: new THREE.Vector3(current.xMin, current.yMin, current.zMin), max: new THREE.Vector3(current.xMax, current.yMax, current.zMax) }
             const view = scene.viewOf(box.min, box.max, true)
             setStep(next)
             await scene.flyTo(view.position, view.target, 700)
@@ -205,7 +226,7 @@ export function SlicerWizard({ context, onClose }: { context: Context; onClose: 
                 {step === 2 && (
                     <>
                         <h3 className="dim-label">2/4 · Align</h3>
-                        <div className="hint">Turn the map until its walls run along the grid. The x-ray view makes walls glow brightest.</div>
+                        <div className="hint">Turn the map until its walls run along the grid. Drag to pan, scroll to zoom.</div>
                         <div className="row">
                             <div className="dial" onPointerDown={dial} title="drag around to turn" data-slicer-dial>
                                 <div className="dial-hand" style={{ transform: `rotate(${-degrees}deg)` }} />

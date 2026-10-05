@@ -107,6 +107,11 @@ export class MapScene {
     readonly root = new THREE.Group()
     /** the slice shown now (saved, or a draft while the slicer is open) */
     slice: Slice | null = null
+    #clipXY = true
+    /** the map's positions changed while the 3D view was hidden: its points still show the old ones */
+    #mapPending = false
+    /** the floor shown alone (its z band), or null for every floor */
+    #floorBand: [number, number] | null = null
     #xray = false
     #hidden: THREE.Object3D[] = []
     #annotations: Annotations | null = null
@@ -198,12 +203,34 @@ export class MapScene {
 
     // ---- data ----
 
+    /** New map voxels. While the 3D view is hidden (2D mode) only the positions change (the 2D views read them) and
+     * the 3D points are rebuilt once, when the 3D view shows again: a run of 2D edits costs the 3D view nothing. */
     setMap(positions: Float32Array, voxelSize: number) {
         this.voxelSize = voxelSize
-        this.map.set(positions)
+        if (this.viewer.paused) {
+            this.map.positions = positions
+            this.#mapPending = true
+        } else {
+            this.map.set(positions)
+            this.#mapPending = false
+        }
         this.map.points.visible = positions.length > 0
         this.mapRevision.set({ revision: this.mapRevision.get().revision + 1 })
         this.applyLook()
+        this.viewer.requestRender()
+    }
+
+    /** The 3D view is shown (3D, split) or hidden (2D): hidden, it draws nothing and map changes wait for it. */
+    setShown(shown: boolean) {
+        if (shown === !this.viewer.paused) {
+            return
+        }
+        this.viewer.paused = !shown
+        if (shown && this.#mapPending) {
+            this.#mapPending = false
+            this.map.set(this.map.positions as Float32Array)
+            this.applyLook()
+        }
         this.viewer.requestRender()
     }
 
@@ -699,17 +726,42 @@ export class MapScene {
      * `clipXY` false keeps x / y unclipped (while the crop is being picked). */
     setSlice(slice: Slice | null, clipXY = true) {
         this.slice = slice
+        this.#clipXY = clipXY
         this.root.rotation.z = slice?.yaw ?? 0
         this.root.updateMatrixWorld()
+        this.#applyClip()
         const big = 1e9
-        for (const layer of [this.map, this.raw]) {
-            const uniforms = layer.material.uniforms
-            uniforms.uClipMin.value.set(slice && clipXY ? slice.xMin : -big, slice && clipXY ? slice.yMin : -big, slice ? slice.zMin : -big)
-            uniforms.uClipMax.value.set(slice && clipXY ? slice.xMax : big, slice && clipXY ? slice.yMax : big, slice ? slice.zMax : big)
-        }
-        this.viewer.requestRender()
         // while the crop is being picked the 2D views aren't cropped either
         this.sliceStore.set({ slice: slice && !clipXY ? { ...slice, xMin: -big, xMax: big, yMin: -big, yMax: big } : slice })
+    }
+
+    /** Shows only the voxels between `band`'s heights (a floor's band in the floor model), within the slice; null
+     * shows every floor again. A view, like the slice. */
+    setFloorBand(band: [number, number] | null) {
+        if (band?.[0] === this.#floorBand?.[0] && band?.[1] === this.#floorBand?.[1]) {
+            return
+        }
+        this.#floorBand = band
+        this.#applyClip()
+    }
+
+    get floorBand(): [number, number] | null {
+        return this.#floorBand
+    }
+
+    /** the shaders' clip box: the slice's (x, y in its turned frame) and the floor band's z, intersected */
+    #applyClip() {
+        const slice = this.slice
+        const clipXY = this.#clipXY
+        const big = 1e9
+        const zMin = Math.max(slice ? slice.zMin : -big, this.#floorBand ? this.#floorBand[0] : -big)
+        const zMax = Math.min(slice ? slice.zMax : big, this.#floorBand ? this.#floorBand[1] : big)
+        for (const layer of [this.map, this.raw]) {
+            const uniforms = layer.material.uniforms
+            uniforms.uClipMin.value.set(slice && clipXY ? slice.xMin : -big, slice && clipXY ? slice.yMin : -big, zMin)
+            uniforms.uClipMax.value.set(slice && clipXY ? slice.xMax : big, slice && clipXY ? slice.yMax : big, zMax)
+        }
+        this.viewer.requestRender()
     }
 
     /** The slice's box in the world: its center and diagonal. */
@@ -896,6 +948,12 @@ export class MapScene {
     /** The 3D view as a PNG data URL; `overlay` draws a labelled 1 m grid, axes and annotation labels on it. */
     capture(options: { overlay?: boolean; topDown?: boolean } = {}): string {
         const viewer = this.viewer
+        if (this.#mapPending) {
+            // the agent asked for a picture of the 3D view while it's hidden: it shows the current map
+            this.#mapPending = false
+            this.map.set(this.map.positions as Float32Array)
+            this.applyLook()
+        }
         const camera = viewer.camera
         const saved = { position: camera.position.clone(), target: viewer.controls.target.clone() }
         if (options.topDown) {

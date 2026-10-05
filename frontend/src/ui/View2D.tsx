@@ -23,6 +23,8 @@ const SELECTED_COLOR = "#ffd166"
 interface Raster {
     floor: HTMLCanvasElement
     walls: HTMLCanvasElement
+    /** the walls' glow (Portal), soft: drawn smoothed under them */
+    glow: HTMLCanvasElement | null
     /** world x, y of the raster's lowest corner, meters per pixel, size in pixels */
     origin: [number, number]
     resolution: number
@@ -75,7 +77,8 @@ function inside(polygon: [number, number][], x: number, y: number) {
     return hit
 }
 
-export function View2D({ context, kind }: { context: Context; kind: "main" | "minimap" }) {
+/** `aligning`: the slicer's align step uses this view (pan and zoom only, framed the same at any turn) */
+export function View2D({ context, kind, aligning = false }: { context: Context; kind: "main" | "minimap"; aligning?: boolean }) {
     const { session, scene, ui, setUi, run, floor } = context
     const minimap = kind === "minimap"
     const host = useRef<HTMLDivElement>(null)
@@ -101,6 +104,17 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
     const panning = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null)
     const dragVertex = useRef<{ id: string; index: number; polygon: [number, number][] } | null>(null)
     const [, redraw] = useState(0)
+    /** the latest render's painter; pointer moves repaint through it once per frame, without a React render */
+    const paint = useRef<() => void>(() => {})
+    const paintFrame = useRef(0)
+    const requestPaint = () => {
+        if (!paintFrame.current) {
+            paintFrame.current = requestAnimationFrame(() => {
+                paintFrame.current = 0
+                paint.current()
+            })
+        }
+    }
     // the plan follows the theme (Portal: glowing blueprint, Research: ink on paper); re-raster when it changes
     const [themeRevision, setThemeRevision] = useState(0)
     useEffect(() => {
@@ -118,7 +132,8 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
     const shownSlice = useStore(scene?.sliceStore ?? NO_SLICE).slice
     const yaw = shownSlice?.yaw ?? 0
     const [cosYaw, sinYaw] = [Math.cos(yaw), Math.sin(yaw)]
-    const storey = minimap && scene ? storeyAt(floor, scene.viewer.controls.target.z) : Math.min(ui.planFloor, Math.max(0, (floor?.storeys.length ?? 1) - 1))
+    // the minimap shows the floor the 3D camera looks at, unless the 3D view shows one floor alone
+    const storey = minimap && scene && !ui.floorOnly ? storeyAt(floor, scene.viewer.controls.target.z) : Math.min(ui.planFloor, Math.max(0, (floor?.storeys.length ?? 1) - 1))
     // each column's own walkable floor: once per map version and storey, not per slider move
     const ownFloors = useMemo(() => {
         if (!scene || !floor || !floor.storeys.length) {
@@ -131,6 +146,12 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         }
         return computed
     }, [scene, floor, storey, mapRevision])
+    // the slicer's clip as far as it changes which cells are drawn: its turn only matters once it crops x / y (turning
+    // alone is a transform at draw time, so the align step's dial doesn't re-raster)
+    const cropped = !!shownSlice && shownSlice.xMax - shownSlice.xMin < 1e6
+    const clipKey = shownSlice ? (cropped ? JSON.stringify(shownSlice) : `${shownSlice.zMin},${shownSlice.zMax}`) : ""
+    const clipRef = useRef(shownSlice)
+    clipRef.current = shownSlice
     // the slice raster, recomputed when the map, the floor or the range change
     const slice = useMemo(() => {
         if (!scene || !floor || !floor.storeys.length) {
@@ -138,12 +159,13 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         }
         const started = performance.now()
         const range = ui.slice
-        const computed = computeSlice(scene.map.positions as Float32Array, floor, storey, range, 0.05, shownSlice, range.follow ? ownFloors : null)
-        const layers = sliceLayers(computed)
+        const clip = clipRef.current
+        const computed = computeSlice(scene.map.positions as Float32Array, floor, storey, range, 0.05, clip && !cropped ? { ...clip, yaw: 0 } : clip, range.follow ? ownFloors : null)
+        const layers = sliceLayers(computed, !minimap)
         const kindAt = (column: number, row: number) => computed.cells[(computed.height - 1 - row) * computed.width + column]
         const raster: Raster = { ...layers, origin: computed.origin, resolution: computed.resolution, width: computed.width, height: computed.height, content: contentBounds(kindAt, computed.width, computed.height, computed.origin, computed.resolution) }
         return { raster, milliseconds: performance.now() - started }
-    }, [scene, floor, storey, ui.slice.follow, ui.slice.z0, ui.slice.z1, mapRevision, shownSlice, ownFloors, themeRevision])
+    }, [scene, floor, storey, ui.slice.follow, ui.slice.z0, ui.slice.z1, mapRevision, clipKey, ownFloors, themeRevision])
 
     const heightImage = useMemo(() => (floor && ui.floorOverlay && !minimap ? floorHeightImage(floor, storey) : null), [floor, storey, ui.floorOverlay, minimap])
 
@@ -201,10 +223,13 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         g.restore()
     }
     const size_ = () => size()
+    const aligningRef = useRef(aligning)
+    aligningRef.current = aligning
     const persist = useMemo(() => {
         let timer = 0
         return () => {
-            if (minimap) {
+            // the align step's framing is its own: the 2D view's camera is put back after it
+            if (minimap || aligningRef.current) {
                 return
             }
             clearTimeout(timer)
@@ -215,8 +240,8 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
     const prisms: PrismAnnotation[] = (session?.annotations.prisms ?? []).filter((p) => p.floor === storey)
     const selectedPrism = ui.selected?.kind === "prism" ? prisms.find((p) => p.id === ui.selected!.id) ?? null : null
 
-    // draw
-    useEffect(() => {
+    // draw: a painter over this render's state, run after the render and again (from refs) on pointer moves
+    paint.current = () => {
         const element = canvas.current
         const box = host.current
         if (!element || !box) {
@@ -247,26 +272,33 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         if (!view.current || minimap || autoFit.current) {
             autoFit.current = true
             const [cx0, cy0, cx1, cy1] = raster.content ?? [raster.origin[0], raster.origin[1], raster.origin[0] + raster.width * raster.resolution, raster.origin[1] + raster.height * raster.resolution]
-            // framed in the turned frame: the crop if there is one, else the content's turned corners
+            // framed in the turned frame: the crop if there is one, else the content's turned corners (while aligning,
+            // the circle around the content, so turning it doesn't zoom the view in and out)
             const corners = [turn(cx0, cy0), turn(cx1, cy0), turn(cx0, cy1), turn(cx1, cy1)]
-            const cropped = shownSlice && shownSlice.xMax - shownSlice.xMin < 1e6
-            const [x0, y0, x1, y1] = cropped
+            const [mx, my] = turn((cx0 + cx1) / 2, (cy0 + cy1) / 2)
+            const radius = Math.hypot(cx1 - cx0, cy1 - cy0) / 2
+            const [x0, y0, x1, y1] = cropped && shownSlice
                 ? [shownSlice.xMin, shownSlice.yMin, shownSlice.xMax, shownSlice.yMax]
-                : [Math.min(...corners.map((c) => c[0])), Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[1]))]
+                : aligning
+                  ? [mx - radius, my - radius, mx + radius, my + radius]
+                  : [Math.min(...corners.map((c) => c[0])), Math.min(...corners.map((c) => c[1])), Math.max(...corners.map((c) => c[0])), Math.max(...corners.map((c) => c[1]))]
             const pad = minimap ? 8 : 40
             const pixelsPerMeter = Math.min((width - pad * 2) / Math.max(1, x1 - x0), (height - pad * 2) / Math.max(1, y1 - y0))
             view.current = { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, pixelsPerMeter }
         }
         const v = view.current!
         const rasterSize: [number, number] = [raster.width * raster.resolution, raster.height * raster.resolution]
-        g.imageSmoothingEnabled = v.pixelsPerMeter * raster.resolution < 6
-        g.imageSmoothingQuality = "high"
+        // crisp cells: smoothing only when a cell is smaller than a device pixel (zoomed far out), never to stretch one
+        // ("high" resamples on the CPU per frame in a software canvas: tens of ms a pan step; "medium" is enough)
+        const smooth = v.pixelsPerMeter * raster.resolution * ratio < 1
+        g.imageSmoothingQuality = "medium"
+        g.imageSmoothingEnabled = smooth
         drawMapImage(g, raster.floor, raster.origin, rasterSize, ratio)
-        if (!minimap) {
-            g.filter = PLAN_STYLE.glow
+        if (raster.glow && !minimap) {
+            // sampled like the cells (a smoothed full-screen stretch costs ~65 ms a frame in a software canvas)
+            drawMapImage(g, raster.glow, raster.origin, rasterSize, ratio)
         }
         drawMapImage(g, raster.walls, raster.origin, rasterSize, ratio)
-        g.filter = "none"
         if (heightImage && floor) {
             g.globalAlpha = 0.85
             g.imageSmoothingEnabled = false
@@ -488,7 +520,25 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             host.current.dataset.drawMs = (performance.now() - drawStarted).toFixed(1)
             host.current.dataset.storey = String(storey)
         }
-    })
+    }
+    useEffect(() => paint.current())
+    // the slicer's align step frames the map afresh; leaving it puts the 2D view's camera back
+    const beforeAlign = useRef<{ view: View2d | null; autoFit: boolean } | null>(null)
+    useEffect(() => {
+        if (minimap) {
+            return
+        }
+        if (aligning) {
+            beforeAlign.current = { view: view.current ? { ...view.current } : null, autoFit: autoFit.current }
+            autoFit.current = true
+        } else if (beforeAlign.current) {
+            view.current = beforeAlign.current.view
+            autoFit.current = beforeAlign.current.autoFit
+            beforeAlign.current = null
+        }
+        requestPaint()
+    }, [aligning, minimap])
+    useEffect(() => () => cancelAnimationFrame(paintFrame.current), [])
 
     // input
     useEffect(() => {
@@ -505,6 +555,9 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         const tool = (): string => {
             if (minimap) {
                 return "camera"
+            }
+            if (aligning) {
+                return "select"
             }
             const picked = current().ui.tool
             if (picked === "places") {
@@ -569,7 +622,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             }
             if (["erase", "brush", "line", "straighten"].includes(which)) {
                 stroke.current = { tool: which, path: [at] }
-                redraw((n) => n + 1)
+                requestPaint()
             } else if (which === "select" && selectedPrism) {
                 // grab a corner of the selected polygon, else pan
                 const hit = selectedPrism.polygon.findIndex(([px, py]) => {
@@ -595,7 +648,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             const at = toWorld(x, y)
             if (dragVertex.current && event.buttons & 1) {
                 dragVertex.current.polygon[dragVertex.current.index] = at
-                redraw((n) => n + 1)
+                requestPaint()
                 return
             }
             if (stroke.current && event.buttons & 1) {
@@ -609,7 +662,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
                         path.push(at)
                     }
                 }
-                redraw((n) => n + 1)
+                requestPaint()
                 return
             }
             if (panning.current && event.buttons) {
@@ -617,7 +670,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
                 const v = view.current!
                 v.cx = panning.current.cx - (x - panning.current.x) / v.pixelsPerMeter
                 v.cy = panning.current.cy + (y - panning.current.y) / v.pixelsPerMeter
-                redraw((n) => n + 1)
+                requestPaint()
                 persist()
             } else if (planTool.get().tool === "area" && current().ui.tool === "places") {
                 planTool.update({ hover: at })
@@ -680,7 +733,7 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
             const after = toWorld(x, y)
             v.cx += before[0] - after[0]
             v.cy += before[1] - after[1]
-            redraw((n) => n + 1)
+            requestPaint()
             persist()
         }
         const key = (event: KeyboardEvent) => {
@@ -768,12 +821,24 @@ export function View2D({ context, kind }: { context: Context; kind: "main" | "mi
         if (!box) {
             return
         }
-        const observer = new ResizeObserver(() => redraw((n) => n + 1))
+        const observer = new ResizeObserver(() => paint.current())
         observer.observe(box)
-        return () => observer.disconnect()
+        // a screen of another density: the canvas's backing store follows devicePixelRatio
+        let query = matchMedia(`(resolution: ${devicePixelRatio}dppx)`)
+        const densityChanged = () => {
+            query.removeEventListener("change", densityChanged)
+            query = matchMedia(`(resolution: ${devicePixelRatio}dppx)`)
+            query.addEventListener("change", densityChanged)
+            paint.current()
+        }
+        query.addEventListener("change", densityChanged)
+        return () => {
+            observer.disconnect()
+            query.removeEventListener("change", densityChanged)
+        }
     }, [])
 
-    const cursor = minimap ? "pointer" : ["erase", "brush", "line", "straighten", "polygon", "places"].includes(ui.tool) ? "crosshair" : "grab"
+    const cursor = minimap ? "pointer" : !aligning && ["erase", "brush", "line", "straighten", "polygon", "places"].includes(ui.tool) ? "crosshair" : "grab"
     void cameraTick
     return (
         <div className={minimap ? "minimap-view" : "plan-view"} ref={host} data-view2d={kind} style={{ cursor }}>

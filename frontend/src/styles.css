@@ -223,3 +223,7 @@ button:focus { outline: none; }
 .dim-toasts { bottom: calc(24px + var(--dim-inset-bottom)); }
 .recordings-empty { margin-top: 10px; }
 .recording-warning { margin-top: 8px; }
+/* the floor selector: bottom right of the view, over 3D, split and 2D alike */
+.floor-picker { position: absolute; right: 12px; bottom: calc(12px + var(--dim-inset-bottom)); z-index: 3; display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 6px; }
+.floor-picker .dim-label { text-align: center; margin: 0; }
+.floor-picker .dim-tab { justify-content: space-between; gap: 8px; }
