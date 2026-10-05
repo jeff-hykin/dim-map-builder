@@ -74,5 +74,5 @@ export interface GetZenohOptions {
     fetch?: typeof fetch
 }
 export function appBase(href: string): { base: string; app: string | null }
-export function checkTopic(topic: string, options?: { wildcards?: boolean }): string
+export { checkTopic } from "./topic.js"
 export function getZenoh(options?: GetZenohOptions): AppZenoh

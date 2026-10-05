@@ -13,6 +13,10 @@
 // that already has its own copy passes `connect`. Discovery and connecting retry with backoff (0.5 s doubling to 10 s);
 // once connected the client reconnects by itself and its subscriptions come back on their own.
 
+import { checkTopic } from "./topic.js"
+
+export { checkTopic }
+
 const SHARED = Symbol.for("dim-app.zenoh")
 const RETRY_MIN_MS = 500
 const RETRY_MAX_MS = 10_000
@@ -30,15 +34,6 @@ export function appBase(href) {
         return { base: `${url.origin}/`, app: null }
     }
     return { base: `${url.origin}${match[1]}/`, app: decodeURIComponent(match[2]) }
-}
-
-/** `<topic…>` chunks the relay accepts (letters, digits, `-`, `_`, `.`); `*` / `**` allowed for subscribing. */
-export function checkTopic(topic, { wildcards = false } = {}) {
-    const chunk = wildcards ? /^([A-Za-z0-9_.-]+|\*|\*\*)$/ : /^[A-Za-z0-9_.-]+$/
-    if (typeof topic !== "string" || !topic.split("/").every((part) => chunk.test(part))) {
-        throw new TypeError(`dim-app: bad topic ${JSON.stringify(topic)} (chunks of letters, digits, - _ .)`)
-    }
-    return topic
 }
 
 const decoder = new TextDecoder()
