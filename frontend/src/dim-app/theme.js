@@ -1,10 +1,11 @@
 // dim-app theme: picks the app's palette and keeps it current.
 //
 //     import "./theme.css"   // (or <link rel="stylesheet" href=".../theme.css">)
-//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.10.2/theme.js"
+//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.11.0/theme.js"
 //     initTheme()                                   // body.science [+ .dark], html[data-dim-theme]
 //     mountThemeToggle(document.querySelector("header"))   // optional in-app Portal / Research toggle
 //     onThemeChange(({ dark }) => renderer.setClearColor(themeColors().sceneBg))
+//     .drive-bar { bottom: calc(12px + var(--dim-inset-bottom)) }   // initTheme() also keeps --dim-inset-* current
 //
 // Two palettes (theme.css): Portal (dark) and Research (light). The default follows the OS/browser
 // `prefers-color-scheme`; an app may save its own choice, per app, in localStorage "dim-app.theme:<app>"
@@ -111,6 +112,7 @@ export function themeFontsReady() {
 export function initTheme() {
     if (!installed) {
         installed = true
+        initInsets()
         themeFontsReady()
         try {
             matchMedia("(prefers-color-scheme: dark)").addEventListener(
@@ -135,6 +137,51 @@ export function initTheme() {
     }
     apply()
     return themeName()
+}
+
+const INSET_SIDES = ["top", "bottom", "left", "right"]
+let insetsInstalled = false
+
+/**
+ * How much of the page Desktop's shell covers (its floating dock over the bottom edge), as `--dim-inset-top/bottom/
+ * left/right` on :root, in px; 0 when not inside Desktop. The shell posts `{type: "dimos-inset", top, bottom, left,
+ * right}` on load and on every change; this asks for it once too, in case the page started listening late.
+ * `initTheme()` calls it. Keep controls, panels and the ends of scrolling lists above `var(--dim-inset-bottom)`.
+ */
+export function initInsets() {
+    if (insetsInstalled) {
+        return
+    }
+    insetsInstalled = true
+    const root = document.documentElement
+    for (const side of INSET_SIDES) {
+        if (!root.style.getPropertyValue(`--dim-inset-${side}`)) {
+            root.style.setProperty(`--dim-inset-${side}`, "0px")
+        }
+    }
+    addEventListener("message", (event) => {
+        const data = event.data
+        if (event.origin !== location.origin || data?.type !== "dimos-inset" || event.source !== parent) {
+            return
+        }
+        for (const side of INSET_SIDES) {
+            const value = Number(data[side])
+            root.style.setProperty(`--dim-inset-${side}`, `${Number.isFinite(value) && value > 0 ? value : 0}px`)
+        }
+    })
+    try {
+        if (parent !== globalThis) {
+            parent.postMessage({ type: "dimos-inset-request" }, location.origin)
+        }
+    } catch {
+        // no parent to ask
+    }
+}
+
+/** The current insets in px, `{ top, bottom, left, right }` (all 0 outside Desktop). */
+export function insets() {
+    const style = document.documentElement.style
+    return Object.fromEntries(INSET_SIDES.map((side) => [side, parseFloat(style.getPropertyValue(`--dim-inset-${side}`)) || 0]))
 }
 
 /** Saves this app's choice ("dark" | "light" | "auto") and applies it. */

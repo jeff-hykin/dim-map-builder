@@ -11,6 +11,8 @@ export function themeName(): "portal" | "research"
 export const THEME_FONTS: string[]
 export function themeFontsReady(): Promise<unknown>
 export function initTheme(): "portal" | "research"
+export function initInsets(): void
+export function insets(): { top: number; bottom: number; left: number; right: number }
 export function setThemeChoice(choice: ThemeChoice): void
 export function toggleTheme(): void
 export function onThemeChange(

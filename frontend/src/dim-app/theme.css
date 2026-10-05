@@ -64,6 +64,15 @@
     src: url("./fonts/michroma-400.woff2") format("woff2");
 }
 
+/* how much of the page Desktop's shell covers (its dock), set by theme.js from the shell's "dimos-inset" message;
+   0 outside Desktop. Keep controls and the ends of scrolling lists above var(--dim-inset-bottom). */
+:root {
+    --dim-inset-top: 0px;
+    --dim-inset-bottom: 0px;
+    --dim-inset-left: 0px;
+    --dim-inset-right: 0px;
+}
+
 /* ───────────────────────── Research (light) tokens ───────────────────────── */
 :root {
     /* the doc's own names */
@@ -1715,4 +1724,90 @@ body.science.dark .dim-theme-toggle {
 }
 body.science.dark .dim-theme-toggle::before {
     box-shadow: 0 0 6px var(--primary);
+}
+
+/* ───────────────────────── empty / first-run states (desktop.js emptyState) ───────────────────────── */
+
+/* what's wrong + the next step. Research: a white hairline card, a serif sentence, a mono micro-label in the accent;
+   Portal: a square hairline panel, an Inter sentence, a Michroma micro-label */
+.dim-empty-host {
+    display: contents;
+}
+.dim-empty-layer {
+    position: absolute;
+    top: var(--dim-inset-top);
+    left: var(--dim-inset-left);
+    right: var(--dim-inset-right);
+    bottom: var(--dim-inset-bottom);
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    pointer-events: none;
+    z-index: 5;
+}
+.dim-empty-layer > .dim-empty {
+    pointer-events: auto;
+}
+.dim-empty {
+    box-sizing: border-box;
+    width: min(480px, 100%);
+    margin: 0 auto;
+    padding: 22px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--card);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    text-align: left;
+}
+.dim-empty-label {
+    font: 500 10.5px/1.5 var(--mono);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--primary);
+}
+.dim-empty.warn .dim-empty-label {
+    color: var(--warn);
+}
+.dim-empty-title {
+    font: 400 24px/1.2 var(--display);
+    letter-spacing: -0.01em;
+    color: var(--fg);
+}
+.dim-empty-body {
+    font: 400 13.5px/1.55 var(--sans);
+    color: var(--muted-fg);
+}
+.dim-empty-body code {
+    font-size: 12.5px;
+}
+.dim-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+}
+.dim-empty.busy .dim-empty-label::after {
+    content: " …";
+}
+body.science.dark .dim-empty {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--primary);
+    box-shadow: none;
+}
+body.science.dark .dim-empty.warn {
+    border-left-color: var(--warn);
+}
+body.science.dark .dim-empty-label {
+    font: 400 10px/1.5 var(--display);
+    letter-spacing: 0.2em;
+    color: var(--dim);
+}
+body.science.dark .dim-empty-title {
+    font: 500 16px/1.4 var(--sans);
+    letter-spacing: 0;
 }

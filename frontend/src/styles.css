@@ -107,13 +107,13 @@ button:focus { outline: none; }
 .palette { position: absolute; left: 36px; top: 108px; display: flex; flex-direction: column; gap: 4px; z-index: 6; padding: 4px; animation: palette-in 180ms ease-out; }
 @keyframes palette-in { from { opacity: 0; transform: translateY(-8px); } }
 .palette .dim-btn { width: 34px; height: 34px; padding: 0; font-size: 16px; }
-.tool-panel { position: absolute; left: 92px; top: 108px; width: 330px; max-height: calc(100% - 126px); overflow: auto; z-index: 6; padding: 8px 12px 12px; box-shadow: var(--shadow-lg); }
+.tool-panel { position: absolute; left: 92px; top: 108px; width: 330px; max-height: calc(100% - 126px - var(--dim-inset-bottom)); overflow: auto; z-index: 6; padding: 8px 12px 12px; box-shadow: var(--shadow-lg); }
 .tool-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
 
 /* ── modals ── */
-.modal-backdrop { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg) 60%, transparent); display: grid; place-items: center; z-index: 20; animation: fade-in 150ms ease-out; }
+.modal-backdrop { position: fixed; inset: 0; bottom: var(--dim-inset-bottom); background: color-mix(in srgb, var(--bg) 60%, transparent); display: grid; place-items: center; z-index: 20; animation: fade-in 150ms ease-out; }
 @keyframes fade-in { from { opacity: 0; } }
-.modal { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 60px); overflow: auto; padding: 14px 18px 18px; box-shadow: var(--shadow-lg); }
+.modal { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 60px - var(--dim-inset-bottom)); overflow: auto; padding: 14px 18px 18px; box-shadow: var(--shadow-lg); }
 .modal-head { display: flex; justify-content: space-between; align-items: center; }
 .modal-head h2 { margin: 0; }
 .advanced { padding: 6px 10px; margin: 10px 0; }
@@ -131,7 +131,7 @@ button:focus { outline: none; }
 .dual-range input[type="range"] { position: absolute; inset: 0; width: 100%; margin: 0; background: none; pointer-events: none; -webkit-appearance: none; appearance: none; }
 .dual-range input[type="range"]::-webkit-slider-thumb { pointer-events: auto; -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%; background: var(--primary); border: 2px solid var(--card); box-shadow: var(--shadow); cursor: pointer; }
 .dual-range input[type="range"]::-moz-range-thumb { pointer-events: auto; width: 13px; height: 13px; border-radius: 50%; background: var(--primary); border: 2px solid var(--card); box-shadow: var(--shadow); cursor: pointer; }
-.height-legend { position: absolute; left: 12px; bottom: 12px; padding: 4px 8px; font-size: 11px; z-index: 2; display: flex; gap: 8px; align-items: center; }
+.height-legend { position: absolute; left: 12px; bottom: calc(12px + var(--dim-inset-bottom)); padding: 4px 8px; font-size: 11px; z-index: 2; display: flex; gap: 8px; align-items: center; }
 .height-legend .ramp { display: inline-block; width: 120px; height: 8px; background: linear-gradient(90deg, #3e5fd8, #39a2fc, #24eca6, #a4fc3b, #f3c63a, #fe9b2d); }
 
 /* ── recordings list ── */
@@ -168,7 +168,7 @@ button:focus { outline: none; }
 
 /* ── overlays on the view ── */
 .view-tools { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }
-.view-stats { position: absolute; left: 12px; bottom: 12px; color: var(--primary); padding: 3px 8px; font-size: 11px; z-index: 2; }
+.view-stats { position: absolute; left: 12px; bottom: calc(12px + var(--dim-inset-bottom)); color: var(--primary); padding: 3px 8px; font-size: 11px; z-index: 2; }
 .history { color: var(--muted-fg); font-size: 11px; display: grid; gap: 2px; max-height: 180px; overflow: auto; }
 
 /* ── the 2D view ── */
@@ -183,7 +183,7 @@ button:focus { outline: none; }
 @media (max-width: 760px) {
     .recording-name { display: none; }
     .mode-switch { grid-template-columns: repeat(3, 56px); }
-    .tool-panel { left: 12px; right: 12px; width: auto; top: auto; bottom: 12px; max-height: 45%; }
+    .tool-panel { left: 12px; right: 12px; width: auto; top: auto; bottom: calc(12px + var(--dim-inset-bottom)); max-height: 45%; }
     .slice-bar { flex-wrap: wrap; max-width: calc(100% - 24px); }
 }
 
@@ -196,7 +196,7 @@ button:focus { outline: none; }
 .upload-ring[data-busy="ring"] .dim-icon { background: var(--card); border-radius: 50%; width: 16px; height: 16px; padding: 2px; box-sizing: border-box; }
 .upload-ring[data-busy="spin"] { border: 2px solid var(--muted); border-top-color: var(--primary); animation: orb-spin 1s linear infinite; }
 .upload-ring[data-busy="spin"] .dim-icon { animation: orb-spin 1s linear infinite reverse; }
-.uploads-panel { position: absolute; right: 12px; top: 12px; z-index: 8; width: min(420px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; padding: 10px 12px; box-shadow: var(--shadow-lg); animation: palette-in 160ms ease-out; }
+.uploads-panel { position: absolute; right: 12px; top: 12px; z-index: 8; width: min(420px, calc(100% - 24px)); max-height: calc(100% - 24px - var(--dim-inset-bottom)); overflow: auto; padding: 10px 12px; box-shadow: var(--shadow-lg); animation: palette-in 160ms ease-out; }
 .uploads-panel .tool-panel-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; }
 .upload-account { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; font-size: 12px; }
 .uploads { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
@@ -219,3 +219,7 @@ button:focus { outline: none; }
 .login-wait { display: flex; align-items: center; gap: 8px; margin: 12px 0; color: var(--muted-fg); flex-wrap: wrap; }
 .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--muted); border-top-color: var(--primary); animation: orb-spin 0.9s linear infinite; display: inline-block; }
 .upload-numbers [data-eta] { margin-left: auto; }
+/* Desktop's dock covers the bottom of the frame (dim-app --dim-inset-bottom): toasts and the picker stay above it */
+.dim-toasts { bottom: calc(24px + var(--dim-inset-bottom)); }
+.recordings-empty { margin-top: 10px; }
+.recording-warning { margin-top: 8px; }

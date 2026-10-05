@@ -504,8 +504,8 @@ export function App() {
         <div className={`app mode-${mode} ${sliding ? "sliding" : ""}`}>
             <header className="topbar">
                 <span className="dim-title title">Map Editor</span>
-                <button type="button" className="dim-btn sm icon recording-name" title={session ? `${session.recordingPath} (open another)` : "Open a recording"} onClick={() => setModal("open")} data-action="open">
-                    {session ? <><Icon name="chevron-down" /> {session.name}</> : "Open a recording…"}
+                <button type="button" className="dim-btn sm icon recording-name" title={session ? `${session.recordingPath} (open another)` : "Pick a recording"} onClick={() => setModal("open")} data-action="open">
+                    {session ? <><Icon name="chevron-down" /> {session.name}</> : "Pick a recording…"}
                 </button>
                 <span className="spacer" />
                 <div className="dim-tabs mode-switch" role="tablist" aria-label="view" data-mode-switch={mode}>
@@ -650,11 +650,15 @@ export function App() {
                 )}
                 {uploads.panelOpen && <UploadsPanel uploads={uploads} />}
                 <div className="dim-toasts">{toast && <div className={`dim-toast ${toast.error ? "danger" : ""}`}>{toast.text}</div>}</div>
-                {!connected && <div className="dim-alert danger connection">Reconnecting to the Map Editor server…</div>}
+                {!connected && (
+                    <div className="dim-alert danger connection" data-testid="onboard-backend-down">
+                        The Map Editor server isn't answering; reconnecting… If this stays, close the app (✕) and open it again.
+                    </div>
+                )}
             </section>
             {uploads.loginOpen && (
                 <LoginDialog
-                    reason={uploads.waitingForLogin ? "Uploads are waiting for you to log in." : null}
+                    reason={uploads.waitingForLogin ? "Log in to Dimensional cloud to upload: your uploads wait here until you do." : null}
                     onApproved={uploads.loggedIn}
                     onClose={uploads.closeLogin}
                 />
