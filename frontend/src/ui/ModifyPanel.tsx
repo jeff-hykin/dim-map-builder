@@ -10,7 +10,7 @@ const ABOUT: Record<string, string> = {
     erase: "Brush away what stands on the floor: a couch, a person, clutter. The floor under it is filled in from the floor around.",
     brush: "Brush voxels onto the floor, up to the height below.",
     line: "Drag a straight line of voxels (a wall the robot should see).",
-    straighten: "Drag along a noisy wall. It finds the whole wall (past your stroke), fits a straight slab of the wall's own thickness, and meets the walls at its corners; specks and fringe go.",
+    straighten: "Drag along a noisy wall. Inside the band you drag, it becomes one straight slab of the wall's own thickness; specks, fringe and doubled scans there go. Nothing outside the band changes.",
 }
 
 function Number_({ label, value, min, max, step, unit, onChange, data }: { label: string; value: number; min: number; max: number; step: number; unit: string; onChange: (value: number) => void; data: string }) {

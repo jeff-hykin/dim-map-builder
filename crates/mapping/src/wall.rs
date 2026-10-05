@@ -1,8 +1,9 @@
-//! Straighten a wall: fit an oriented rectangular prism to a wall and force the wall's voxels into it. The stroke is
-//! only a hint: the fit grows along the wall well past it (through doorways), the prism keeps the wall's own thickness,
-//! and its ends meet the walls they run into, at any angle: an L corner fills out to the other wall's outer face, a
-//! wall ending on a through-wall (T) stops at its near face. Walls crossing the prism, furniture against it and the
-//! other walls are left alone; specks, fringe and stair-step edges hugging the wall go.
+//! Straighten a wall: fit one straight slab to the wall under the brush and force the wall's voxels into it. The fit may
+//! read half a metre around the brush (a wall's angle and thickness show better over more of it), but every voxel
+//! removed or added is inside the brush's band. A noisy band, or a wall scanned twice a few cm apart, becomes ONE slab
+//! of the wall's own thickness (whole voxels, measured per 10 cm along it, so jitter doesn't widen it) at the median
+//! position; everything else wall-high in the band goes, except what carries on outward past the band's side (a
+//! crossing wall, a cabinet against the wall). A free end stops at the wall's last voxel; doorways keep their header.
 use crate::edit::{center, Edit, Reach};
 use crate::voxels::{key_of, Key};
 use ahash::{AHashMap, AHashSet};
@@ -63,12 +64,12 @@ fn fit_axis(xy: &[[f32; 2]]) -> Option<([f32; 2], [f32; 2], f32)> {
     Some((origin, direction, ratio))
 }
 
-/// The wall's core across its line, per 0.5 m stretch: the run of voxel-wide bins around the fullest with at least half
+/// The wall's core across its line, per 10 cm stretch (so a jittering wall doesn't read wider than it is): the run of voxel-wide bins around the fullest with at least half
 /// its count. Returns (thickness in voxels, the core's middle across), medians over the stretches.
 fn core(xy: &[[f32; 2]], line: &Line, voxel: f32) -> (i32, f32) {
     let mut by_stretch: AHashMap<i32, AHashMap<i32, usize>> = AHashMap::new();
     for p in xy {
-        *by_stretch.entry((line.along(*p) / 0.5).floor() as i32).or_default().entry((line.across(*p) / voxel).floor() as i32).or_default() += 1;
+        *by_stretch.entry((line.along(*p) / 0.1).floor() as i32).or_default().entry((line.across(*p) / voxel).floor() as i32).or_default() += 1;
     }
     let (mut widths, mut middles) = (Vec::new(), Vec::new());
     for histogram in by_stretch.values() {
@@ -154,68 +155,8 @@ fn wall_line_snapped(xy: &[[f32; 2]], voxel: f32, thickness: Option<f32>, toward
     Some((line, ratio))
 }
 
-/// One end of the prism: keep the side of a line (a point on it, and a normal pointing into the prism).
-#[derive(Debug, Clone, Copy)]
-struct Cut {
-    point: [f32; 2],
-    inward: [f32; 2],
-}
-
-impl Cut {
-    fn keeps(&self, p: [f32; 2], slack: f32) -> bool {
-        (p[0] - self.point[0]) * self.inward[0] + (p[1] - self.point[1]) * self.inward[1] >= -slack
-    }
-}
-
-/// The strongest straight wall among `points` that isn't along `line` (20° or more off it): a Hough vote over 3°
-/// steps and 10 cm offsets, then a line fitted to the winner's points. With how elongated those are.
-fn other_wall(points: &[[f32; 2]], line: &Line, voxel: f32) -> Option<(Line, f32)> {
-    if points.len() < 20 {
-        return None;
-    }
-    // each voxel column votes once (a tall wall doesn't outvote a long one)
-    let cells: Vec<[f32; 2]> = {
-        let set: AHashSet<(i32, i32)> = points.iter().map(|p| ((p[0] / voxel).floor() as i32, (p[1] / voxel).floor() as i32)).collect();
-        set.into_iter().map(|c| [(c.0 as f32 + 0.5) * voxel, (c.1 as f32 + 0.5) * voxel]).collect()
-    };
-    let band = 1.2 * voxel;
-    let mut best: (usize, f32, i32) = (0, 0.0, 0);
-    for step in 0..60 {
-        let angle = (step as f32 * 3.0).to_radians();
-        let direction = [angle.cos(), angle.sin()];
-        let sine = (line.direction[0] * direction[1] - line.direction[1] * direction[0]).abs();
-        if sine < 20f32.to_radians().sin() {
-            continue;
-        }
-        let normal = [-direction[1], direction[0]];
-        let mut bins: AHashMap<i32, usize> = AHashMap::new();
-        for p in &cells {
-            *bins.entry(((p[0] * normal[0] + p[1] * normal[1]) / band).floor() as i32).or_default() += 1;
-        }
-        if let Some((bin, count)) = bins.into_iter().max_by_key(|(_, c)| *c) {
-            if count > best.0 {
-                best = (count, angle, bin);
-            }
-        }
-    }
-    if best.0 < 5 {
-        return None;
-    }
-    let normal = [-best.1.sin(), best.1.cos()];
-    let offset = (best.2 as f32 + 0.5) * band;
-    let chosen: Vec<[f32; 2]> = points.iter().copied().filter(|p| (p[0] * normal[0] + p[1] * normal[1] - offset).abs() <= 2.0 * band).collect();
-    // a short piece of wall fits loosely: a few degrees off an axis is the axis
-    let (other, ratio) = wall_line_snapped(&chosen, voxel, None, [best.1.cos(), best.1.sin()], 10.0)?;
-    // a wall, not a post: half a metre long at least
-    let spread = chosen.iter().map(|p| other.along(*p)).fold((f32::MAX, f32::MIN), |(a, b), t| (a.min(t), b.max(t)));
-    if spread.1 - spread.0 < 0.5 {
-        return None;
-    }
-    let sine = (line.direction[0] * other.direction[1] - line.direction[1] * other.direction[0]).abs();
-    (sine >= 20f32.to_radians().sin()).then_some((other, ratio))
-}
-
-/// See the module docs. `width` is the brush's band; `reach` caps how high the wall is rebuilt and cleaned.
+/// See the module docs. The selection is the brush's band: `width` wide along from → to. `reach` caps how high the
+/// wall is rebuilt and cleaned.
 #[allow(clippy::too_many_arguments)]
 pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: [f32; 2], to: [f32; 2], width: f32, thickness: Option<f32>, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
     let mut edit = Edit::default();
@@ -224,27 +165,24 @@ pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: 
         return edit;
     }
     let drawn = Line { origin: from, direction: [(to[0] - from[0]) / length, (to[1] - from[1]) / length], half: width / 2.0 };
-    // the search area, well past the brush: 8 m beyond the stroke's ends and 2 m to either side
-    let (grow, side) = (8.0, 2.0);
+    // the selection, by a voxel column's centre: nothing outside it is ever removed or added
+    let selected = |column: (i32, i32)| {
+        let p = [(column.0 as f32 + 0.5) * voxel, (column.1 as f32 + 0.5) * voxel];
+        (0.0..=length).contains(&drawn.along(p)) && drawn.across(p).abs() <= drawn.half
+    };
+    let column_of = |p: [f32; 3]| ((p[0] / voxel).floor() as i32, (p[1] / voxel).floor() as i32);
+    // what's read: the selection and `margin` around it (to fit the wall, find floors and see what carries on outward)
+    let margin = 0.5;
     let near: Vec<u32> = (0..points.len() as u32)
         .filter(|i| {
             let p = points[*i as usize];
             let (t, d) = (drawn.along([p[0], p[1]]), drawn.across([p[0], p[1]]));
-            t >= -grow && t <= length + grow && d.abs() <= width / 2.0 + side
+            t >= -margin && t <= length + margin && d.abs() <= drawn.half + margin
         })
         .collect();
-    // the wall-height voxels among them: above their column's floor and under the reach
     let occupied: AHashSet<Key> = near.iter().map(|i| key_of(points[*i as usize], voxel)).collect();
-    // for finding floors, the wall under the stroke doesn't count (it's about to be rebuilt; its foot isn't floor)
-    let around_floor: AHashSet<Key> = near
-        .iter()
-        .filter(|i| {
-            let p = points[**i as usize];
-            let (t, d) = (drawn.along([p[0], p[1]]), drawn.across([p[0], p[1]]));
-            !((-grow..=length + grow).contains(&t) && d.abs() <= width / 2.0)
-        })
-        .map(|i| key_of(points[*i as usize], voxel))
-        .collect();
+    // for finding floors, the wall under the brush doesn't count (it's about to be rebuilt; its foot isn't floor)
+    let around_floor: AHashSet<Key> = near.iter().filter(|i| !selected(column_of(points[**i as usize]))).map(|i| key_of(points[*i as usize], voxel)).collect();
     let mut floors: AHashMap<(i32, i32), Option<f32>> = AHashMap::new();
     let mut floor_of = |column: (i32, i32)| -> Option<f32> {
         *floors.entry(column).or_insert_with(|| {
@@ -256,7 +194,6 @@ pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: 
                 (low..=high)
                     .rev()
                     .find(|layer| {
-                        // a top surface: 7 of the 3 x 3 occupied here, little of it just above (a wall isn't one)
                         let count = |l: i32| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| around_floor.contains(&(column.0 + dx, column.1 + dy, l))).count();
                         count(*layer) >= 7 && count(layer + 1) <= 3
                     })
@@ -264,207 +201,56 @@ pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: 
             })
         })
     };
+    // the wall-height voxels: above their column's floor and under the reach
     let wallish: Vec<u32> = near
         .iter()
         .copied()
         .filter(|i| {
             let p = points[*i as usize];
-            p[2] >= reach.bottom && floor_of(((p[0] / voxel).floor() as i32, (p[1] / voxel).floor() as i32)).is_some_and(|floor| p[2] > floor + voxel * 0.5 && p[2] <= reach.top(floor))
-        })
-        .collect();
-    // the wall's middle (0.4 m and more over the floor and the storey's bottom): what finds and follows the wall, so
-    // a floor slab's edge or a step doesn't pass for wall
-    let middle: AHashSet<u32> = wallish
-        .iter()
-        .copied()
-        .filter(|i| {
-            let p = points[*i as usize];
-            p[2] >= reach.bottom + 0.6 && floor_of(((p[0] / voxel).floor() as i32, (p[1] / voxel).floor() as i32)).is_some_and(|floor| p[2] >= floor + 0.4)
+            p[2] >= reach.bottom && floor_of(column_of(p)).is_some_and(|floor| p[2] > floor + voxel * 0.5 && p[2] <= reach.top(floor))
         })
         .collect();
     let xy = |i: &u32| [points[*i as usize][0], points[*i as usize][1]];
-    // 1. the hint: the wall in the brush's band
-    let hint: Vec<[f32; 2]> = wallish.iter().filter(|i| (0.0..=length).contains(&drawn.along(xy(i))) && drawn.across(xy(i)).abs() <= width / 2.0).map(xy).collect();
+    // 1. the line: fitted to the wall in the selection (refit below on the wall around it too)
+    let hint: Vec<[f32; 2]> = wallish.iter().filter(|i| selected(column_of(points[**i as usize]))).map(xy).collect();
     if hint.len() < 8 {
         return edit;
     }
-    let Some((mut line, _)) = wall_line_snapped(&hint, voxel, thickness, drawn.direction, if length < 1.5 { 10.0 } else { 2.0 }) else { return edit };
+    let snap = if length < 1.5 { 10.0 } else { 2.0 };
+    let Some((mut line, _)) = wall_line_snapped(&hint, voxel, thickness, drawn.direction, snap) else { return edit };
     // the stroke says which way the wall runs: a fit more than 20° off it (a short stroke over mixed data) is overruled
     // (a stroke under a metre is all over a short wall: its direction is the stroke's)
     let forced = length < 1.0 || (line.direction[0] * drawn.direction[0] + line.direction[1] * drawn.direction[1]).abs() < 20f32.to_radians().cos();
     if forced {
-        let Some((forced, _)) = wall_line_along(&hint, voxel, thickness, drawn.direction) else { return edit };
-        line = forced;
+        let Some((along_stroke, _)) = wall_line_along(&hint, voxel, thickness, drawn.direction) else { return edit };
+        line = along_stroke;
     }
-    // 2. grow along the wall from the stroke's span while there's wall there (gaps up to 0.25 m: doorways have headers)
-    let grow_support = |line: &Line| -> (f32, f32) {
-        let mut counts: AHashMap<i32, usize> = AHashMap::new();
-        for i in &middle {
-            if line.across(xy(i)).abs() <= line.half + voxel {
-                *counts.entry((line.along(xy(i)) / voxel).floor() as i32).or_default() += 1;
-            }
-        }
-        let (s0, s1) = {
-            let (a, b) = (line.along(from), line.along(to));
-            ((a.min(b) / voxel).floor() as i32, (a.max(b) / voxel).floor() as i32)
-        };
-        let mut inside: Vec<usize> = (s0..=s1).map(|s| counts.get(&s).copied().unwrap_or(0)).collect();
-        inside.sort_unstable();
-        let enough = (inside[inside.len() / 2] * 3 / 10).max(2);
-        let max_gap = (0.25 / voxel).ceil() as i32;
-        let walk = |start: i32, step: i32| -> i32 {
-            let (mut last, mut gap, mut s) = (start, 0, start);
-            loop {
-                s += step;
-                if (s - start).abs() as f32 * voxel > grow {
-                    return last;
-                }
-                if counts.get(&s).copied().unwrap_or(0) >= enough {
-                    last = s;
-                    gap = 0;
-                } else {
-                    gap += 1;
-                    if gap > max_gap {
-                        return last;
-                    }
-                }
-            }
-        };
-        let (first, end) = (walk(s0, -1), walk(s1, 1));
-        // the stroke's own span counts even where it ran past the wall
-        (first.min(s0) as f32 * voxel, (end.max(s1) + 1) as f32 * voxel)
+    // the stroke's span on the line
+    let (start, end) = {
+        let (a, b) = (line.along(from), line.along(to));
+        (a.min(b), a.max(b))
     };
-    let (mut start, mut end) = grow_support(&line);
-    // 3. refit on the whole wall segment found
-    let support: Vec<[f32; 2]> = wallish.iter().map(xy).filter(|p| (start..=end).contains(&line.along(*p)) && line.across(*p).abs() <= line.half + 2.0 * voxel).collect();
-    // a short wall fits loosely: within a few degrees of an axis it's the axis
-    let snap = if end - start < 1.5 { 10.0 } else { 2.0 };
+    // refit on the wall's band through the whole read area (a few metres say more about its angle than the stroke)
+    let support: Vec<[f32; 2]> = wallish.iter().map(xy).filter(|p| (start - margin..=end + margin).contains(&line.along(*p)) && line.across(*p).abs() <= line.half + 2.0 * voxel).collect();
     let refit = if forced { wall_line_along(&support, voxel, thickness, line.direction) } else { wall_line_snapped(&support, voxel, thickness, line.direction, snap) };
     if let Some((refit, _)) = refit.filter(|(r, _)| (r.direction[0] * line.direction[0] + r.direction[1] * line.direction[1]).abs() >= 20f32.to_radians().cos()) {
         line = refit;
-        (start, end) = grow_support(&line);
     }
-    // the ends are found twice when needed: a short wall between two walls takes their thickness if its own reads much
-    // thicker (sparse data reads wide)
-    let mut pass = 0;
-    let (half, cuts, others, slab_start, slab_end) = loop {
-        let half = line.half;
-        // a free end stops at the wall's last voxel (its core, not fringe)
-        let core_along: Vec<f32> = wallish.iter().map(xy).filter(|p| line.across(*p).abs() <= half && (start - voxel..=end + voxel).contains(&line.along(*p))).map(|p| line.along(p)).collect();
-        if core_along.is_empty() {
-            return edit;
-        }
-        let (data_start, data_end) = core_along.iter().fold((f32::MAX, f32::MIN), |(a, b), t| (a.min(*t), b.max(*t)));
-        // 4. the ends: a wall that this one runs into (any angle) cuts it; otherwise it's cut square where it ends
-        let mut cuts: Vec<Cut> = Vec::new();
-        // the walls met at the ends, with the span along them their voxels cover
-        let mut others: Vec<(Line, f32, f32)> = Vec::new();
-        let (mut slab_start, mut slab_end) = (data_start - voxel * 0.5, data_end + voxel * 0.5);
-        for outward in [-1.0f32, 1.0] {
-            let tip = line.at(if outward > 0.0 { data_end + voxel * 0.5 } else { data_start - voxel * 0.5 }, 0.0);
-            let tip_along = line.along(tip);
-            // a little back from the end (a wall it ends against may overlap it), never as far as the other end's walls
-            let back = 0.3f32.min(0.4 * (data_end - data_start));
-            // what's around the end: past it or beside it, not this wall's own body
-            let around: Vec<[f32; 2]> = wallish
-                .iter()
-                .map(xy)
-                .filter(|p| {
-                    let (t, d) = ((line.along(*p) - tip_along) * outward, line.across(*p));
-                    (-back..=0.6).contains(&t) && d.abs() <= 0.8 && !(t <= 0.0 && d.abs() <= half + 2.0 * voxel)
-                })
-                .collect();
-            let into = [line.direction[0] * -outward, line.direction[1] * -outward];
-            let neighbour = other_wall(&around, &line, voxel).filter(|(_, ratio)| *ratio >= 6.0).map(|(found, ratio)| {
-                // refit on more of it: its band, out to 1.5 m from the end, minus this wall's own body
-                let more: Vec<[f32; 2]> = wallish
-                    .iter()
-                    .map(xy)
-                    .filter(|p| {
-                        let (t, d) = ((line.along(*p) - tip_along) * outward, line.across(*p));
-                        found.across(*p).abs() <= found.half + 2.0 * voxel && (p[0] - tip[0]).hypot(p[1] - tip[1]) <= 1.5 && !(t <= 0.0 && d.abs() <= half + 2.0 * voxel)
-                    })
-                    .collect();
-                let snap = if more.len() < 200 { 10.0 } else { 3.0 };
-                wall_line_snapped(&more, voxel, None, found.direction, snap).filter(|(again, _)| {
-                    (line.direction[0] * again.direction[1] - line.direction[1] * again.direction[0]).abs() >= 20f32.to_radians().sin()
-                }).unwrap_or((found, ratio))
-            });
-            // only a wall right at the end: one further off doesn't pull this one out to it
-        let neighbour = neighbour.filter(|(other, _)| {
-            let mut toward = other.normal();
-            if toward[0] * into[0] + toward[1] * into[1] < 0.0 {
-                toward = [-toward[0], -toward[1]];
-            }
-            let gap = ((tip[0] - other.origin[0]) * toward[0] + (tip[1] - other.origin[1]) * toward[1]).abs() - other.half;
-            gap <= 0.3
-        });
-        let Some((other, _)) = neighbour else {
-                cuts.push(Cut { point: tip, inward: into });
-                continue;
-            };
-            // its span: the voxel-long bins along it that are dense (fringe from this wall in its band is sparse)
-            let mut counts: AHashMap<i32, usize> = AHashMap::new();
-            for p in wallish.iter().map(xy).filter(|p| (p[0] - tip[0]).hypot(p[1] - tip[1]) <= 1.5 && other.across(*p).abs() <= other.half + 0.5 * voxel) {
-                *counts.entry((other.along(p) / voxel).floor() as i32).or_default() += 1;
-            }
-            let dense = counts.values().copied().max().unwrap_or(0) * 3 / 10;
-            let (low, high) = counts.iter().filter(|(_, c)| **c >= dense.max(1)).fold((i32::MAX, i32::MIN), |(a, b), (bin, _)| (a.min(*bin), b.max(*bin)));
-            let (low, high) = (low as f32 * voxel, (high + 1) as f32 * voxel);
-            // a junction only if that wall actually reaches this one's line (a wall passing nearby isn't one)
-            let (ends_a, ends_b) = (line.across(other.at(low, 0.0)), line.across(other.at(high, 0.0)));
-            let reaches = ends_a.signum() != ends_b.signum() || ends_a.abs().min(ends_b.abs()) <= half + other.half + 0.15;
-            if !reaches {
-                cuts.push(Cut { point: tip, inward: into });
-                continue;
-            }
-            // the other wall's normal, pointed back into this wall's body
-            let mut inward = other.normal();
-            if inward[0] * into[0] + inward[1] * into[1] < 0.0 {
-                inward = [-inward[0], -inward[1]];
-            }
-            // does it carry on past this wall's far side (a T: stop at its near face) or end here (an L: fill the corner)?
-            let crossing = |p: &[f32; 2]| line.across(*p);
-            let (left, right) = around.iter().filter(|p| line.across(**p).abs() > half + voxel).filter(|p| other.across(**p).abs() <= other.half + voxel).fold((0, 0), |(l, r), p| if crossing(p) > 0.0 { (l + 1, r) } else { (l, r + 1) });
-            let through = left.min(right) * 4 >= left.max(right);
-            let face = if through { other.half } else { -other.half };
-            let point = [other.origin[0] + inward[0] * face, other.origin[1] + inward[1] * face];
-            cuts.push(Cut { point, inward });
-            others.push((other, low - voxel, high + voxel));
-            // the slab reaches as far as the face does across its thickness
-            let sine = (line.direction[0] * inward[0] + line.direction[1] * inward[1]).abs().max(0.2);
-            let reach_along = line.along(point) + outward * (half / sine * (1.0 - sine * sine).sqrt() + voxel);
-            // a real corner is right at the wall's last voxel: one that would pull the wall out further isn't this one's
-            let tip_at = if outward > 0.0 { data_end } else { data_start };
-            if (reach_along - tip_at) * outward > other.half * 2.0 + 0.2 {
-                cuts.pop();
-                others.pop();
-                cuts.push(Cut { point: tip, inward: into });
-                continue;
-            }
-            if outward > 0.0 {
-                slab_end = slab_end.max(reach_along);
-            } else {
-                slab_start = slab_start.min(reach_along);
-            }
-        }
-        let widest = others.iter().map(|(o, _, _)| o.half).fold(0.0f32, f32::max);
-        if pass == 0 && thickness.is_none() && end - start < 1.5 && widest > 0.0 && half > widest * 1.5 + 0.01 {
-            line.half = widest;
-            let normal = line.normal();
-            for k in 0..2 {
-                if normal[k].abs() > 0.99 {
-                    let shift = if ((2.0 * widest / voxel).round() as i32) % 2 == 1 { 0.5 } else { 0.0 };
-                    line.origin[k] = ((line.origin[k] / voxel - shift).round() + shift) * voxel;
-                }
-            }
-            pass += 1;
-            continue;
-        }
-        break (half, cuts, others, slab_start, slab_end);
+    // never thicker than the selection
+    line.half = line.half.min((drawn.half / voxel).floor().max(0.5) * voxel);
+    let half = line.half;
+    let (start, end) = {
+        let (a, b) = (line.along(from), line.along(to));
+        (a.min(b), a.max(b))
     };
-    let inside_cuts = |p: [f32; 2], slack: f32| cuts.iter().all(|c| c.keeps(p, slack));
-    // 5. heights along the wall, per voxel-long bin of the support: floor to a level top, doorways under a header
+    // 2. a free end stops at the wall's last voxel in the selection (its core, not fringe)
+    let core_along: Vec<f32> = wallish.iter().map(xy).filter(|p| line.across(*p).abs() <= half && (start..=end).contains(&line.along(*p))).map(|p| line.along(p)).collect();
+    if core_along.is_empty() {
+        return edit;
+    }
+    let (data_start, data_end) = core_along.iter().fold((f32::MAX, f32::MIN), |(a, b), t| (a.min(*t), b.max(*t)));
+    let (slab_start, slab_end) = ((data_start - voxel * 0.5).max(start), (data_end + voxel * 0.5).min(end));
+    // 3. heights along the wall, per voxel-long bin of the span: floor to a level top, doorways under a header
     let bins = ((end - start) / voxel).ceil().max(1.0) as usize;
     let bin_of = |t: f32| (((t - start) / voxel).floor().max(0.0) as usize).min(bins - 1);
     let mut layers: Vec<AHashSet<i32>> = vec![AHashSet::new(); bins];
@@ -534,122 +320,86 @@ pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: 
         };
         bin += 1;
     }
-    // past the support (into a corner) the wall keeps the height it had at its end
     let extent_at = |t: f32| -> Option<(i32, i32)> {
         let b = bin_of(t);
-        extent[b].or_else(|| (0..bins).map(|k| [b.saturating_sub(k), (b + k).min(bins - 1)]).flatten().find_map(|k| extent[k]))
+        extent[b].or_else(|| (0..bins).flat_map(|k| [b.saturating_sub(k), (b + k).min(bins - 1)]).find_map(|k| extent[k]))
     };
-    // 6. the prism, sampled every half voxel along and across so a slanted wall has no holes
+    // 4. the slab, sampled every half voxel along and across so a slanted wall has no holes; only in the selection
     let mut slab: AHashSet<Key> = AHashSet::new();
     let steps_along = ((slab_end - slab_start) / (voxel * 0.5)).ceil() as usize;
-    let steps_across = ((2.0 * half / voxel) as usize * 2).saturating_sub(1).max(1);
+    let steps_across = ((2.0 * half / voxel).round() as usize * 2).saturating_sub(1).max(1);
     for step in 0..=steps_along {
-        let t = slab_start + step as f32 * voxel * 0.5;
+        let t = (slab_start + step as f32 * voxel * 0.5).min(slab_end - 0.01 * voxel).max(slab_start + 0.01 * voxel);
         let Some((bottom, top)) = extent_at(t) else { continue };
         for k in 0..steps_across {
             let p = line.at(t, -half + voxel * 0.25 + k as f32 * voxel * 0.5);
-            if !inside_cuts(p, -0.01 * voxel) {
+            let column = ((p[0] / voxel).floor() as i32, (p[1] / voxel).floor() as i32);
+            if !selected(column) {
                 continue;
             }
-            let column = ((p[0] / voxel).floor() as i32, (p[1] / voxel).floor() as i32);
             for layer in bottom..=top {
                 slab.insert((column.0, column.1, layer));
             }
         }
     }
-    // 7. what goes: every wall-height voxel along the wall within half a metre of either face, connected to the wall or
-    // not, except the walls met at the ends and what's really something else: a piece (26-connected, outside the
-    // slab) that reaches half a metre away from the face (a crossing wall), or that's big and deep (furniture)
-    let clear = half + 0.5;
-    // a column of another wall is a full one (fringe next to it is a few stray voxels); the bar is a third of this
-    // wall's typical column
+    // 5. what stays beside the slab: something that carries on outward past the selection's side (a crossing wall at
+    // any angle down to 45°, a cabinet against the wall): the voxel's column is a full one, and a ray from it outward
+    // (straight out or up to 45° either way) finds full columns in nearly all of the 15 cm past the band's side. Fringe, specks and a second
+    // scan of the same wall a few cm off run along it inside the selection, so they go.
     let mut column_counts: AHashMap<(i32, i32), usize> = AHashMap::new();
     for i in &wallish {
-        *column_counts.entry(((xy(i)[0] / voxel).floor() as i32, (xy(i)[1] / voxel).floor() as i32)).or_default() += 1;
+        *column_counts.entry(column_of(points[*i as usize])).or_default() += 1;
     }
-    let mut own: Vec<usize> = column_counts.iter().filter(|(c, _)| {
-        let p = [(c.0 as f32 + 0.5) * voxel, (c.1 as f32 + 0.5) * voxel];
-        line.across(p).abs() <= half && (start..=end).contains(&line.along(p))
-    }).map(|(_, n)| *n).collect();
-    own.sort_unstable();
-    let full_column = (own.get(own.len() / 2).copied().unwrap_or(9) / 3).max(3);
-    let dense = |p: [f32; 2]| column_counts.get(&((p[0] / voxel).floor() as i32, (p[1] / voxel).floor() as i32)).copied().unwrap_or(0) >= full_column;
-    let belongs_to_other = |p: [f32; 2]| dense(p) && others.iter().any(|(o, low, high)| o.across(p).abs() <= o.half + 0.5 * voxel && (*low..=*high).contains(&o.along(p)));
-    let (clean_start, clean_end) = {
-        let (a, b) = (line.along(from), line.along(to));
-        (slab_start.min(a.min(b)), slab_end.max(a.max(b)))
+    // a structure's column is a full one (a speck is a voxel or two): a quarter of the wall's typical column
+    let mut typical: Vec<usize> = column_counts.iter().filter(|(c, _)| selected(**c) && line.across([(c.0 as f32 + 0.5) * voxel, (c.1 as f32 + 0.5) * voxel]).abs() <= half).map(|(_, n)| *n).collect();
+    typical.sort_unstable();
+    let full = (typical.get(typical.len() / 2).copied().unwrap_or(8) / 4).max(3);
+    let is_full = |q: [f32; 2]| column_counts.get(&((q[0] / voxel).floor() as i32, (q[1] / voxel).floor() as i32)).copied().unwrap_or(0) >= full;
+    let mut carries_on: AHashMap<(i32, i32), bool> = AHashMap::new();
+    let mut carries_on_at = |column: (i32, i32)| -> bool {
+        *carries_on.entry(column).or_insert_with(|| {
+            let p = [(column.0 as f32 + 0.5) * voxel, (column.1 as f32 + 0.5) * voxel];
+            if !is_full(p) {
+                return false;
+            }
+            let side = if drawn.across(p) >= 0.0 { 1.0 } else { -1.0 };
+            let out = [drawn.normal()[0] * side, drawn.normal()[1] * side];
+            (-3..=3).any(|step| {
+                let angle = step as f32 * 15f32.to_radians();
+                let (c, s) = (angle.cos(), angle.sin());
+                let ray = [out[0] * c - out[1] * s, out[0] * s + out[1] * c];
+                let (mut samples, mut hits, mut k) = (0, 0, 1);
+                loop {
+                    let q = [p[0] + ray[0] * k as f32 * voxel * 0.5, p[1] + ray[1] * k as f32 * voxel * 0.5];
+                    let past = drawn.across(q) * side - drawn.half;
+                    if past > 0.15 || k > 400 {
+                        break;
+                    }
+                    if past > 0.0 {
+                        samples += 1;
+                        hits += usize::from(is_full(q));
+                    }
+                    k += 1;
+                }
+                samples > 0 && hits * 5 >= samples * 4
+            })
+        })
     };
-    // the voxel just over a column's floor, in a layer spread around it, is the floor's own thickness: it neither
-    // joins pieces nor goes (a speck there still goes)
+    // the voxel just over a column's floor, in a layer spread around it, is the floor's own thickness: it stays
     let floor_layer = |i: &u32| {
         let p = points[*i as usize];
         let k = key_of(p, voxel);
         let spread = |layer: i32| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| occupied.contains(&(k.0 + dx, k.1 + dy, layer))).count();
         spread(k.2) >= 5 && spread(k.2 + 1) <= 3 && floors.get(&(k.0, k.1)).copied().flatten().is_some_and(|floor| p[2] <= floor + 1.5 * voxel)
     };
-    let outside: Vec<u32> = wallish.iter().copied().filter(|i| line.across(xy(i)).abs() > half && !belongs_to_other(xy(i)) && !floor_layer(i)).collect();
-    let keys: AHashMap<Key, usize> = outside.iter().enumerate().map(|(k, i)| (key_of(points[*i as usize], voxel), k)).collect();
-    let mut piece = vec![usize::MAX; outside.len()];
-    let mut keep_piece: Vec<bool> = Vec::new();
-    for start in 0..outside.len() {
-        if piece[start] != usize::MAX {
-            continue;
-        }
-        let id = keep_piece.len();
-        let (mut stack, mut members) = (vec![start], Vec::new());
-        piece[start] = id;
-        while let Some(k) = stack.pop() {
-            members.push(k);
-            let c = key_of(points[outside[k] as usize], voxel);
-            for dx in -1..=1 {
-                for dy in -1..=1 {
-                    for dz in -1..=1 {
-                        if let Some(&n) = keys.get(&(c.0 + dx, c.1 + dy, c.2 + dz)) {
-                            if piece[n] == usize::MAX {
-                                piece[n] = id;
-                                stack.push(n);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let away: Vec<f32> = members.iter().map(|k| line.across(xy(&outside[*k])).abs() - half).collect();
-        let far = away.iter().copied().fold(f32::MIN, f32::max);
-        let heights: Vec<f32> = members.iter().map(|k| points[outside[*k] as usize][2]).collect();
-        let tall = heights.iter().copied().fold(f32::MIN, f32::max) - heights.iter().copied().fold(f32::MAX, f32::min);
-        let volume = members.len() as f32 * voxel.powi(3);
-        // a crossing wall or anything reaching half a metre out; or something real that reaches 20 cm or more out (a
-        // short wall of a jog, a column, furniture): tall or sizeable. Specks and fringe hugging the face are neither
-        keep_piece.push(far >= 0.5 || (far >= 0.2 && (tall >= 0.5 || volume >= 0.02)));
-    }
-    // and the voxel itself is a way off the face, or part of it going outward (fringe stuck to a crossing wall isn't):
-    // the next 0.3 m out from it, along the same stretch, is mostly occupied
-    // voxel centres sit on (or halfway between) multiples of a voxel from the line: a quarter voxel keeps the bins stable
-    let bin = |value: f32| (value / voxel + 0.25).floor() as i32;
-    let occupied: AHashSet<(i32, i32)> = outside.iter().map(|i| (bin(line.along(xy(i))), bin(line.across(xy(i))))).collect();
-    let goes_outward = |p: [f32; 2]| -> bool {
-        let (a, d) = (bin(line.along(p)), bin(line.across(p)));
-        let sign = if d >= 0 { 1 } else { -1 };
-        let filled = |k: i32| (a - 1..=a + 1).any(|aa| occupied.contains(&(aa, d + sign * k)));
-        // most of the next 0.3 m out is occupied, or (away from the face) the way back in is
-        let face = bin(sign as f32 * half);
-        let back = (d - face) * sign;
-        (1..=6).filter(|k| filled(*k)).count() >= 5 || (back >= 3 && (1..back).filter(|k| filled(-*k)).count() * 5 >= (back - 1) as usize * 4)
-    };
-    let kept_piece: AHashMap<u32, bool> = outside.iter().enumerate().map(|(k, i)| (*i, keep_piece[piece[k]] && (line.across(xy(i)).abs() - half >= 0.2 || goes_outward(xy(i))))).collect();
     let mut removed: AHashSet<Key> = AHashSet::new();
     for i in &wallish {
-        let p = xy(i);
-        let (t, d) = (line.along(p), line.across(p));
-        if t < clean_start || t > clean_end || d.abs() > clear || !inside_cuts(p, 0.5 * voxel) {
+        let p = points[*i as usize];
+        let key = key_of(p, voxel);
+        if !selected((key.0, key.1)) || slab.contains(&key) {
             continue;
         }
-        if belongs_to_other(p) || kept_piece.get(i).copied().unwrap_or(false) || (line.across(p).abs() > half && floor_layer(i)) {
-            continue;
-        }
-        let key = key_of(points[*i as usize], voxel);
-        if slab.contains(&key) {
+        if line.across(xy(i)).abs() > half && (carries_on_at((key.0, key.1)) || floor_layer(i)) {
             continue;
         }
         edit.remove.push(*i);
@@ -657,7 +407,7 @@ pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: 
     }
     let kept: AHashSet<Key> = wallish.iter().map(|i| key_of(points[*i as usize], voxel)).filter(|k| !removed.contains(k)).collect();
     let normal = [line.normal()[0], line.normal()[1], 0.0];
-    let mut added: Vec<Key> = slab.into_iter().filter(|k| !kept.contains(k)).collect();
+    let mut added: Vec<Key> = slab.into_iter().filter(|k| !kept.contains(k) && !occupied.contains(k)).collect();
     added.sort_unstable();
     for key in added {
         edit.push(center(key, voxel), normal);
@@ -742,18 +492,125 @@ mod tests {
         scene.points.iter().map(|p| ((p[0] / V).floor() as i32, (p[1] / V).floor() as i32)).collect()
     }
 
+    /// is a voxel column in the brush's band (by its centre, as `straighten` decides)
+    fn in_band(c: (i32, i32), from: [f32; 2], to: [f32; 2], width: f32) -> bool {
+        let length = (to[0] - from[0]).hypot(to[1] - from[1]);
+        let drawn = Line { origin: from, direction: [(to[0] - from[0]) / length, (to[1] - from[1]) / length], half: width / 2.0 };
+        let p = [(c.0 as f32 + 0.5) * V, (c.1 as f32 + 0.5) * V];
+        (0.0..=length).contains(&drawn.along(p)) && drawn.across(p).abs() <= drawn.half
+    }
+
+    /// every voxel the edit removes or adds is in the brush's band
+    fn assert_clipped(points: &[[f32; 3]], edit: &Edit, from: [f32; 2], to: [f32; 2], width: f32) {
+        let inside = |p: [f32; 3]| in_band(((p[0] / V).floor() as i32, (p[1] / V).floor() as i32), from, to, width);
+        let outside: Vec<[f32; 3]> = edit.remove.iter().map(|i| points[*i as usize]).chain(edit.add.iter().copied()).filter(|p| !inside(*p)).collect();
+        assert!(outside.is_empty(), "{} voxels changed outside the selection: {:?}", outside.len(), &outside[..outside.len().min(5)]);
+    }
+
+    /// a deterministic 0..1 hash of a cell, for jitter
+    fn noise(i: i32, j: i32, k: i32) -> f32 {
+        let h = (i as u32).wrapping_mul(73856093) ^ (j as u32).wrapping_mul(19349663) ^ (k as u32).wrapping_mul(83492791);
+        (h.wrapping_mul(2654435761) >> 8) as f32 / (1u32 << 24) as f32
+    }
+
+    /// for a wall along x: per voxel column x of the selection (0.1 m in from its ends), the runs of wall-high rows in
+    /// the band, and how many rows those are
+    fn runs_across(scene: &Scene, edit: &Edit, from: [f32; 2], to: [f32; 2], width: f32) -> Vec<(usize, usize)> {
+        let cells = scene.after(edit);
+        let (x0, x1) = (((from[0].min(to[0]) + 0.1) / V).floor() as i32, ((from[0].max(to[0]) - 0.1) / V).floor() as i32);
+        (x0..=x1)
+            .map(|x| {
+                let rows: Vec<i32> = (-200..200).filter(|r| in_band((x, *r), from, to, width) && cells.contains(&(x, *r))).collect();
+                (rows.windows(2).filter(|w| w[1] != w[0] + 1).count() + usize::from(!rows.is_empty()), rows.len())
+            })
+            .collect()
+    }
+
+    /// Jeff's case: a lidar wall scanned twice a few cm apart (a jittering 2-voxel band, a ghost row 3 voxels off it,
+    /// specks), with a perpendicular wall at its left end
+    fn double_scanned_wall() -> Scene {
+        let mut scene = Scene::new();
+        scene.wall([1.025, 1.0], [1.025, 5.0], 0.1, false);
+        for i in 22..95 {
+            let jitter = (noise(i / 4, 1, 1) * 2.0) as i32;
+            for k in 1..41 {
+                for j in [60, 61] {
+                    if noise(i, j, k) < 0.85 {
+                        scene.points.push([at(i), at(j + jitter), at(k)]);
+                        scene.normals.push([0.0, 1.0, 0.0]);
+                    }
+                }
+                if noise(i, 64, k) < 0.6 {
+                    scene.points.push([at(i), at(64), at(k)]);
+                    scene.normals.push([0.0, 1.0, 0.0]);
+                }
+                if noise(i, 7, k) < 0.08 {
+                    let off = 1 + (noise(k, i, 3) * 5.0) as i32;
+                    let j = if noise(i, k, 9) < 0.5 { 59 - off } else { 65 + off };
+                    scene.points.push([at(i), at(j), at(k)]);
+                    scene.normals.push([0.0, 1.0, 0.0]);
+                }
+            }
+        }
+        scene
+    }
+
     #[test]
-    fn noisy_thick_wall_becomes_a_clean_slab_grown_past_the_brush() {
+    fn a_double_scanned_wall_becomes_one_wall_inside_the_selection() {
+        let scene = double_scanned_wall();
+        // over part of it, slightly slanted against it
+        let (from, to, width) = ([1.6, 3.02], [3.9, 3.14], 0.4);
+        let edit = scene.run(from, to, width);
+        assert!(!edit.add.is_empty() && !edit.remove.is_empty());
+        assert_clipped(&scene.points, &edit, from, to, width);
+        let runs = runs_across(&scene, &edit, from, to, width);
+        assert!(runs.iter().all(|(n, _)| *n == 1), "one wall in every slice: {runs:?}");
+        assert!(runs.iter().all(|(_, cells)| (1..=3).contains(cells)), "a thin wall, 1–3 voxels across: {runs:?}");
+        // one straight wall: the same rows from one end to the other
+        let rows: AHashSet<i32> = scene.after(&edit).iter().filter(|c| in_band(**c, from, to, width)).map(|c| c.1).collect();
+        assert!(rows.len() <= 3, "a straight wall: {rows:?}");
+    }
+
+    /// the regression: the stroke runs from inside the perpendicular wall to past the wall's far end
+    #[test]
+    fn a_stroke_into_a_corner_and_past_the_end_makes_one_wall_and_no_more() {
+        let scene = double_scanned_wall();
+        let perpendicular = ideal([1.025, 1.0], [1.025, 5.0], 0.1);
+        let (from, to, width) = ([0.9, 3.05], [5.2, 3.08], 0.45);
+        let edit = scene.run(from, to, width);
+        assert_clipped(&scene.points, &edit, from, to, width);
+        let after = scene.after(&edit);
+        let lost: Vec<_> = perpendicular.difference(&after).collect();
+        assert!(lost.is_empty(), "the perpendicular wall stays: lost {lost:?}");
+        let runs = runs_across(&scene, &edit, from, to, width);
+        let rows_by_col: std::collections::BTreeMap<i32, Vec<i32>> = after.iter().filter(|c| (30..40).contains(&c.0) && (52..72).contains(&c.1)).fold(Default::default(), |mut m: std::collections::BTreeMap<i32, Vec<i32>>, c| { m.entry(c.0).or_default().push(c.1); m });
+        eprintln!("{rows_by_col:?} removed {} added {}", edit.remove.len(), edit.add.len());
+        assert!(runs.iter().all(|(n, _)| *n <= 1), "never two or three walls: {runs:?}");
+        // past the wall's end (x 4.75) nothing is added: the free end stops at its last voxel
+        assert!(edit.add.iter().all(|p| p[0] < 4.8), "nothing added past the wall's end");
+        let rows: AHashSet<i32> = after.iter().filter(|c| (25..94).contains(&c.0) && in_band(**c, from, to, width)).map(|c| c.1).collect();
+        assert!(rows.len() <= 3, "one straight wall: {rows:?}");
+    }
+
+    #[test]
+    fn noisy_thick_wall_becomes_a_clean_slab_within_the_brush() {
         let mut scene = Scene::new();
         scene.wall([1.0, 3.025], [5.0, 3.025], 0.15, true);
-        // the brush only covers the middle 1.5 m
-        let edit = scene.run([2.3, 3.025], [3.8, 3.025], 0.4);
+        // the brush only covers the middle 1.5 m: only that is cleaned
+        let (from, to) = ([2.3, 3.025], [3.8, 3.025]);
+        let edit = scene.run(from, to, 0.4);
+        assert_clipped(&scene.points, &edit, from, to, 0.4);
+        let before = scene.after(&Edit::default());
         let after = scene.after(&edit);
-        let rows: AHashSet<i32> = after.iter().map(|c| c.1).collect();
-        assert_eq!(rows.len(), 3, "15 cm = 3 voxels thick, fringe gone along the whole wall: {rows:?}");
-        let want = ideal([1.0, 3.025], [5.0, 3.025], 0.15);
-        let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&after).collect(), after.difference(&want).collect());
-        assert!(missing.len() <= 3 && extra.len() <= 3, "the whole wall, cleaned: missing {missing:?}, extra {extra:?}");
+        let inside = |c: &(i32, i32)| in_band(*c, from, to, 0.4);
+        let rows: AHashSet<i32> = after.iter().filter(|c| inside(c)).map(|c| c.1).collect();
+        assert_eq!(rows.len(), 3, "15 cm = 3 voxels thick, fringe gone under the brush: {rows:?}");
+        let want: AHashSet<(i32, i32)> = ideal([1.0, 3.025], [5.0, 3.025], 0.15).into_iter().filter(inside).collect();
+        let got: AHashSet<(i32, i32)> = after.iter().copied().filter(inside).collect();
+        assert_eq!(got, want, "a clean slab under the brush");
+        let outside_before: AHashSet<(i32, i32)> = before.iter().copied().filter(|c| !inside(c)).collect();
+        let outside_after: AHashSet<(i32, i32)> = after.iter().copied().filter(|c| !inside(c)).collect();
+        assert_eq!(outside_before, outside_after, "past the brush the wall is as it was");
     }
 
     #[test]
@@ -761,12 +618,17 @@ mod tests {
         let mut scene = Scene::new();
         scene.wall([1.0, 2.0], [4.0, 2.0], 0.1, true);
         scene.wall([4.0, 2.0], [4.0, 5.0], 0.1, false);
-        let edit = scene.run([1.5, 2.0], [3.0, 2.0], 0.4);
+        let other = ideal([4.0, 2.0], [4.0, 5.0], 0.1);
+        let (from, to) = ([1.2, 2.0], [4.3, 2.0]);
+        let edit = scene.run(from, to, 0.4);
+        assert_clipped(&scene.points, &edit, from, to, 0.4);
         let after = scene.after(&edit);
-        let want: AHashSet<(i32, i32)> = ideal([1.0, 2.0], [4.0, 2.0], 0.1).union(&ideal([4.0, 2.0], [4.0, 5.0], 0.1)).copied().collect();
-        let extra: Vec<_> = after.difference(&want).collect();
-        let missing: Vec<_> = want.difference(&after).collect();
-        assert!(extra.len() <= 2 && missing.len() <= 2, "clean L: extra {extra:?}, missing {missing:?}");
+        assert!(other.iter().all(|c| after.contains(c)), "the other wall stays");
+        let band = |c: &(i32, i32)| (24..86).contains(&c.0) && (36..44).contains(&c.1);
+        let want: AHashSet<(i32, i32)> = ideal([1.0, 2.0], [4.0, 2.0], 0.1).union(&other).copied().filter(band).collect();
+        let got: AHashSet<(i32, i32)> = after.iter().copied().filter(band).collect();
+        let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&got).collect(), got.difference(&want).collect());
+        assert!(missing.len() <= 2 && extra.len() <= 2, "clean L: extra {extra:?}, missing {missing:?}");
     }
 
     #[test]
@@ -777,28 +639,18 @@ mod tests {
         scene.wall([0.8, 1.5], corner, 0.1, true);
         scene.wall(corner, other, 0.1, false);
         let before_other = ideal(corner, other, 0.1);
-        let edit = scene.run([1.2, 1.5], [2.8, 1.5], 0.4);
+        let (from, to) = ([1.0, 1.5], [3.6, 1.5]);
+        let edit = scene.run(from, to, 0.4);
+        assert_clipped(&scene.points, &edit, from, to, 0.4);
         let after = scene.after(&edit);
-        // the other wall is untouched
         let lost: Vec<_> = before_other.difference(&after).collect();
         assert!(lost.is_empty(), "the 60° wall keeps every column: lost {lost:?}");
-        // no gap at the corner: along the edited wall's outer face, the last column reaches the other wall's band
-        let want = ideal([0.8, 1.5], corner, 0.1);
-        let missing: Vec<_> = want.difference(&after).collect();
-        assert!(missing.len() <= 2, "gap at the corner: {missing:?}");
-        // past the two rectangles only the mitre's wedge: inside the edited wall's band, short of the other's outer face
-        let both: AHashSet<(i32, i32)> = want.union(&before_other).copied().collect();
-        let a = Line { origin: [0.8, 1.5], direction: [1.0, 0.0], half: 0.05 };
-        let b = Line { origin: corner, direction: [(other[0] - corner[0]) / 2.5, (other[1] - corner[1]) / 2.5], half: 0.05 };
-        let extra: Vec<_> = after
-            .difference(&both)
-            .filter(|c| {
-                let p = [at(c.0), at(c.1)];
-                !(a.across(p).abs() <= a.half + 0.01 && b.across(p) >= -(b.half + V))
-            })
-            .collect();
+        let band = |c: &(i32, i32)| (20..72).contains(&c.0) && (26..34).contains(&c.1);
+        let want: AHashSet<(i32, i32)> = ideal([0.8, 1.5], corner, 0.1).union(&before_other).copied().filter(band).collect();
+        let got: AHashSet<(i32, i32)> = after.iter().copied().filter(band).collect();
+        let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&got).collect(), got.difference(&want).collect());
         // a slanted wall rasterizes a voxel thicker here and there: allow a few single-voxel differences
-        assert!(extra.len() <= 3, "overlap past the corner: {extra:?}");
+        assert!(missing.len() <= 2 && extra.len() <= 3, "clean corner: missing {missing:?}, extra {extra:?}");
     }
 
     #[test]
@@ -807,24 +659,27 @@ mod tests {
         scene.wall([1.025, 1.0], [1.025, 5.0], 0.15, false);
         scene.wall([1.025, 3.0], [4.5, 3.0], 0.1, true);
         let through = ideal([1.025, 1.0], [1.025, 5.0], 0.15);
-        let edit = scene.run([2.0, 3.0], [4.0, 3.0], 0.4);
+        let (from, to) = ([0.9, 3.0], [4.4, 3.0]);
+        let edit = scene.run(from, to, 0.4);
+        assert_clipped(&scene.points, &edit, from, to, 0.4);
         let after = scene.after(&edit);
         let lost: Vec<_> = through.difference(&after).collect();
         assert!(lost.is_empty(), "the through wall is intact: lost {lost:?}");
-        let want: AHashSet<(i32, i32)> = ideal([1.025, 3.0], [4.5, 3.0], 0.1).union(&through).copied().collect();
-        let missing: Vec<_> = want.difference(&after).collect();
-        let extra: Vec<_> = after.difference(&want).collect();
+        let band = |c: &(i32, i32)| (18..88).contains(&c.0) && (56..64).contains(&c.1);
+        let want: AHashSet<(i32, i32)> = ideal([1.025, 3.0], [4.5, 3.0], 0.1).union(&through).copied().filter(band).collect();
+        let got: AHashSet<(i32, i32)> = after.iter().copied().filter(band).collect();
+        let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&got).collect(), got.difference(&want).collect());
         assert!(missing.is_empty() && extra.len() <= 2, "a clean T: missing {missing:?}, extra {extra:?}");
     }
 
-    /// specks up to half a metre off the face go; a crossing wall and a cabinet against the wall stay
+    /// specks in the band go, specks outside it stay (never written); a crossing wall and a cabinet against the wall stay
     #[test]
-    fn clears_half_a_metre_but_keeps_real_things() {
+    fn clears_the_band_but_keeps_real_things() {
         let mut scene = Scene::new();
         scene.wall([0.5, 3.025], [5.5, 3.025], 0.05, false);
         scene.wall([3.025, 3.1], [3.025, 5.5], 0.1, false);
-        // specks and short stubs 2..9 voxels off the face on both sides
-        for (i, off) in [(20, 2), (30, -3), (40, 5), (50, -7), (70, 9), (80, -9), (90, 4)] {
+        let specks = [(20, 2), (24, -3), (44, 2), (50, -7), (70, 9), (80, -9), (90, 3)];
+        for (i, off) in specks {
             for k in [5, 6, 20] {
                 scene.points.push([at(i), at(60 + off), at(k)]);
                 scene.normals.push([0.0, 1.0, 0.0]);
@@ -840,16 +695,16 @@ mod tests {
             }
         }
         let crossing = ideal([3.025, 3.1], [3.025, 5.5], 0.1);
-        let edit = scene.run([1.0, 3.025], [2.0, 3.025], 0.3);
+        let (from, to) = ([0.8, 3.025], [5.2, 3.025]);
+        let edit = scene.run(from, to, 0.4);
+        assert_clipped(&scene.points, &edit, from, to, 0.4);
         let after = scene.after(&edit);
         let lost: Vec<_> = crossing.difference(&after).collect();
         assert!(lost.is_empty(), "the crossing wall stays: lost {lost:?}");
         assert!((30..42).all(|i| (52..60).all(|j| after.contains(&(i, j)))), "the cabinet stays");
-        for (i, off) in [(20, 2), (30, -3), (40, 5), (50, -7), (70, 9), (80, -9), (90, 4)] {
-            if i == 30 && off < 0 {
-                continue;
-            }
-            assert!(!after.contains(&(i, 60 + off)), "speck at column {i}, {off} voxels off");
+        for (i, off) in specks {
+            // the band is rows 56..64 (0.2 m either side of row 60's centre)
+            assert_eq!(after.contains(&(i, 60 + off)), off.abs() > 4, "speck at column {i}, {off} voxels off");
         }
     }
 
@@ -864,8 +719,9 @@ mod tests {
         scene.wall(b0, b1, 0.05, true);
         let mut points = scene.points.clone();
         let mut normals = scene.normals.clone();
-        for (from, to) in [([2.025, 0.8], [2.025, 2.2]), ([1.95, 2.525], [1.7, 2.525]), ([1.625, 2.8], [1.625, 4.2])] {
+        for (from, to) in [([2.025, 0.4], [2.025, 2.6]), ([2.1, 2.525], [1.55, 2.525]), ([1.625, 2.45], [1.625, 4.6])] {
             let edit = straighten(&points, &normals, V, from, to, 0.3, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
+            assert_clipped(&points, &edit, from, to, 0.3);
             let removed: AHashSet<u32> = edit.remove.iter().copied().collect();
             let kept: Vec<usize> = (0..points.len()).filter(|i| !removed.contains(&(*i as u32))).collect();
             normals = kept.iter().map(|i| normals[*i]).chain(edit.add_normals.iter().copied()).collect();
@@ -874,7 +730,7 @@ mod tests {
         let after: AHashSet<(i32, i32)> = points.iter().filter(|p| p[2] > at(0) + 0.01).map(|p| ((p[0] / V).floor() as i32, (p[1] / V).floor() as i32)).collect();
         let want: AHashSet<(i32, i32)> = [ideal(a0, a1, 0.05), ideal(a1, b0, 0.05), ideal(b0, b1, 0.05)].into_iter().flatten().collect();
         let (missing, extra): (Vec<_>, Vec<_>) = (want.difference(&after).collect(), after.difference(&want).collect());
-        assert!(missing.is_empty() && extra.is_empty(), "a clean step: missing {missing:?}, extra {extra:?}");
+        assert!(missing.is_empty() && extra.len() <= 4, "a clean step: missing {missing:?}, extra {extra:?}");
     }
 
     #[test]
@@ -883,8 +739,67 @@ mod tests {
         scene.wall([0.5, 3.0], [5.5, 3.0], 0.1, true);
         scene.wall([3.0, 0.5], [3.0, 5.5], 0.1, false);
         let crossing = ideal([3.0, 0.5], [3.0, 5.5], 0.1);
-        let edit = scene.run([1.0, 3.0], [2.5, 3.0], 0.4);
+        let (from, to) = ([1.0, 3.0], [5.0, 3.0]);
+        let edit = scene.run(from, to, 0.4);
+        assert_clipped(&scene.points, &edit, from, to, 0.4);
         let after = scene.after(&edit);
         assert!(crossing.iter().all(|c| after.contains(c)), "the crossing wall keeps every column");
+    }
+
+    /// The real case (mid360_athens_stairs, upper storey): the noisy wall Jeff straightened into three parallel lines.
+    /// The voxels around it before that edit and the storey's floor model are in tests/fixtures/athens_noisy_wall.*;
+    /// the stroke is the one he drew (3.1 m along the wall, the default 0.4 m band). Set STRAIGHTEN_FIXTURE_OUT=<file>
+    /// to write the map after the edit (f32 xyz) for a look.
+    #[test]
+    fn the_real_noisy_wall_becomes_one_wall_inside_the_selection() {
+        let points: Vec<[f32; 3]> = include_bytes!("../tests/fixtures/athens_noisy_wall.bin")
+            .chunks_exact(12)
+            .map(|c| std::array::from_fn(|k| f32::from_le_bytes(c[k * 4..k * 4 + 4].try_into().unwrap())))
+            .collect();
+        let model: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/athens_noisy_wall.json")).unwrap();
+        let number = |v: &serde_json::Value| v.as_f64().unwrap() as f32;
+        let (cell, origin) = (number(&model["cell"]), [number(&model["origin"][0]), number(&model["origin"][1])]);
+        let heights: Vec<Vec<Option<f32>>> = model["heights"].as_array().unwrap().iter().map(|row| row.as_array().unwrap().iter().map(|h| h.as_f64().map(|h| h as f32)).collect()).collect();
+        // the floor model's bilinear height (floor.rs's height_at)
+        let floor_at = |x: f32, y: f32| -> Option<f32> {
+            let (fx, fy) = ((x - origin[0]) / cell - 0.5, (y - origin[1]) / cell - 0.5);
+            let (c0, r0) = (fx.floor() as i32, fy.floor() as i32);
+            let (tx, ty) = (fx - c0 as f32, fy - r0 as f32);
+            let (mut sum, mut weights) = (0.0, 0.0);
+            for (dc, dr, weight) in [(0, 0, (1.0 - tx) * (1.0 - ty)), (1, 0, tx * (1.0 - ty)), (0, 1, (1.0 - tx) * ty), (1, 1, tx * ty)] {
+                if let Some(Some(h)) = heights.get((r0 + dr) as usize).and_then(|row| row.get((c0 + dc) as usize)) {
+                    if weight > 0.0 && r0 + dr >= 0 && c0 + dc >= 0 {
+                        sum += h * weight;
+                        weights += weight;
+                    }
+                }
+            }
+            (weights > 1e-6).then(|| sum / weights)
+        };
+        let band = [number(&model["band"][0]), number(&model["band"][1])];
+        // the server's reach for a straighten on the top storey: its floor to 3.25 m over it
+        let reach = Reach { above_floor: None, top: band[0] + 3.25, bottom: band[0] };
+        let (from, to, width) = ([-1.3, -2.33], [1.6, -2.33], 0.4);
+        let normals = vec![[0.0, 0.0, 1.0]; points.len()];
+        let edit = straighten(&points, &normals, V, from, to, width, None, floor_at, reach);
+        assert!(!edit.add.is_empty() && !edit.remove.is_empty(), "it does something");
+        assert_clipped(&points, &edit, from, to, width);
+        let removed: AHashSet<u32> = edit.remove.iter().copied().collect();
+        let after: Vec<[f32; 3]> = points.iter().enumerate().filter(|(i, _)| !removed.contains(&(*i as u32))).map(|(_, p)| *p).chain(edit.add.iter().copied()).collect();
+        if let Ok(path) = std::env::var("STRAIGHTEN_FIXTURE_OUT") {
+            std::fs::write(path, after.iter().flat_map(|p| p.iter().flat_map(|v| v.to_le_bytes())).collect::<Vec<u8>>()).unwrap();
+        }
+        // what the 2D view draws as wall: 0.1–1.8 m over the floor model
+        let wall: AHashSet<(i32, i32)> = after
+            .iter()
+            .filter(|p| floor_at(p[0], p[1]).is_some_and(|f| (0.1..=1.8).contains(&(p[2] - f))))
+            .map(|p| ((p[0] / V).floor() as i32, (p[1] / V).floor() as i32))
+            .collect();
+        let (x0, x1) = (((from[0] + 0.1) / V).floor() as i32, ((to[0] - 0.1) / V).floor() as i32);
+        for x in x0..=x1 {
+            let rows: Vec<i32> = (-80..-20).filter(|r| in_band((x, *r), from, to, width) && wall.contains(&(x, *r))).collect();
+            let runs = rows.windows(2).filter(|w| w[1] != w[0] + 1).count() + usize::from(!rows.is_empty());
+            assert!(runs <= 1 && rows.len() <= 3, "column {x}: one wall at most 3 voxels thick, got rows {rows:?}");
+        }
     }
 }

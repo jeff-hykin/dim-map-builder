@@ -19,7 +19,7 @@ everything else is optional and in any order.
   to the result. 3D, 2D and the minimap all show it; it's saved as seven numbers (`map/slice`).
 - **Edit** (the green orb): a palette of tools. **Erase** (brush what stands on the floor away; the floor under it is
   filled in from around), **Draw** / **Line** (voxels from the floor up to a height), **Straighten wall** (drag along
-  a noisy wall: the whole wall becomes one clean slab of its own thickness, its corners meet the walls they run into), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
+  a noisy wall: the wall in the band becomes one clean slab of its own thickness; nothing outside the band changes), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
   **named points and areas** (no-go zones), **3D boxes, planes and points**, **Clean up** (floating specks, outliers,
   floor, walls, crop, level), **Saved views**. All undoable.
 - **Save** into the recording: the map, annotations and views become `map/*` streams in the same file

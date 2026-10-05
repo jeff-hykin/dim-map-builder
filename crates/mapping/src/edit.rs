@@ -352,9 +352,9 @@ mod tests {
         (points, normals)
     }
 
-    /// the x columns with something above the floor after the edit
-    fn columns_x(points: &[[f32; 3]], edit: &Edit) -> Vec<i32> {
-        let mut xs: Vec<i32> = result(points, edit).iter().filter(|p| p[2] > 0.03).map(|p| (p[0] / 0.05).floor() as i32).collect();
+    /// the x columns with something above the floor after the edit, between y0 and y1
+    fn columns_x_in(points: &[[f32; 3]], edit: &Edit, y0: f32, y1: f32) -> Vec<i32> {
+        let mut xs: Vec<i32> = result(points, edit).iter().filter(|p| p[2] > 0.03 && (y0..y1).contains(&p[1])).map(|p| (p[0] / 0.05).floor() as i32).collect();
         xs.sort_unstable();
         xs.dedup();
         xs
@@ -363,23 +363,25 @@ mod tests {
     #[test]
     fn straighten_a_rough_thin_wall() {
         let (points, normals) = rough_wall(1);
-        // the brush covers only part of it: the tool finds the rest
+        // the brush covers only part of it: only that part changes
         let edit = straighten(&points, &normals, 0.05, [2.0, 1.2], [2.0, 2.8], 0.4, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
-        assert_eq!(columns_x(&points, &edit), vec![40], "one voxel thick, on the wall, fringe gone end to end");
+        let brushed = |p: &[f32; 3]| (1.2..=2.8).contains(&(((p[1] / 0.05).floor() + 0.5) * 0.05)) && (((p[0] / 0.05).floor() + 0.5) * 0.05 - 2.0).abs() <= 0.2;
+        assert!(edit.remove.iter().map(|i| &points[*i as usize]).chain(&edit.add).all(brushed), "nothing changes outside the brush");
+        assert_eq!(columns_x_in(&points, &edit, 1.25, 2.75), vec![40], "one voxel thick, on the wall, fringe gone under the brush");
         let after = result(&points, &edit);
-        assert_eq!(after.iter().filter(|p| p[2] > 0.03).count(), 80 * 40, "every voxel of the wall, nothing else");
+        assert_eq!(after.iter().filter(|p| p[2] > 0.03 && (1.25..2.75).contains(&p[1])).count(), 30 * 40, "every voxel of the wall there, nothing else");
     }
 
     #[test]
     fn straighten_keeps_a_thick_wall_thick() {
         let (points, normals) = rough_wall(3);
         let edit = straighten(&points, &normals, 0.05, [2.05, 0.2], [2.05, 3.8], 0.5, None, |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
-        assert_eq!(columns_x(&points, &edit), vec![40, 41, 42], "three voxels thick, where the wall was");
+        assert_eq!(columns_x_in(&points, &edit, 0.25, 3.75), vec![40, 41, 42], "three voxels thick, where the wall was");
         let overridden = straighten(&points, &normals, 0.05, [2.05, 0.2], [2.05, 3.8], 0.5, Some(0.1), |_, _| Some(at(0)), Reach { above_floor: None, top: f32::MAX, bottom: f32::MIN });
-        assert_eq!(columns_x(&points, &overridden).len(), 2, "a 10 cm override");
-        // flat faces: every row along the wall has the same columns
+        assert_eq!(columns_x_in(&points, &overridden, 0.25, 3.75).len(), 2, "a 10 cm override");
+        // flat faces: every row along the wall (under the brush) has the same columns
         let mut rows: AHashMap<i32, AHashSet<i32>> = AHashMap::new();
-        for p in result(&points, &edit).iter().filter(|p| p[2] > 0.03) {
+        for p in result(&points, &edit).iter().filter(|p| p[2] > 0.03 && (0.25..3.75).contains(&p[1])) {
             rows.entry((p[1] / 0.05).floor() as i32).or_default().insert((p[0] / 0.05).floor() as i32);
         }
         assert!(rows.values().all(|r| r.len() == 3), "flat faces");
