@@ -1624,7 +1624,7 @@ body.science.dark .dim-alert.danger {
 /* toast: bottom-center stack. Research the doc's dark "finished" pill (`.strip`); Portal a --bk hairline block */
 .dim-toasts {
     position: fixed;
-    bottom: 24px;
+    bottom: calc(24px + var(--dim-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%);
     z-index: 1000;

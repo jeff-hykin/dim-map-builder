@@ -1,6 +1,6 @@
 // Notifications → dimOS Desktop's notification center (POST /api/notifications on the Desktop origin).
 //
-//     import { notify } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.11.1/notify.js"
+//     import { notify } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.11.2/notify.js"
 //     notify({ title: "Battery low", body: "Go2 at 14%", kind: "warn", sound: "battery" })
 //
 // Apps are served same-origin under /apps/<name>/, so the path is absolute. Outside Desktop (a page opened on its own
