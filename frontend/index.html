@@ -2,24 +2,28 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <!-- dim-app first-paint (dim-app vendor.js keeps this block current): the page color before any CSS or JS loads, so
-             the app never flashes white: Desktop's published --bg (localStorage "portal.themeTokens", as theme.js applies it),
-             else the bundled Portal #05070d. -->
+        <!-- dim-app first-paint (dim-app vendor.js keeps this block current): Desktop's theme (/theme.css, every skin's tokens)
+             and its saved skin and corners before any CSS or JS loads, so the app's first frame is already in Desktop's look;
+             off Desktop, the bundled Portal page color. -->
         <style>
             html {
-                background: #05070d;
+                background: var(--bg, #05070d);
                 color-scheme: dark;
             }
         </style>
         <script>
-            try {
-                const theme = JSON.parse(localStorage.getItem("portal.themeTokens") || "null")
-                if (theme && theme.tokens && theme.tokens["--bg"]) {
-                    document.documentElement.style.background = theme.tokens["--bg"]
-                    document.documentElement.style.colorScheme = theme.light ? "light" : "dark"
+            if (location.pathname.startsWith("/apps/")) {
+                try {
+                    const root = document.documentElement
+                    root.dataset.skin = localStorage.getItem("portal.theme") || "portal"
+                    const corners = localStorage.getItem("portal.corners")
+                    if (corners === "sharp" || corners === "rounded") {
+                        root.dataset.corners = corners
+                    }
+                } catch {
+                    // storage unavailable: Portal
                 }
-            } catch {
-                // storage unavailable, or nothing published: Portal
+                document.write('<link rel="stylesheet" href="/theme.css" data-dim-desktop-theme>')
             }
         </script>
         <!-- /dim-app first-paint -->

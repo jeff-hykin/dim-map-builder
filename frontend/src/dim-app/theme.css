@@ -1,30 +1,21 @@
 /*
-  dim-app theme (v0.15.0) — dimOS Desktop's two design languages for apps, value for value from the design docs
-  (portal_design_language.html, research_design_language.html).
+  dim-app theme (v0.16.0) — the components of dimOS Desktop's apps, written against Desktop's theme tokens.
 
-    Portal   (dark,  body.science.dark)  void #05070d, ink #ece8f0, one accent: Dimensional blue #7cc8ec.
-                                         Square corners everywhere, 1px hairlines, glow only on focus / active things.
-                                         Inter for UI, IBM Plex Mono for data, Michroma for small uppercase section heads.
-    Research (light, :root)              paper #f5f4ef, white hairline cards with a soft shadow, one accent #293ce4.
-                                         Gently rounded (8–14px cards and controls, pills for chips / toggles / bars).
-                                         Instrument Serif for titles, Inter for reading, uppercase Plex Mono micro-labels.
-
-  These two palettes are the defaults. Inside dimOS Desktop, theme.js applies the exact tokens Desktop published for its
-  active skin (localStorage "portal.themeTokens": every variable of the theme contract below, inline on <body>), so an
-  app looks like the Desktop around it in any skin; the skin's light/dark picks body.science[.dark] for the structural
-  rules. Off Desktop (nothing published): Portal. It sets <body class="science [dark]">, <html data-dim-theme=
-  "portal|research"> (dark | light), <html data-dim-tokens="<skin>"> while following Desktop, and Desktop's corners
-  (<html data-corners="sharp|rounded">).
+  The theme's values live in dimOS Desktop: it serves every skin's tokens (Portal, Research, Vibeslop, Hackerman, …) as
+  /theme.css, and theme.js links it (an app at /apps/<name>/ reaches it as ../../theme.css) and sets html[data-skin] and
+  html[data-corners] from what Desktop saved, so an app looks like the Desktop around it in every skin and follows it
+  live. The skin's color-scheme picks the structural rules here: the light ones (Research's design doc: hairline cards,
+  serif titles, mono micro-labels) or body.science.dark (Portal's: hairlines, Michroma section heads, glow on focus).
+  Off Desktop, the one bundled fallback below: Portal's tokens.
 
   The theme contract (Desktop's, the portal mockup's src.html): --bg --fg --muted-fg --primary --primary-fg --ok --warn
   --danger --info --surface --raised --input-bg --hover --sel --border --border-strong --hair --radius --radius-sm
-  --radius-lg --radius-xl --radius-pill --shadow --shadow-lg --blur --sans --mono --display --label-case --track-label.
+  --radius-lg --radius-xl --radius-pill --shadow --shadow-lg --blur --sans --mono --display --label-case --track-label,
+  and the other names below (--card, --muted, --accent, --violet, --code-*, --cat-*, --scene-*, --term-*, --axis-*, …).
 
-  Components are .dim-* classes; every color, radius and font is a variable below, so app CSS that uses the variables
-  follows both themes. Radius tokens are 0 in Portal, and Portal also squares every corner the way its doc does
+  Components are .dim-* classes; every color, radius and font is a token, so app CSS that uses the tokens follows every
+  skin. A square skin (panel radius 0, like Portal) also squares every corner the way Portal's doc does
   (`*{border-radius:0!important}`), so an app's own rounded corner never leaks into it.
-  Color is status only: --ok and --warn; Portal has no red (its doc: "Other colors mean status (ok / warn) and nothing
-  else"), so --danger is the warn amber there and Research's red (#c2412f, its window-close red) on paper.
 */
 /* The doc's four faces, bundled (fonts/, latin subset, SIL Open Font License): no network, so an app looks the same
    offline and on a robot. font-display: block, so text waits for its face instead of flashing a fallback; theme.js
@@ -81,320 +72,79 @@
     --dim-inset-right: 0px;
 }
 
-/* ───────────────────────── Research (light) tokens ───────────────────────── */
-:root {
-    /* the doc's own names */
-    --void: #f5f4ef; /* paper: page background */
-    --ink: #20211f; /* primary text */
-    --dim: #6b6a63; /* secondary text, labels */
-    --line: #e2e0d7; /* card borders */
-    --hair: #eae9e2; /* row dividers */
-    --sel: rgba(41, 60, 228, 0.08); /* selected fill */
-    --mint: #2f9e5b; /* status: running / ok */
-    --amber: #d97a1e; /* status: warn / stopped */
-    --cyan: #3a5bd9; /* tool chips, links */
-    --agent-bg: #f7f6f1; /* agent message card */
-    --input-bg: #f5f4ef; /* the doc's --vs-input: input fill */
-    --bk: #f5f4ef; /* solid control fill */
-    --placeholder: #9a998f;
-
-    /* dim-app names (apps use these) */
-    --bg: var(--void);
-    --card: #ffffff;
-    --panel: #ffffff;
-    --fg: var(--ink);
-    --muted: var(--input-bg);
-    --muted-fg: var(--dim);
-    --accent: #fbfaf7; /* hover surface (button:hover) */
-    --accent-fg: var(--ink);
-    --secondary: #ffffff; /* chip surface */
-    --secondary-fg: var(--dim);
-    --border: var(--line);
-    --border-strong: #cfccc0; /* hover border */
-    --input: var(--line); /* control borders (the doc's --vs-border) */
-
-    --primary: #293ce4; /* THE accent (the doc's --magenta / --rs-blue) */
-    --primary-hover: #2232c4;
-    --primary-soft: var(--sel);
-    --primary-fg: #ffffff;
-    --info: var(--cyan);
-    --ok: var(--mint);
-    --warn: var(--amber);
-    --danger: #c2412f;
-    --danger-fg: #ffffff;
-    --violet: var(--cyan);
-    --ring: var(--primary);
-    --ring-soft: rgba(41, 60, 228, 0.12);
-    --ok-line: rgba(47, 158, 91, 0.35);
-    --warn-line: rgba(217, 122, 30, 0.35);
-    --danger-line: rgba(194, 65, 47, 0.35);
-    --track: #d9d7cd; /* switch track off */
-    --off: #c9c7bc; /* idle status dot */
-
-    /* type: the doc's three voices */
-    --hud: "Inter", ui-sans-serif, sans-serif;
-    --sans: var(--hud);
-    --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
-    --display: "Instrument Serif", Georgia, serif;
-    --track-label: 0.14em;
-    --track-btn: 0;
-    --label-case: uppercase; /* section heads and micro-labels */
-    --head-font: var(--mono);
-    --head-color: var(--primary);
-    --heading-weight: 500;
-
-    /* surfaces (Desktop's theme contract) */
-    --surface: #ffffff; /* panels and bars */
-    --raised: #ffffff; /* menus, popovers, modals */
-    --hover: rgba(32, 33, 31, 0.05);
-    --glass: rgba(255, 255, 255, 0.92);
-    --blur: blur(10px);
-    --scrim: rgba(0, 0, 0, 0.25);
-    --close-red: #c2412f;
-    --close-red-hover: #d6452f;
-
-    /* radius: "Gently rounded: 8–14px on cards and controls, full pills for chips and the ask box" */
-    --radius: 8px; /* controls: buttons, inputs, selects */
-    --radius-sm: 6px; /* parts inside a control (segment, tooltip) */
-    --radius-lg: 10px; /* cards (the doc's --r) */
-    --radius-xl: 14px; /* sheets, modals, the dock */
-    --radius-pill: 999px; /* chips, badges, toggles, bars */
-    --radius-round: 50%; /* dots, switch knobs */
-
-    /* elevation: the soft paper shadow */
-    --shadow-2xs: none;
-    --shadow-xs: 0 1px 2px rgba(32, 33, 31, 0.05);
-    --shadow-sm: 0 1px 2px rgba(32, 33, 31, 0.05), 0 8px 24px rgba(32, 33, 31, 0.06);
-    --shadow: 0 1px 2px rgba(32, 33, 31, 0.05), 0 8px 24px rgba(32, 33, 31, 0.06);
-    --shadow-md: 0 12px 32px rgba(32, 33, 31, 0.12);
-    --shadow-lg: 0 24px 60px rgba(32, 33, 31, 0.14);
-    --glow: none;
-    --glow-accent: none;
-    --grid-line: transparent;
-
-    /* code / syntax (traceback + log panels), from the palette */
-    --code-bg: var(--agent-bg);
-    --code-fg: var(--ink);
-    --code-line: var(--dim);
-    --code-kw: var(--primary);
-    --code-str: var(--mint);
-    --code-num: var(--amber);
-    --code-com: var(--placeholder);
-    --code-loc: var(--primary);
-    --code-func: var(--cyan);
-
-    /* categorical (module dots, charts) */
-    --cat-1: #293ce4;
-    --cat-2: #2f9e5b;
-    --cat-3: #3a5bd9;
-    --cat-4: #d97a1e;
-
-    /* 3D / canvas backgrounds */
-    --scene-bg: #f5f4ef;
-    --scene-grid: #e2e0d7;
-    --scene-grid-major: #cfccc0;
-
-    /* terminal (live ANSI console): dark in both themes, the ANSI palette assumes it */
-    --term-bg: #20211f;
-    --term-fg: #f5f4ef;
-    --term-dim: #9a998f;
-
-    /* axis colors (URDF Editor, viewers) */
-    --axis-x: #c2412f;
-    --axis-y: #2f9e5b;
-    --axis-z: #293ce4;
-}
-
-/* ───────────────────────── Portal (dark) tokens ───────────────────────── */
-body.science.dark {
+/* The bundled fallback: Portal's tokens (Desktop's theme contract, its /theme.css :root block) for an app off Desktop.
+   Inside Desktop, theme.js links Desktop's /theme.css, whose skin blocks win over this zero-specificity one. */
+:where(:root) {
     color-scheme: dark;
-    --void: #05070d; /* page / deepest background */
-    --ink: #ece8f0; /* primary text */
-    --dim: #8e8898; /* secondary text, idle borders */
-    --line: rgba(255, 255, 255, 0.1); /* hairlines */
-    --hair: rgba(255, 255, 255, 0.08); /* fainter hairlines */
-    --sel: rgba(124, 200, 236, 0.13); /* selected / pressed fill */
-    --mint: #8fd4a8; /* status: ok */
-    --amber: #e8bf6a; /* status: warn */
-    --cyan: #8fcfe0; /* data / tool chips */
-    --agent-bg: rgba(14, 12, 19, 0.92);
-    --input-bg: #0c0b10;
-    --bk: #0c0b10; /* solid control fill */
-    --placeholder: #8e8898;
-
-    --bg: var(--void);
-    --card: rgba(14, 12, 19, 0.92); /* the doc's --panel: containers */
-    --panel: rgba(14, 12, 19, 0.92);
-    --fg: var(--ink);
-    --muted: var(--bk);
-    --muted-fg: var(--dim);
-    --accent: rgba(255, 255, 255, 0.04); /* hover surface */
-    --accent-fg: var(--ink);
-    --secondary: transparent;
-    --secondary-fg: var(--dim);
-    --border: var(--line);
-    --border-strong: var(--dim);
-    --input: var(--line);
-
-    --primary: #7cc8ec; /* THE accent, Dimensional blue (the doc's --magenta) */
-    --primary-hover: #7cc8ec;
-    --primary-soft: var(--sel);
+    --bg: #05070d;
+    --fg: #ece8f0;
+    --muted-fg: #8e8898;
+    --primary: #7cc8ec;
     --primary-fg: #05070d;
-    --info: var(--cyan);
-    --ok: var(--mint);
-    --warn: var(--amber);
-    --danger: var(--amber);
-    --danger-fg: #05070d;
-    --violet: #9fb4d8; /* agent */
-    --ring: var(--primary);
-    --ring-soft: rgba(124, 200, 236, 0.25);
-    --ok-line: rgba(143, 212, 168, 0.4);
-    --warn-line: rgba(232, 191, 106, 0.4);
-    --danger-line: rgba(232, 191, 106, 0.4);
-    --track: var(--bk);
-    --off: var(--dim);
-
-    --display: "Michroma", "Eurostile", sans-serif;
-    --track-label: 0.2em;
-    --track-btn: 0.04em;
-    --label-case: uppercase;
-    --head-font: var(--display);
-    --head-color: var(--primary);
-    --heading-weight: 400;
-
+    --ok: #8fd4a8;
+    --warn: #e8bf6a;
+    --danger: #e8bf6a;
+    --info: #8fcfe0;
     --surface: #0e0c13;
     --raised: #0e0c13;
+    --input-bg: #0c0b10;
     --hover: rgba(255, 255, 255, 0.04);
-    --glass: rgba(14, 12, 19, 0.82);
-    --blur: blur(10px);
-    --scrim: rgba(4, 3, 8, 0.62);
-    --close-red: #f0707f;
-    --close-red-hover: #c8384d;
-
-    --radius: 0;
-    --radius-sm: 0;
-    --radius-lg: 0;
-    --radius-xl: 0;
-    --radius-pill: 0;
-    --radius-round: 0;
-
-    --shadow-2xs: none;
-    --shadow-xs: none;
-    --shadow-sm: none; /* "Glow is earned … Containers don't." */
+    --sel: color-mix(in srgb, var(--primary) 13%, transparent);
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.22);
+    --hair: rgba(255, 255, 255, 0.08);
+    --radius: 0px;
+    --radius-sm: 0px;
+    --radius-lg: 0px;
+    --radius-xl: 0px;
+    --radius-pill: 0px;
     --shadow: none;
-    --shadow-md: 0 12px 30px rgba(0, 0, 0, 0.6); /* menus */
-    --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.7); /* sheets */
-    --glow: 0 0 8px rgba(124, 200, 236, 0.6);
-    --glow-accent: 0 0 12px rgba(124, 200, 236, 0.3);
-    --grid-line: transparent;
-
-    --code-bg: #0c0b10;
-    --code-fg: var(--ink);
-    --code-line: var(--dim);
-    --code-kw: var(--violet);
-    --code-str: var(--mint);
-    --code-num: var(--amber);
-    --code-com: var(--dim);
-    --code-loc: var(--primary);
-    --code-func: var(--cyan);
-
-    --cat-1: #7cc8ec;
-    --cat-2: #8fd4a8;
-    --cat-3: #9fb4d8;
-    --cat-4: #e8bf6a;
-
-    --scene-bg: #05070d;
-    --scene-grid: #0e0c13;
-    --scene-grid-major: #1c1a22;
-
-    --term-bg: #05070d;
-    --term-fg: #ece8f0;
-    --term-dim: #8e8898;
-
-    --axis-x: #e8bf6a;
-    --axis-y: #8fd4a8;
-    --axis-z: #7cc8ec;
+    --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.7);
+    --blur: blur(10px);
+    --sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --display: "Michroma", "Eurostile", "Arial Black", sans-serif;
+    --label-case: uppercase;
+    --track-label: 0.2em;
+    --card: color-mix(in srgb, var(--surface) 92%, transparent);
+    --panel: var(--card);
+    --accent: var(--hover);
+    --secondary: transparent;
+    --secondary-fg: var(--muted-fg);
+    --input: var(--border);
+    --primary-hover: var(--primary);
+    --primary-soft: var(--sel);
+    --danger-fg: var(--primary-fg);
+    --violet: #9fb4d8;
+    --ring: var(--primary);
+    --ring-soft: color-mix(in srgb, var(--primary) 25%, transparent);
+    --ok-line: color-mix(in srgb, var(--ok) 40%, transparent);
+    --warn-line: color-mix(in srgb, var(--warn) 40%, transparent);
+    --danger-line: color-mix(in srgb, var(--danger) 40%, transparent);
+    --track: var(--input-bg);
+    --off: var(--muted-fg);
+    --placeholder: var(--muted-fg);
+    --track-btn: 0.04em;
+    --shadow-md: 0 12px 30px rgba(0, 0, 0, 0.6);
+    --glow-accent: 0 0 12px color-mix(in srgb, var(--primary) 30%, transparent);
+    --hud: var(--sans);
+    --radius-round: 0px;
+    --ink: var(--fg);
+    --dim: var(--muted-fg);
+    --line: var(--border);
+    --magenta: var(--primary);
+    --mint: var(--ok);
+    --cyan: var(--info);
+    --bk: var(--input-bg);
 }
 
-/* Portal: "Square corners, everywhere. No rounding." (the doc's `*{border-radius:0!important}`): the bundled Portal, or
-   whichever Desktop skin is square (theme.js marks html[data-dim-square] when its panel radius is 0) */
-html:not([data-dim-tokens]) body.science.dark *,
-html:not([data-dim-tokens]) body.science.dark *::before,
-html:not([data-dim-tokens]) body.science.dark *::after,
-html:not([data-dim-tokens]) body.science.dark *::-webkit-scrollbar-thumb,
+/* a square skin (Portal; theme.js marks html[data-dim-square] when the skin's panel radius is 0) squares every corner,
+   as Portal's doc does (`*{border-radius:0!important}`) */
 html[data-dim-square] body.science *,
 html[data-dim-square] body.science *::before,
 html[data-dim-square] body.science *::after,
 html[data-dim-square] body.science *::-webkit-scrollbar-thumb {
     border-radius: 0 !important;
-}
-
-/* Desktop's corners (Settings → Appearance; html[data-corners], set by theme.js and by Desktop in its app frames):
-   sharp squares both palettes; rounded gives Portal the radius tokens and lifts its square-everything for the dim-*
-   components (the same rules as Desktop's built-ins, its ui/src/shell.css) */
-html[data-corners="sharp"] body.science {
-    --radius: 0;
-    --radius-sm: 0;
-    --radius-lg: 0;
-    --radius-xl: 0;
-    --radius-pill: 0;
-    --radius-round: 0;
-}
-html[data-corners="sharp"] body.science *,
-html[data-corners="sharp"] body.science *::before,
-html[data-corners="sharp"] body.science *::after {
-    border-radius: 0 !important;
-}
-html[data-corners="rounded"] body.science.dark {
-    --radius: 8px;
-    --radius-sm: 6px;
-    --radius-lg: 10px;
-    --radius-xl: 14px;
-    --radius-pill: 999px;
-    --radius-round: 50%;
-}
-html[data-corners="rounded"]
-    body.science.dark
-    :is(
-        .dim-btn,
-        .dim-input,
-        .dim-textarea,
-        .dim-select,
-        .dim-stepper,
-        input,
-        select,
-        textarea
-    ) {
-    border-radius: var(--radius) !important;
-}
-html[data-corners="rounded"] body.science.dark :is(.dim-tab, .dim-tooltip, kbd, .seg, .seg button) {
-    border-radius: var(--radius-sm) !important;
-}
-html[data-corners="rounded"] body.science.dark :is(.dim-panel, .dim-card, .dim-menu, .dim-alert) {
-    border-radius: var(--radius-lg) !important;
-}
-html[data-corners="rounded"] body.science.dark :is(.dim-sheet, .dim-modal) {
-    border-radius: var(--radius-xl) !important;
-}
-html[data-corners="rounded"]
-    body.science.dark
-    :is(
-        .dim-btn.round,
-        .dim-badge,
-        .dim-chip,
-        .dim-ask,
-        .dim-switch .track,
-        .dim-progress,
-        .dim-progress > span,
-        .dim-toast
-    ) {
-    border-radius: var(--radius-pill) !important;
-}
-html[data-corners="rounded"]
-    body.science.dark
-    :is(.dim-badge .dot, .dim-dot, .dim-check .ring, .dim-avatar, .dim-live-dot),
-html[data-corners="rounded"] body.science.dark .dim-switch .track::after {
-    border-radius: var(--radius-round) !important;
 }
 
 *,
@@ -404,7 +154,6 @@ html[data-corners="rounded"] body.science.dark .dim-switch .track::after {
 }
 
 body.science {
-    color-scheme: light;
     margin: 0;
     color: var(--fg);
     background: var(--bg);
@@ -412,9 +161,6 @@ body.science {
     -webkit-font-smoothing: antialiased;
     font-feature-settings: "cv11", "ss01";
     transition: background-color 0.2s ease, color 0.2s ease;
-}
-body.science.dark {
-    color-scheme: dark;
 }
 /* the doc: `button,input,select,textarea,option{font-family:var(--hud)}` — zero specificity, so app classes win */
 :where(body.science) :where(button, input, select, textarea, option) {
