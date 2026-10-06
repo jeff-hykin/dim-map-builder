@@ -4,7 +4,7 @@
 // back to the same recording, view, tool, map, edits, cameras and selection; running jobs keep running and the page
 // reattaches to their progress.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
-import { api, events, type Job, type Session } from "./core/api.ts"
+import { api, events, type Job, type LastSession, type Session } from "./core/api.ts"
 import { MapScene } from "./core/scene.ts"
 import type { FloorModel } from "./core/slice.ts"
 import { DEFAULT_UI, TOOLS, type Context, type Modal, type ToolId, type UiState, type ViewMode } from "./ui/context.ts"
@@ -26,6 +26,7 @@ import { useUploads, isActive } from "./ui/useUploads.ts"
 import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
 import { LoginDialog } from "./ui/LoginDialog.tsx"
 import { FloorPicker } from "./ui/FloorPicker.tsx"
+import { EmptyState } from "./ui/EmptyState.tsx"
 import { ThemeToggle } from "./ThemeToggle.tsx"
 import { notify } from "./dim-app/notify.js"
 
@@ -44,6 +45,8 @@ export function App() {
     const viewBox = useRef<HTMLElement>(null)
     const [scene, setScene] = useState<MapScene | null>(null)
     const [session, setSession] = useState<Session | null>(null)
+    /** undefined until the server's state is in; then the recording open before the last start, or null */
+    const [last, setLast] = useState<LastSession | null | undefined>(undefined)
     const [ui, setUiState] = useState<UiState>(DEFAULT_UI)
     const [modal, setModal] = useState<Modal>(null)
     const [slicing, setSlicing] = useState(false)
@@ -292,13 +295,16 @@ export function App() {
         [run, adopt],
     )
 
-    // on load: go back to whatever was open (else pick a recording)
+    // on load: go back to what's open since the server started (a refresh, Recordings' Open), else ask for a recording
     useEffect(() => {
         if (!scene) {
             return
         }
         api.state()
-            .then((state) => (state.session ? adopt(state.session) : setModal("open")))
+            .then((state) => {
+                setLast(state.last ?? null)
+                return state.session ? adopt(state.session) : undefined
+            })
             .catch((error) => say(String(error), true))
     }, [scene, adopt, say])
 
@@ -700,6 +706,25 @@ export function App() {
                         {ui.tool === "views" && <ViewsPanel context={context} />}
                     </div>
                 )}
+                {!session && last !== undefined && modal !== "open" && (
+                    <EmptyState
+                        layer
+                        label="No recording open"
+                        title="Please pick a recording"
+                        body="Maps are built from a robot recording with lidar point clouds, from Desktop's shared recordings folder."
+                        testId="pick-a-recording"
+                        actions={[
+                            { label: "Pick a recording", onClick: () => setModal("open") },
+                            ...(last
+                                ? [{
+                                    label: `Continue ${last.name}`,
+                                    primary: false,
+                                    onClick: () => openRecording({ id: last.recordingId, path: last.path, name: last.name, writable: last.writable }),
+                                }]
+                                : []),
+                        ]}
+                    />
+                )}
                 {running && modal !== "generate" && (
                     <div className="floating-job">
                         <JobCard job={running} onCancel={() => session && run(api.cancel(session.id), "Cancelling…")} />
@@ -722,16 +747,14 @@ export function App() {
             )}
             {modal === "generate" && session && <GenerateModal context={context} onClose={() => setModal(null)} />}
             {modal === "open" && (
-                <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && session && setModal(null)}>
+                <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModal(null)}>
                     <div className="dim-panel modal" data-modal="open">
-                        {session && (
-                            <div className="modal-head">
-                                <span />
-                                <button type="button" className="dim-btn sm icon" onClick={() => setModal(null)}>
-                                    <Icon name="close" />
-                                </button>
-                            </div>
-                        )}
+                        <div className="modal-head">
+                            <span />
+                            <button type="button" className="dim-btn sm icon" onClick={() => setModal(null)}>
+                                <Icon name="close" />
+                            </button>
+                        </div>
                         <OpenPanel context={context} />
                     </div>
                 </div>

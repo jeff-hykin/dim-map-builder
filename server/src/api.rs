@@ -146,7 +146,7 @@ pub fn routes() -> Routes<Arc<App>> {
         // the page and what's open
         .endpoint("GET", "api/status", "The open map, briefly: session id, recording, stage (raw = not built yet / map), voxel count, bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.", json!({ "session": s("session id (default: the recording open in the page)") }), status)
         .role("context")
-        .endpoint("GET", "api/state", "What the page loads: the open session id, its full state (annotations, plans, job, history...) and Desktop's recordings folder.", json!({}), state)
+        .endpoint("GET", "api/state", "What the page loads: the open session id, its full state (annotations, plans, job, history...) and Desktop's recordings folder. Only a recording opened since the server started is open; after a restart `last` names the one open before (offered, not loaded).", json!({}), state)
         .endpoint("POST", "api/open", "Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the recordings folder.", json!({ "path": required(s("the recording file")), "name": s("display name"), "id": s("Desktop's recording id"), "writable": b("false for a read-only folder: saving copies it first (default true)") }), open)
         .endpoint("GET", "api/build-defaults", "The default map build options (voxelSize, loopClosure, rayTracing, every, maxRange, tfTolerance, worldFrame, cloudStream, ray, pgo).", json!({}), |  | async { Json(json!(mapping::build::BuildOptions::default())) })
         .endpoint("GET", "api/view", "What the user is looking at: camera position/target, the map-frame bounds of the visible voxels, the selection, and (screenshot=true, default) a screenshot of the 3D view with a 1 m grid, axis labels and annotation labels drawn on it (images[0]).", json!({ "screenshot": b("default true"), "topDown": b("screenshot from straight above the current target instead of the user's angle (the user's camera is restored after)"), "session": s("default: the open one") }), get_view)
@@ -231,12 +231,18 @@ async fn status(State(app): State<Arc<App>>, Query(args): Args) -> Result<Json<V
 }
 
 async fn state(State(app): State<Arc<App>>) -> Result<Json<Value>> {
-    let active = app.active.lock().unwrap().clone().or_else(|| app.store.last_open());
+    // only a recording opened since the server started: a fresh start asks for one (the last is offered, not loaded)
+    let active = app.active.lock().unwrap().clone();
     let session = match &active {
         Some(id) => app.workspace(id)?.map(|w| summary(&app, &w.lock().unwrap())),
         None => None,
     };
-    Ok(Json(json!({ "active": active, "session": session, "recordingsDir": app.recordings_dir })))
+    let last = match &active {
+        Some(_) => None,
+        None => app.store.last_open().and_then(|id| app.store.load(&id).ok().flatten()),
+    };
+    let last = last.map(|s| json!({ "id": s.id, "name": s.name, "recordingId": s.recording_id, "path": s.recording_path, "writable": s.writable, "stage": s.stage }));
+    Ok(Json(json!({ "active": active, "session": session, "last": last, "recordingsDir": app.recordings_dir })))
 }
 
 async fn open(State(app): State<Arc<App>>, Body(body): Body) -> Result<Json<Value>> {
@@ -834,6 +840,21 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let (status, _) = call(&router, "POST", "/api/sessions/current/upload", None).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "not started by Desktop");
+    }
+
+    #[tokio::test]
+    async fn a_fresh_start_asks_for_a_recording_and_offers_the_last() {
+        let (_, router, dir) = app();
+        recording(dir.path());
+        call(&router, "POST", "/api/open", Some(json!({ "path": "r.db" }))).await;
+        let (_, state) = call(&router, "GET", "/api/state", None).await;
+        assert!(state["session"].is_object() && state["last"].is_null(), "{state}");
+        // the server restarts (Desktop opened again): nothing is loaded, the last recording is offered
+        let restarted = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let router = routes().router.with_state(restarted);
+        let (_, state) = call(&router, "GET", "/api/state", None).await;
+        assert!(state["active"].is_null() && state["session"].is_null(), "{state}");
+        assert_eq!(state["last"]["path"], dir.path().join("r.db").display().to_string());
     }
 
     #[tokio::test]

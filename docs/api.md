@@ -18,7 +18,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | Method + path | What |
 | --- | --- |
 | `GET api/status` (context) | the open map briefly: recording, stage, voxels, bounds, floors, annotation counts, job, unsaved, recent history |
-| `GET api/state` | what the page loads: `{ active, session, recordingsDir }` |
+| `GET api/state` | what the page loads: `{ active, session, last, recordingsDir }` (only a recording opened since the server started is open; `last` is the one before, offered on the empty page) |
 | `POST api/open` | `{ path, name?, id?, writable? }`: open a recording; every page follows (`opened` event) |
 | `GET api/build-defaults` | the default build options |
 | `GET api/view` (view) | camera, visible bounds, selection, UI, and a screenshot with a 1 m grid and labels (`screenshot`, `topDown`) |

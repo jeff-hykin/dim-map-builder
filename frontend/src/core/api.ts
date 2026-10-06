@@ -180,6 +180,16 @@ export interface BuildOptions {
     tfTolerance: number
 }
 
+/** the recording open before the server last started: offered on the empty page, not loaded */
+export interface LastSession {
+    id: string
+    name: string
+    recordingId: string
+    path: string
+    writable: boolean
+    stage: string
+}
+
 export interface Session {
     id: string
     recordingId: string
@@ -314,7 +324,7 @@ export const uploads = {
 }
 
 export const api = {
-    state: () => call<{ active: string | null; session: Session | null; recordingsDir: string }>("api/state"),
+    state: () => call<{ active: string | null; session: Session | null; last: LastSession | null; recordingsDir: string }>("api/state"),
     open: (recording: { id: string; path: string; name: string; writable?: boolean }) => call<Session>("api/open", json(recording)),
     session: (id: string) => call<Session>(`api/sessions/${id}`),
     discard: (id: string) => call(`api/sessions/${id}`, { method: "DELETE" }),

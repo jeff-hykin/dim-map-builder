@@ -35,8 +35,9 @@ and in `dimos.yaml`, [docs/api.md](docs/api.md)):
 "clean up the floating voxels in this view", "box every chair", "add a no-go area around the stairs".
 
 Your work is never lost: the working session (map edits, undo history, annotations, plans, camera, panels) is kept
-server-side and written to disk on every change, separately from "Save into recording". Refresh, close the tab or
-restart Desktop and it comes back as it was.
+server-side and written to disk on every change, separately from "Save into recording". Refresh or close the tab and
+it comes back as it was. After Desktop restarts, the Map Editor opens on "Please pick a recording" (with a Continue
+button for the last one), and picking that recording again brings its session back.
 
 ## Install
 

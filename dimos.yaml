@@ -47,7 +47,8 @@ agent:
             path: api/state
             description: >-
                 What the page loads: the open session id, its full state (annotations, plans, job, history...) and
-                Desktop's recordings folder.
+                Desktop's recordings folder. Only a recording opened since the server started is open; after a restart
+                `last` names the one open before (offered, not loaded).
         -
             method: POST
             path: api/open
