@@ -3,6 +3,8 @@ import type { MapScene } from "../core/scene.ts"
 import type { Session } from "../core/api.ts"
 import { AUTO_RANGE, type FloorModel, type SliceRange } from "../core/slice.ts"
 import type { CubeShade } from "../render/pointMaterial.ts"
+import { DEFAULT_GRADIENT } from "../render/gradients.ts"
+import { DEFAULT_PERIOD } from "../render/palette.ts"
 import type { IconName } from "./Icon.tsx"
 import type { Uploads } from "./useUploads.ts"
 
@@ -46,7 +48,8 @@ export interface UiState {
     view2d: View2d | null
     floorOverlay: boolean
     showPaths: { corrected: boolean; raw: boolean; loops: boolean }
-    look: { style: "voxel" | "disc" | "square" | "splat"; gradient: string; scale: number; shade?: CubeShade }
+    /** `period`: meters of height per color cycle when `gradient` is a repeating palette */
+    look: { style: "voxel" | "disc" | "square" | "splat"; gradient: string; period?: number; scale: number; shade?: CubeShade }
     region: { center: [number, number, number]; size: [number, number, number]; yaw: number } | null
     selected: { kind: string; id: string } | null
     scope: "view" | "region" | "all"
@@ -63,10 +66,20 @@ export const DEFAULT_UI: UiState = {
     view2d: null,
     floorOverlay: false,
     showPaths: { corrected: true, raw: false, loops: true },
-    look: { style: "voxel", gradient: "memworld", scale: 1, shade: "soft" },
+    look: { style: "voxel", gradient: DEFAULT_GRADIENT, period: DEFAULT_PERIOD, scale: 1, shade: "soft" },
     region: null,
     selected: null,
     scope: "view",
+}
+
+/** A session's saved panels over the defaults. A look saved before the repeating palettes, on the old default ramp
+ * (memworld, no period), moves to the new default; a ramp picked on purpose stays. */
+export function restoreUi(saved: Partial<UiState>): UiState {
+    const restored: UiState = { ...DEFAULT_UI, ...saved }
+    if (saved.look && saved.look.period === undefined && saved.look.gradient === "memworld") {
+        restored.look = { ...saved.look, gradient: DEFAULT_UI.look.gradient, period: DEFAULT_UI.look.period }
+    }
+    return restored
 }
 
 /** the modals over the page */

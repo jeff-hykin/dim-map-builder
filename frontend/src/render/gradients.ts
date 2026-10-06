@@ -1,6 +1,8 @@
 // Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Editor draws with the same point styles.
-// Color ramps for point clouds and other scalar coloring, as 256×1 textures the shaders sample.
+// Color ramps for point clouds and other scalar coloring, as 256×1 textures the shaders sample. The repeating height
+// palettes (palette.ts) are textures too, wrapping (RepeatWrapping), so the blend from c3 back to c1 has no seam.
 import * as THREE from "three"
+import { DEFAULT_PALETTE, isPalette, paletteAt, PALETTE_NAMES, PALETTES } from "./palette.ts"
 
 /** Stops as [position 0..1, "#rrggbb"]; piecewise-linear in sRGB. */
 const RAMPS: Record<string, [number, string][]> = {
@@ -17,8 +19,9 @@ const RAMPS: Record<string, [number, string][]> = {
     grayscale: [[0, "#1a1a1a"], [1, "#f2f2f2"]],
 }
 
-export const GRADIENTS = Object.keys(RAMPS)
-export const DEFAULT_GRADIENT = "memworld"
+/** the repeating palettes first (the default), then the ramps stretched over the map's height range */
+export const GRADIENTS = [...PALETTE_NAMES, ...Object.keys(RAMPS)]
+export const DEFAULT_GRADIENT = DEFAULT_PALETTE
 
 function hexToRgb(hex: string): [number, number, number] {
     const value = parseInt(hex.slice(1), 16)
@@ -27,7 +30,10 @@ function hexToRgb(hex: string): [number, number, number] {
 
 /** The ramp's color at t (0..1) as 0..255 rgb. */
 export function sampleGradient(name: string, t: number): [number, number, number] {
-    const stops = RAMPS[name] ?? RAMPS[DEFAULT_GRADIENT]
+    if (isPalette(name) || !RAMPS[name]) {
+        return paletteAt(isPalette(name) ? name : DEFAULT_PALETTE, t)
+    }
+    const stops = RAMPS[name]
     const clamped = Math.min(1, Math.max(0, t))
     for (let index = 1; index < stops.length; index++) {
         const [position, hex] = stops[index]
@@ -48,11 +54,16 @@ export function gradientTexture(name: string): THREE.DataTexture {
     let texture = textures.get(name)
     if (!texture) {
         const data = new Uint8Array(256 * 4)
+        // a palette's texels sit at their centers in one wrapping cycle; a ramp's run end to end
+        const cyclic = isPalette(name)
         for (let index = 0; index < 256; index++) {
-            const [r, g, b] = sampleGradient(name, index / 255)
+            const [r, g, b] = sampleGradient(name, cyclic ? (index + 0.5) / 256 : index / 255)
             data.set([r, g, b, 255], index * 4)
         }
         texture = new THREE.DataTexture(data, 256, 1)
+        if (cyclic) {
+            texture.wrapS = THREE.RepeatWrapping
+        }
         texture.colorSpace = THREE.SRGBColorSpace
         texture.magFilter = THREE.LinearFilter
         texture.minFilter = THREE.LinearFilter
@@ -64,6 +75,10 @@ export function gradientTexture(name: string): THREE.DataTexture {
 
 /** CSS linear-gradient for a ramp (settings swatches). */
 export function gradientCss(name: string): string {
-    const stops = RAMPS[name] ?? RAMPS[DEFAULT_GRADIENT]
+    if (!RAMPS[name]) {
+        const [a, b, c] = (PALETTES[name] ?? PALETTES[DEFAULT_PALETTE]).colors
+        return `linear-gradient(90deg, ${a}, ${b}, ${c}, ${a})`
+    }
+    const stops = RAMPS[name]
     return `linear-gradient(90deg, ${stops.map(([position, hex]) => `${hex} ${position * 100}%`).join(", ")})`
 }

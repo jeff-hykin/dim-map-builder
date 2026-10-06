@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { api, type Region } from "../core/api.ts"
 import { GRADIENTS } from "../render/gradients.ts"
+import { DEFAULT_PERIOD, isPalette, PALETTE_NAMES, PALETTES } from "../render/palette.ts"
 import { CUBE_SHADES, type CubeShade } from "../render/pointMaterial.ts"
 import type { Context } from "./context.ts"
 import { Icon } from "./Icon.tsx"
@@ -195,14 +196,44 @@ export function CleanPanel({ context }: { context: Context }) {
             )}
             <div className="field">
                 <span>colors</span>
-                <select className="dim-select" value={ui.look.gradient} onChange={(event) => { scene.applyLook({ gradient: event.target.value }); setUi({ look: { ...ui.look, gradient: event.target.value } }) }}>
-                    {GRADIENTS.map((name) => (
-                        <option key={name} value={name}>
-                            {name}
-                        </option>
-                    ))}
+                <select className="dim-select" value={ui.look.gradient} onChange={(event) => { scene.applyLook({ gradient: event.target.value }); setUi({ look: { ...ui.look, gradient: event.target.value } }) }} data-look-colors>
+                    <optgroup label="repeating with height">
+                        {PALETTE_NAMES.map((name) => (
+                            <option key={name} value={name}>
+                                {PALETTES[name].label}
+                            </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="one ramp, bottom to top">
+                        {GRADIENTS.filter((name) => !isPalette(name)).map((name) => (
+                            <option key={name} value={name}>
+                                {name}
+                            </option>
+                        ))}
+                    </optgroup>
                 </select>
             </div>
+            {isPalette(ui.look.gradient) && (
+                <div className="field">
+                    <span>repeat every (m)</span>
+                    <input
+                        className="dim-input number"
+                        type="number"
+                        min={0.25}
+                        step={0.5}
+                        value={ui.look.period ?? DEFAULT_PERIOD}
+                        title="the three colors cycle once per this much height; the raw scans use the next palette"
+                        data-look-period
+                        onChange={(event) => {
+                            const period = Number(event.target.value)
+                            if (period > 0) {
+                                scene.applyLook({ period })
+                                setUi({ look: { ...ui.look, period } })
+                            }
+                        }}
+                    />
+                </div>
+            )}
             <div className="field">
                 <span>paths</span>
                 <div className="row" style={{ margin: 0 }}>

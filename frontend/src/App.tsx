@@ -7,7 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { api, events, type Job, type LastSession, type Session } from "./core/api.ts"
 import { MapScene } from "./core/scene.ts"
 import type { FloorModel } from "./core/slice.ts"
-import { DEFAULT_UI, TOOLS, type Context, type Modal, type ToolId, type UiState, type ViewMode } from "./ui/context.ts"
+import { DEFAULT_UI, restoreUi, TOOLS, type Context, type Modal, type ToolId, type UiState, type ViewMode } from "./ui/context.ts"
 import { OpenPanel } from "./ui/OpenPanel.tsx"
 import { CleanPanel } from "./ui/CleanPanel.tsx"
 import { AnnotatePanel } from "./ui/AnnotatePanel.tsx"
@@ -254,7 +254,7 @@ export function App() {
             scene.setMap(new Float32Array(0), 0.05)
             scene.setPreview(null)
             const saved = (fresh.view?.ui ?? {}) as Partial<UiState>
-            const restoredUi: UiState = { ...DEFAULT_UI, ...saved }
+            const restoredUi = restoreUi(saved)
             setUiState(restoredUi)
             scene.applyLook(restoredUi.look)
             scene.showPaths(restoredUi.showPaths)

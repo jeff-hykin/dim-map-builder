@@ -82,6 +82,7 @@ One compiled binary at runtime: no Python, no dimos needed to build or edit maps
 
     cargo test --workspace                      # all the non-UI logic and every endpoint
     deno test frontend/src/share/               # the shared map's packing
+    deno test frontend/src/render/palette_test.ts   # the repeating height palettes
     deno task check-endpoints [--write]         # dimos.yaml's agent: = the served agent.json
     cargo run -p dimos-app-server -- --port 7190 --frontend frontend/dist
     (cd frontend && npm ci && npm run dev)      # the page, against a running Desktop (DESKTOP_URL)

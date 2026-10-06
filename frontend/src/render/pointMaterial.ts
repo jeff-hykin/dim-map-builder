@@ -7,7 +7,8 @@
 // writes gl_FragDepth (as MemWorld): that would turn off early depth rejection and cost ~4x at 10M cubes.
 // Coloring (gradient lookup by height / intensity / range) happens on the GPU too, so restyling costs nothing.
 import * as THREE from "three"
-import { gradientTexture } from "./gradients.ts"
+import { DEFAULT_GRADIENT, gradientTexture } from "./gradients.ts"
+import { DEFAULT_PERIOD, isPalette } from "./palette.ts"
 
 /** What far points fog toward: the page behind the canvas (the viewer sets it from the theme's --scene-bg). Shared by every material. */
 export const POINT_BACKGROUND = new THREE.Color(0x05070d)
@@ -42,6 +43,8 @@ export interface PointLook {
     size: number
     colorMode: ColorMode
     gradient: string
+    /** meters of height per cycle when `gradient` is a repeating palette (palette.ts); default 3 */
+    period?: number
     /** for "height": which axis of the fixed frame */
     axis: 0 | 1 | 2
     /** null = auto from the data */
@@ -65,6 +68,7 @@ uniform int uStyle;
 uniform int uColorMode;
 uniform int uAxis;
 uniform vec2 uRange;
+uniform float uPeriod;
 uniform vec3 uSolid;
 uniform vec3 uSensor;
 uniform float uNow;
@@ -102,7 +106,8 @@ void main() {
 #else
     float value = uColorMode == 2 ? distance(world, uSensor) : center[uAxis];
 #endif
-    float t = clamp((value - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
+    // a repeating palette cycles every uPeriod meters (its texture wraps, so c3 blends back into c1); a ramp spans uRange
+    float t = uPeriod > 0.0 ? fract(value / uPeriod) : clamp((value - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
     vColor = uColorMode == 3 ? uSolid : texture2D(uGradient, vec2(t, 0.5)).rgb;
     vec4 mv = viewMatrix * vec4(center, 1.0);
     float depth = max(1e-3, -mv.z);
@@ -224,12 +229,13 @@ export function makePointMaterial(pixelsPerMeter: { value: number }): THREE.Shad
             uColorMode: { value: 0 },
             uAxis: { value: 2 },
             uRange: { value: new THREE.Vector2(0, 2) },
+            uPeriod: { value: 0 },
             uSolid: { value: new THREE.Color(0xffffff) },
             uSensor: { value: new THREE.Vector3() },
             uNow: { value: 0 },
             uWindow: { value: -1 },
             uOpacity: { value: 1 },
-            uGradient: { value: gradientTexture("memworld") },
+            uGradient: { value: gradientTexture(DEFAULT_GRADIENT) },
             uLightWorld: { value: new THREE.Vector3() },
             uKeep: { value: 1 },
             uFog: { value: new THREE.Vector2(10, 40) },
@@ -286,6 +292,7 @@ export function applyLook(material: THREE.ShaderMaterial, look: PointLook, range
     uniforms.uSolid.value.set(look.solid)
     uniforms.uOpacity.value = look.opacity
     uniforms.uGradient.value = gradientTexture(look.gradient)
+    uniforms.uPeriod.value = look.colorMode === "height" && isPalette(look.gradient) ? Math.max(0.05, look.period ?? DEFAULT_PERIOD) : 0
     const splat = look.style === "splat"
     material.transparent = splat || look.opacity < 1
     material.depthWrite = !splat && look.opacity >= 1

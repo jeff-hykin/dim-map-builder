@@ -77,6 +77,7 @@ async function main() {
         size: meta.voxelSize * meta.look.scale,
         colorMode: "height",
         gradient: meta.look.gradient,
+        period: meta.look.period,
         axis: 2,
         rangeMin: null,
         rangeMax: null,

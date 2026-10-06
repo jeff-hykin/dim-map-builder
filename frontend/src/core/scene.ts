@@ -6,6 +6,8 @@ import { TransformControls } from "three/examples/jsm/controls/TransformControls
 import { Viewer } from "../render/viewer.ts"
 import { applyLook, makePointMaterial, type CubeShade, type PointLook, type PointStyle } from "../render/pointMaterial.ts"
 import { FatLines, pushBox } from "../render/lines.ts"
+import { DEFAULT_GRADIENT } from "../render/gradients.ts"
+import { DEFAULT_PERIOD, otherPalette } from "../render/palette.ts"
 import { LabelPool } from "../render/labels.ts"
 import type { Annotations, Box3, Slice } from "./api.ts"
 import { Store } from "./store.ts"
@@ -16,6 +18,8 @@ export type GizmoMode = "translate" | "rotate" | "scale"
 export interface MapLook {
     style: PointStyle
     gradient: string
+    /** meters of height per color cycle (a repeating palette) */
+    period?: number
     /** voxel edge multiplier: 1 = the map's voxel size */
     scale: number
     /** how cube faces are lit */
@@ -96,7 +100,7 @@ export class MapScene {
     readonly raw: PointLayer
     readonly preview: PointLayer
     voxelSize = 0.05
-    look: MapLook = { style: "voxel", gradient: "memworld", scale: 1, shade: "soft" }
+    look: MapLook = { style: "voxel", gradient: DEFAULT_GRADIENT, period: DEFAULT_PERIOD, scale: 1, shade: "soft" }
     #paths: FatLines
     #rawPath: FatLines
     #loops: FatLines
@@ -237,7 +241,8 @@ export class MapScene {
     setRaw(positions: Float32Array | null, path: Float32Array | null) {
         this.raw.set(positions ?? new Float32Array(0))
         this.raw.points.visible = !!positions?.length
-        this.raw.look({ style: "disc", size: 0.08, colorMode: "height", gradient: this.look.gradient, axis: 2, rangeMin: null, rangeMax: null, solid: "#ffffff", opacity: 1 })
+        // the raw scans are a second cloud: a different palette from the map's, so the two read apart
+        this.raw.look({ style: "disc", size: 0.08, colorMode: "height", gradient: otherPalette(this.look.gradient), period: this.look.period, axis: 2, rangeMin: null, rangeMax: null, solid: "#ffffff", opacity: 1 })
         this.#rawPath.clear()
         if (path) {
             for (let index = 3; index < path.length; index += 3) {
@@ -295,6 +300,7 @@ export class MapScene {
             size: this.voxelSize * this.look.scale,
             colorMode: "height",
             gradient: this.look.gradient,
+            period: this.look.period,
             axis: 2,
             rangeMin: null,
             rangeMax: null,
