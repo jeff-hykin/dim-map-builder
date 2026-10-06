@@ -27,7 +27,6 @@ import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
 import { LoginDialog } from "./ui/LoginDialog.tsx"
 import { FloorPicker } from "./ui/FloorPicker.tsx"
 import { EmptyState } from "./ui/EmptyState.tsx"
-import { ThemeToggle } from "./ThemeToggle.tsx"
 import { notify } from "./dim-app/notify.js"
 
 const MODES: { id: ViewMode; label: string }[] = [
@@ -616,7 +615,6 @@ export function App() {
                         {activeUploads > 0 ? <span className="count" data-upload-count>{activeUploads}</span> : uploadFailed ? <Icon name="warn" /> : null}
                     </button>
                 )}
-                <ThemeToggle />
             </header>
             <section className="view" ref={viewBox}>
                 <div className="pane pane-3d" style={{ width: target[0] }}>

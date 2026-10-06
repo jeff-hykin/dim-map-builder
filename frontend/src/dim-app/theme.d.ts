@@ -1,11 +1,14 @@
 // Types for theme.js
-export type ThemeChoice = "dark" | "light" | "auto"
+export type Corners = "sharp" | "rounded" | "theme"
 export type ThemeDetail = {
     dark: boolean
     theme: "portal" | "research"
-    choice: ThemeChoice
+    /** Desktop's skin id ("portal", "research", "vibeslop", …) */
+    skin: string
+    corners: Corners
 }
-export function themeChoice(): ThemeChoice
+export function desktopSkin(): string
+export function corners(): Corners
 export function isDark(): boolean
 export function themeName(): "portal" | "research"
 export const THEME_FONTS: string[]
@@ -13,8 +16,6 @@ export function themeFontsReady(): Promise<unknown>
 export function initTheme(): "portal" | "research"
 export function initInsets(): void
 export function insets(): { top: number; bottom: number; left: number; right: number }
-export function setThemeChoice(choice: ThemeChoice): void
-export function toggleTheme(): void
 export function onThemeChange(
     listener: (detail: ThemeDetail) => void,
 ): () => boolean
@@ -36,6 +37,3 @@ export function themeColors(): {
     mono: string
     sans: string
 }
-export function mountThemeToggle(
-    container: Element | null | undefined,
-): HTMLButtonElement

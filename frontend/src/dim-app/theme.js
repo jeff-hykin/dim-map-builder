@@ -1,59 +1,42 @@
-// dim-app theme: picks the app's palette and keeps it current.
+// dim-app theme: the app follows dimOS Desktop's theme (Settings → Appearance), and keeps following it.
 //
 //     import "./theme.css"   // (or <link rel="stylesheet" href=".../theme.css">)
-//     import { initTheme, mountThemeToggle, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.12.0/theme.js"
-//     initTheme()                                   // body.science [+ .dark], html[data-dim-theme]
-//     mountThemeToggle(document.querySelector("header"))   // optional in-app Portal / Research toggle
+//     import { initTheme, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.14.1/theme.js"
+//     initTheme()                                   // body.science [+ .dark], html[data-dim-theme], html[data-corners]
 //     onThemeChange(({ dark }) => renderer.setClearColor(themeColors().sceneBg))
 //     .drive-bar { bottom: calc(12px + var(--dim-inset-bottom)) }   // initTheme() also keeps --dim-inset-* current
 //
-// Two palettes (theme.css): Portal (dark) and Research (light). The default follows the OS/browser
-// `prefers-color-scheme`; an app may save its own choice, per app, in localStorage "dim-app.theme:<app>"
-// ("dark" | "light"; absent = follow the OS). Apps keep their own theme, separate from the Desktop's.
+// Two palettes (theme.css): Portal (dark) and Research (light). Desktop's theme (its skin) picks one: a light skin is
+// Research, every other one Portal. Apps are served from Desktop's origin (/apps/<name>/), so Desktop's saved skin and
+// corners are in localStorage "portal.theme" / "portal.corners", and a change there reaches every open app at once (the
+// storage event); GET /api/ui-settings/themes gives Desktop's current one (and which skins are light) when the browser
+// has no saved copy. Off Desktop's origin, with neither: Portal.
 
-const PREFIX = "dim-app.theme:"
+const SKIN_KEY = "portal.theme"
+const CORNERS_KEY = "portal.corners"
+// Desktop's light skins (its ui/src/skin.ts), until /api/ui-settings/themes says which ones are
+const lightSkins = new Set(["research", "vibeslop-light", "solarpunk"])
 const listeners = new Set()
 let installed = false
+let serverSkin = null
+let serverCorners = null
 
-function appName() {
+function stored(key) {
     try {
-        const meta = document.querySelector('meta[name="dim-app"]')
-        if (meta?.content) {
-            return meta.content
-        }
-        const match = location.pathname.match(/^\/apps\/([^/]+)/)
-        return match ? decodeURIComponent(match[1]) : "app"
+        return localStorage.getItem(key)
     } catch {
-        return "app"
+        return null
     }
 }
 
-function storageKey() {
-    return PREFIX + appName()
+/** Desktop's current skin id ("portal", "research", "vibeslop", …); "portal" when Desktop can't be asked. */
+export function desktopSkin() {
+    return stored(SKIN_KEY) || serverSkin || "portal"
 }
 
-function osPrefersDark() {
-    try {
-        return matchMedia("(prefers-color-scheme: dark)").matches
-    } catch {
-        return true
-    }
-}
-
-/** The saved choice for this app: "dark", "light", or "auto" (follow the OS). */
-export function themeChoice() {
-    try {
-        const saved = localStorage.getItem(storageKey())
-        return saved === "dark" || saved === "light" ? saved : "auto"
-    } catch {
-        return "auto"
-    }
-}
-
-/** True when the Portal (dark) palette is showing. */
+/** True when the Portal (dark) palette is showing: Desktop's skin is a dark one. */
 export function isDark() {
-    const choice = themeChoice()
-    return choice === "auto" ? osPrefersDark() : choice === "dark"
+    return !lightSkins.has(desktopSkin())
 }
 
 /** "portal" or "research" */
@@ -61,11 +44,25 @@ export function themeName() {
     return isDark() ? "portal" : "research"
 }
 
+/** Desktop's corners setting: "sharp", "rounded", or "theme" (each palette's own). */
+export function corners() {
+    const value = stored(CORNERS_KEY) || serverCorners
+    return value === "sharp" || value === "rounded" ? value : "theme"
+}
+
 function apply() {
     const dark = isDark()
     const root = document.documentElement
     root.style.colorScheme = dark ? "dark" : "light"
     root.dataset.dimTheme = dark ? "portal" : "research"
+    const corner = corners()
+    if (corner === "theme") {
+        delete root.dataset.corners
+        root.style.removeProperty("--dim-corner-radius")
+    } else {
+        root.dataset.corners = corner
+        root.style.setProperty("--dim-corner-radius", corner === "rounded" ? "10px" : "0px")
+    }
     if (document.body) {
         document.body.classList.add("science")
         document.body.classList.toggle("dark", dark)
@@ -73,7 +70,8 @@ function apply() {
     const detail = {
         dark,
         theme: dark ? "portal" : "research",
-        choice: themeChoice(),
+        skin: desktopSkin(),
+        corners: corner,
     }
     for (const listener of listeners) {
         try {
@@ -83,6 +81,32 @@ function apply() {
         }
     }
     dispatchEvent(new CustomEvent("dim-theme", { detail }))
+}
+
+/** Asks Desktop (same origin) for its current theme and which skins are light; nothing to ask off Desktop's origin. */
+async function askDesktop() {
+    if (!location.pathname.startsWith("/apps/")) {
+        return
+    }
+    try {
+        const response = await fetch(new URL("/api/ui-settings/themes", location.origin))
+        if (!response.ok) {
+            return
+        }
+        const { themes, current, corners } = await response.json()
+        for (const theme of themes ?? []) {
+            if (theme.light) {
+                lightSkins.add(theme.id)
+            } else {
+                lightSkins.delete(theme.id)
+            }
+        }
+        serverSkin = typeof current === "string" ? current : null
+        serverCorners = typeof corners === "string" ? corners : null
+        apply()
+    } catch {
+        // Desktop not reachable: the saved copy, or Portal
+    }
 }
 
 /** The theme's faces (theme.css @font-face); loading starts in initTheme, so no view shows a fallback first. */
@@ -108,32 +132,22 @@ export function themeFontsReady() {
     }
 }
 
-/** Applies the theme now and keeps it in sync with the OS setting and other tabs. Safe to call more than once. */
+/** Applies Desktop's theme now and keeps following it. Safe to call more than once. */
 export function initTheme() {
     if (!installed) {
         installed = true
         initInsets()
         themeFontsReady()
-        try {
-            matchMedia("(prefers-color-scheme: dark)").addEventListener(
-                "change",
-                () => {
-                    if (themeChoice() === "auto") {
-                        apply()
-                    }
-                },
-            )
-        } catch {
-            // no matchMedia: whatever the saved choice says
-        }
+        // Desktop saving a new theme or corners (in its own page or another tab) is a storage event here
         addEventListener("storage", (event) => {
-            if (event.key === null || event.key === storageKey()) {
+            if (event.key === null || event.key === SKIN_KEY || event.key === CORNERS_KEY) {
                 apply()
             }
         })
         if (!document.body) {
             document.addEventListener("DOMContentLoaded", apply, { once: true })
         }
+        askDesktop()
     }
     apply()
     signalReady()
@@ -206,29 +220,7 @@ export function insets() {
     )
 }
 
-/** Saves this app's choice ("dark" | "light" | "auto") and applies it. */
-export function setThemeChoice(choice) {
-    try {
-        if (choice === "dark" || choice === "light") {
-            localStorage.setItem(storageKey(), choice)
-        } else {
-            localStorage.removeItem(storageKey())
-        }
-    } catch {
-        // storage blocked: nothing to save
-    }
-    apply()
-}
-
-/** Flips between Portal and Research; picking the OS's own scheme goes back to "auto". */
-export function toggleTheme() {
-    const wantDark = !isDark()
-    setThemeChoice(
-        wantDark === osPrefersDark() ? "auto" : wantDark ? "dark" : "light",
-    )
-}
-
-/** Calls `listener({ dark, theme, choice })` on every change. Returns an unsubscribe function. */
+/** Calls `listener({ dark, theme, skin, corners })` on every change. Returns an unsubscribe function. */
 export function onThemeChange(listener) {
     listeners.add(listener)
     return () => listeners.delete(listener)
@@ -256,22 +248,4 @@ export function themeColors() {
         mono: read("--mono"),
         sans: read("--sans"),
     }
-}
-
-/** Adds a small "Portal" / "Research" toggle button to `container` (end of it). Returns the button. */
-export function mountThemeToggle(container) {
-    const button = document.createElement("button")
-    button.type = "button"
-    button.className = "dim-theme-toggle"
-    const label = () => {
-        button.textContent = isDark() ? "Portal" : "Research"
-        button.title = `Theme: ${button.textContent}${
-            themeChoice() === "auto" ? " (follows the system)" : ""
-        } — click to switch`
-    }
-    button.addEventListener("click", toggleTheme)
-    onThemeChange(label)
-    label()
-    container?.append(button)
-    return button
 }

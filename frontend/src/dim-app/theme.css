@@ -9,8 +9,9 @@
                                          Gently rounded (8–14px cards and controls, pills for chips / toggles / bars).
                                          Instrument Serif for titles, Inter for reading, uppercase Plex Mono micro-labels.
 
-  theme.js picks one: prefers-color-scheme (dark → Portal, light → Research), or the app's own saved choice
-  (localStorage "dim-app.theme:<app>"). It sets <body class="science [dark]"> and <html data-dim-theme="portal|research">.
+  theme.js picks the one dimOS Desktop's theme follows (a light Desktop skin → Research, any other → Portal) and keeps
+  following it. It sets <body class="science [dark]">, <html data-dim-theme="portal|research"> and Desktop's corners
+  (<html data-corners="sharp|rounded">).
 
   Components are .dim-* classes; every color, radius and font is a variable below, so app CSS that uses the variables
   follows both themes. Radius tokens are 0 in Portal, and Portal also squares every corner the way its doc does
@@ -287,6 +288,74 @@ body.science.dark *::before,
 body.science.dark *::after,
 body.science.dark *::-webkit-scrollbar-thumb {
     border-radius: 0 !important;
+}
+
+/* Desktop's corners (Settings → Appearance; html[data-corners], set by theme.js and by Desktop in its app frames):
+   sharp squares both palettes; rounded gives Portal the radius tokens and lifts its square-everything for the dim-*
+   components (the same rules as Desktop's built-ins, its ui/src/shell.css) */
+html[data-corners="sharp"] body.science {
+    --radius: 0;
+    --radius-sm: 0;
+    --radius-lg: 0;
+    --radius-xl: 0;
+    --radius-pill: 0;
+    --radius-round: 0;
+}
+html[data-corners="sharp"] body.science *,
+html[data-corners="sharp"] body.science *::before,
+html[data-corners="sharp"] body.science *::after {
+    border-radius: 0 !important;
+}
+html[data-corners="rounded"] body.science.dark {
+    --radius: 8px;
+    --radius-sm: 6px;
+    --radius-lg: 10px;
+    --radius-xl: 14px;
+    --radius-pill: 999px;
+    --radius-round: 50%;
+}
+html[data-corners="rounded"]
+    body.science.dark
+    :is(
+        .dim-btn,
+        .dim-input,
+        .dim-textarea,
+        .dim-select,
+        .dim-stepper,
+        input,
+        select,
+        textarea
+    ) {
+    border-radius: var(--radius) !important;
+}
+html[data-corners="rounded"] body.science.dark :is(.dim-tab, .dim-tooltip, kbd, .seg, .seg button) {
+    border-radius: var(--radius-sm) !important;
+}
+html[data-corners="rounded"] body.science.dark :is(.dim-panel, .dim-card, .dim-menu, .dim-alert) {
+    border-radius: var(--radius-lg) !important;
+}
+html[data-corners="rounded"] body.science.dark :is(.dim-sheet, .dim-modal) {
+    border-radius: var(--radius-xl) !important;
+}
+html[data-corners="rounded"]
+    body.science.dark
+    :is(
+        .dim-btn.round,
+        .dim-badge,
+        .dim-chip,
+        .dim-ask,
+        .dim-switch .track,
+        .dim-progress,
+        .dim-progress > span,
+        .dim-toast
+    ) {
+    border-radius: var(--radius-pill) !important;
+}
+html[data-corners="rounded"]
+    body.science.dark
+    :is(.dim-badge .dot, .dim-dot, .dim-check .ring, .dim-avatar, .dim-live-dot),
+html[data-corners="rounded"] body.science.dark .dim-switch .track::after {
+    border-radius: var(--radius-round) !important;
 }
 
 *,
@@ -1685,45 +1754,6 @@ body.science.dark .dim-toast.danger {
 }
 body.science.dark * {
     scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
-}
-
-/* ───────────────────────── the in-app Portal / Research toggle (theme.js mountThemeToggle) ───────────────────────── */
-
-/* a small control: the doc's chip in Research (white pill), the doc's window-control button in the Portal */
-.dim-theme-toggle {
-    appearance: none;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font: 500 11.5px/1.4 var(--hud);
-    letter-spacing: 0;
-    color: var(--muted-fg);
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-pill);
-    padding: 2px 10px;
-    white-space: nowrap;
-}
-.dim-theme-toggle:hover {
-    color: var(--fg);
-    border-color: var(--border-strong);
-}
-.dim-theme-toggle::before {
-    content: "";
-    width: 7px;
-    height: 7px;
-    border-radius: var(--radius-round);
-    background: var(--primary);
-}
-body.science.dark .dim-theme-toggle {
-    font-size: 11px;
-    letter-spacing: 0.04em;
-    background: transparent;
-    padding: 3px 9px;
-}
-body.science.dark .dim-theme-toggle::before {
-    box-shadow: 0 0 6px var(--primary);
 }
 
 /* ───────────────────────── empty / first-run states (desktop.js emptyState) ───────────────────────── */
