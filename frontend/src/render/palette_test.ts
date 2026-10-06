@@ -1,33 +1,39 @@
 // deno test frontend/src/render: the repeating height palettes.
 import { deepStrictEqual, ok, strictEqual } from "node:assert"
-import { cyclePhase, DEFAULT_PERIOD, heightColor, otherPalette, PALETTE_NAMES, PALETTES, paletteAt } from "./palette.ts"
+import { cyclePhase, DEFAULT_PERIOD, heightColor, otherPalette, PALETTE_NAMES, paletteAt, PALETTES } from "./palette.ts"
 
 const distance = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
 const hex = (color: string) => [1, 3, 5].map((at) => parseInt(color.slice(at, at + 2), 16))
 
 Deno.test("the cycle repeats every period, below zero too", () => {
-    strictEqual(DEFAULT_PERIOD, 6)
+    strictEqual(DEFAULT_PERIOD, 9)
     for (const name of PALETTE_NAMES) {
         for (const height of [-7.3, -0.4, 0, 0.9, 1.5, 2.99, 4.2, 31.7]) {
             const color = heightColor(name, height)
-            ok(distance(color, heightColor(name, height + 6)) < 1e-6, `${name} at ${height} vs +6 m`)
-            ok(distance(color, heightColor(name, height - 30)) < 1e-6, `${name} at ${height} vs -30 m`)
+            ok(
+                distance(color, heightColor(name, height + DEFAULT_PERIOD)) < 1e-6,
+                `${name} at ${height} vs one period up`,
+            )
+            ok(
+                distance(color, heightColor(name, height - 4 * DEFAULT_PERIOD)) < 1e-6,
+                `${name} at ${height} vs four periods down`,
+            )
         }
     }
-    strictEqual(cyclePhase(-1.5), 0.75)
-    strictEqual(cyclePhase(9), 0.5)
+    strictEqual(cyclePhase(-2.25), 0.75)
+    strictEqual(cyclePhase(13.5), 0.5)
     strictEqual(cyclePhase(1, 2), 0.5)
 })
 
 Deno.test("each period runs up the stops and back down: first at 0, last at half, first again at the period", () => {
     for (const name of PALETTE_NAMES) {
         const stops = PALETTES[name].colors.map(hex)
-        const step = 3 / (stops.length - 1)
+        const step = DEFAULT_PERIOD / 2 / (stops.length - 1)
         stops.forEach((stop, index) => {
             ok(distance(heightColor(name, index * step), stop) < 1e-6, `${name} up, stop ${index}`)
-            ok(distance(heightColor(name, 6 - index * step), stop) < 1e-6, `${name} down, stop ${index}`)
+            ok(distance(heightColor(name, DEFAULT_PERIOD - index * step), stop) < 1e-6, `${name} down, stop ${index}`)
         })
-        ok(distance(heightColor(name, 6), stops[0]) < 1e-6)
+        ok(distance(heightColor(name, DEFAULT_PERIOD), stops[0]) < 1e-6)
     }
     deepStrictEqual(PALETTES.aurora.colors.length >= 3, true)
 })

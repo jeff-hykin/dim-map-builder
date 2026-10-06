@@ -15,7 +15,7 @@ export const PALETTES: Record<string, { label: string; colors: string[] }> = {
 export const PALETTE_NAMES = Object.keys(PALETTES)
 export const DEFAULT_PALETTE = "aurora"
 /** meters of height one full up-and-back cycle spans */
-export const DEFAULT_PERIOD = 6
+export const DEFAULT_PERIOD = 9
 
 export function isPalette(name: string): boolean {
     return name in PALETTES
