@@ -43,7 +43,7 @@ export interface PointLook {
     size: number
     colorMode: ColorMode
     gradient: string
-    /** meters of height per cycle when `gradient` is a repeating palette (palette.ts); default 3 */
+    /** meters of height per cycle when `gradient` is a repeating palette (palette.ts); default 6 */
     period?: number
     /** for "height": which axis of the fixed frame */
     axis: 0 | 1 | 2
@@ -106,7 +106,7 @@ void main() {
 #else
     float value = uColorMode == 2 ? distance(world, uSensor) : center[uAxis];
 #endif
-    // a repeating palette cycles every uPeriod meters (its texture wraps, so c3 blends back into c1); a ramp spans uRange
+    // a repeating palette cycles every uPeriod meters (up its colors and back down; its texture wraps, so the repeat has no seam); a ramp spans uRange
     float t = uPeriod > 0.0 ? fract(value / uPeriod) : clamp((value - uRange.x) / max(1e-6, uRange.y - uRange.x), 0.0, 1.0);
     vColor = uColorMode == 3 ? uSolid : texture2D(uGradient, vec2(t, 0.5)).rgb;
     vec4 mv = viewMatrix * vec4(center, 1.0);

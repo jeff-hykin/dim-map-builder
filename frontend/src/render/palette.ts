@@ -1,20 +1,21 @@
-// The repeating height palettes: three colors blended c1 → c2 → c3 → c1 over every `period` meters of height, so a tall
-// or large map shows its floors apart without one ramp stretched thin over the whole range. Each cloud on screen gets its
-// own palette (the map one, the raw scans the next), so two clouds read apart. No three.js: Deno's tests import it.
+// The repeating height palettes: the colors run up and back down over every `period` meters of height (a ping-pong:
+// first → last over half a period, then last → first), so a tall or large map shows its floors apart without one ramp
+// stretched thin over the whole range, and the repeat has no hue jump. Each cloud on screen gets its own palette (the
+// map one, the raw scans the next), so two clouds read apart. No three.js: Deno's tests import it.
 
 export type Rgb = [number, number, number]
 
-/** Softened neon: about 70% saturation, 90% value, bright enough to glow on the dark scene without stinging. */
-export const PALETTES: Record<string, { label: string; colors: [string, string, string] }> = {
-    neon: { label: "Neon (cyan, blue, violet)", colors: ["#44dcdc", "#5080e6", "#a066e6"] },
-    ember: { label: "Ember (amber, coral, magenta)", colors: ["#eeb050", "#ec7468", "#d660c4"] },
-    lime: { label: "Lime (lime, green, teal)", colors: ["#b4e05c", "#56d88c", "#36bcb4"] },
+/** Soft neon: bright enough to glow on the dark scene without stinging. Linear in sRGB between evenly spaced stops. */
+export const PALETTES: Record<string, { label: string; colors: string[] }> = {
+    aurora: { label: "Aurora (purple → blue → cyan → green)", colors: ["#a05cf0", "#5a86f2", "#3ed4e0", "#6ee68c"] },
+    ember: { label: "Ember (gold → orange → red)", colors: ["#f2c64e", "#f08c4c", "#e8565e"] },
+    rose: { label: "Rose (pink → blush → white)", colors: ["#f264b0", "#f2a6cc", "#f6e8ee"] },
 }
 
 export const PALETTE_NAMES = Object.keys(PALETTES)
-export const DEFAULT_PALETTE = "neon"
-/** meters of height one c1 → c2 → c3 → c1 cycle spans */
-export const DEFAULT_PERIOD = 3
+export const DEFAULT_PALETTE = "aurora"
+/** meters of height one full up-and-back cycle spans */
+export const DEFAULT_PERIOD = 6
 
 export function isPalette(name: string): boolean {
     return name in PALETTES
@@ -31,13 +32,14 @@ export function cyclePhase(height: number, period = DEFAULT_PERIOD): number {
     return turns - Math.floor(turns)
 }
 
-/** The palette's color at a phase (0..1, wrapping) as 0..255 rgb: linear in sRGB between the three evenly spaced colors. */
+/** The palette's color at a phase (0..1, wrapping) as 0..255 rgb: first color at 0, last at 0.5, first again at 1. */
 export function paletteAt(name: string, phase: number): Rgb {
     const colors = (PALETTES[name] ?? PALETTES[DEFAULT_PALETTE]).colors.map(hexToRgb)
-    const position = (phase - Math.floor(phase)) * colors.length
-    const index = Math.floor(position) % colors.length
-    const mix = position - Math.floor(position)
-    const [a, b] = [colors[index], colors[(index + 1) % colors.length]]
+    const wrapped = phase - Math.floor(phase)
+    const along = (1 - Math.abs(2 * wrapped - 1)) * (colors.length - 1)
+    const index = Math.min(colors.length - 2, Math.floor(along))
+    const mix = along - index
+    const [a, b] = [colors[index], colors[index + 1]]
     return [a[0] + (b[0] - a[0]) * mix, a[1] + (b[1] - a[1]) * mix, a[2] + (b[2] - a[2]) * mix]
 }
 

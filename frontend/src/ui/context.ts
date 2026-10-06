@@ -3,7 +3,7 @@ import type { MapScene } from "../core/scene.ts"
 import type { Session } from "../core/api.ts"
 import { AUTO_RANGE, type FloorModel, type SliceRange } from "../core/slice.ts"
 import type { CubeShade } from "../render/pointMaterial.ts"
-import { DEFAULT_GRADIENT } from "../render/gradients.ts"
+import { DEFAULT_GRADIENT, GRADIENTS } from "../render/gradients.ts"
 import { DEFAULT_PERIOD } from "../render/palette.ts"
 import type { IconName } from "./Icon.tsx"
 import type { Uploads } from "./useUploads.ts"
@@ -73,11 +73,12 @@ export const DEFAULT_UI: UiState = {
 }
 
 /** A session's saved panels over the defaults. A look saved before the repeating palettes, on the old default ramp
- * (memworld, no period), moves to the new default; a ramp picked on purpose stays. */
+ * (memworld, no period), or on colors that no longer exist, moves to the default colors; a ramp picked on purpose stays. */
 export function restoreUi(saved: Partial<UiState>): UiState {
     const restored: UiState = { ...DEFAULT_UI, ...saved }
-    if (saved.look && saved.look.period === undefined && saved.look.gradient === "memworld") {
-        restored.look = { ...saved.look, gradient: DEFAULT_UI.look.gradient, period: DEFAULT_UI.look.period }
+    const look = saved.look
+    if (look && ((look.period === undefined && look.gradient === "memworld") || !GRADIENTS.includes(look.gradient))) {
+        restored.look = { ...look, gradient: DEFAULT_UI.look.gradient, period: DEFAULT_UI.look.period }
     }
     return restored
 }

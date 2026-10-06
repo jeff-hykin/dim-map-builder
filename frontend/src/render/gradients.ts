@@ -1,6 +1,6 @@
 // Copied from dim-live-viewer frontend/src/core/render (4a0c5aa) — the Map Editor draws with the same point styles.
 // Color ramps for point clouds and other scalar coloring, as 256×1 textures the shaders sample. The repeating height
-// palettes (palette.ts) are textures too, wrapping (RepeatWrapping), so the blend from c3 back to c1 has no seam.
+// palettes (palette.ts) are textures too, wrapping (RepeatWrapping), so the cycle's repeat has no seam.
 import * as THREE from "three"
 import { DEFAULT_PALETTE, isPalette, paletteAt, PALETTE_NAMES, PALETTES } from "./palette.ts"
 
@@ -76,8 +76,8 @@ export function gradientTexture(name: string): THREE.DataTexture {
 /** CSS linear-gradient for a ramp (settings swatches). */
 export function gradientCss(name: string): string {
     if (!RAMPS[name]) {
-        const [a, b, c] = (PALETTES[name] ?? PALETTES[DEFAULT_PALETTE]).colors
-        return `linear-gradient(90deg, ${a}, ${b}, ${c}, ${a})`
+        const colors = (PALETTES[name] ?? PALETTES[DEFAULT_PALETTE]).colors
+        return `linear-gradient(90deg, ${[...colors, ...colors.slice(0, -1).reverse()].join(", ")})`
     }
     const stops = RAMPS[name]
     return `linear-gradient(90deg, ${stops.map(([position, hex]) => `${hex} ${position * 100}%`).join(", ")})`
