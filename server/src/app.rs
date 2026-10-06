@@ -34,6 +34,9 @@ pub struct Job {
     pub error: Option<String>,
     #[serde(skip)]
     pub cancel: Arc<AtomicBool>,
+    /// a build that ran lite_record's post_process first: that took the first 60% of the bar
+    #[serde(skip)]
+    post_processed: bool,
 }
 
 pub struct App {
@@ -51,6 +54,10 @@ pub struct App {
     next_job: AtomicU64,
     next_capture: AtomicU64,
 }
+
+/// How much of a build's progress bar lite_record's post_process takes when it runs first (it reads the whole recording
+/// two or three times, about what the map build does)
+const POST_PROCESS_SHARE: f64 = 0.6;
 
 /// Overall progress of a job from its stage and the stage's done/total. Build stages aren't equal: loop closure and
 /// ray tracing each read every scan; reading tf and the normals are quick.
@@ -109,6 +116,7 @@ impl App {
                     ..Default::default()
                 };
                 let recording = Recording::open(&path)?;
+                let post_process = crate::lite_record::pending(&recording.streams()?);
                 let (session, map) = match persist::load(&recording, fresh.clone()) {
                     Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map)),
                     Ok(None) => (fresh, None),
@@ -122,7 +130,9 @@ impl App {
                 if let Some(map) = &map {
                     self.store.save_map(&id, map)?;
                 }
-                let workspace = Arc::new(Mutex::new(Workspace::new(session, map)));
+                let mut workspace = Workspace::new(session, map);
+                workspace.post_process = post_process;
+                let workspace = Arc::new(Mutex::new(workspace));
                 self.workspaces.lock().unwrap().insert(id.clone(), workspace.clone());
                 workspace
             }
@@ -242,6 +252,7 @@ impl App {
             eta_seconds: None,
             error: None,
             cancel: Arc::new(AtomicBool::new(false)),
+            post_processed: false,
         };
         self.jobs.lock().unwrap().insert(id.into(), job.clone());
         self.emit(json!({ "type": "job", "job": job }));
@@ -254,7 +265,14 @@ impl App {
             let report = |progress: Progress| {
                 let mut jobs = app.jobs.lock().unwrap();
                 let Some(job) = jobs.get_mut(&session) else { return };
-                let fraction = fraction(&kind, &progress).max(job.fraction);
+                let lite_record = progress.stage.starts_with("lite_record:");
+                job.post_processed |= lite_record;
+                let fraction = match (lite_record, job.post_processed) {
+                    (true, _) => POST_PROCESS_SHARE * (progress.stage_index as f64 + fraction("", &progress)) / progress.stage_count.max(1) as f64,
+                    (false, true) => POST_PROCESS_SHARE + (1.0 - POST_PROCESS_SHARE) * fraction(&kind, &progress),
+                    (false, false) => fraction(&kind, &progress),
+                }
+                .max(job.fraction);
                 job.fraction = fraction;
                 job.elapsed = now_seconds() - job.started_at;
                 job.eta_seconds = (fraction > 0.02 && job.elapsed > 1.0).then(|| job.elapsed * (1.0 - fraction) / fraction);
@@ -291,9 +309,30 @@ impl App {
     /// Build the global map in the background. The current map (and edits) stay until the new one is done; a
     /// cancelled or failed build leaves the session exactly as it was.
     pub fn build(self: &Arc<Self>, id: &str, options: BuildOptions) -> Result<Job> {
-        let path = self.require(id)?.lock().unwrap().session.recording_path.clone();
+        let session_id = id.to_string();
         self.start_job(id, "build", move |app, report, cancel| {
             let started = now_seconds();
+            let shared = app.require(&session_id)?;
+            let mut post_notes = Vec::new();
+            let pending = shared.lock().unwrap().post_process.clone();
+            if let Some(reason) = pending {
+                // lite_record writes into the recording: one in a read-only folder is copied first, as a save does
+                app.make_writable(&shared, report)?;
+                let path = shared.lock().unwrap().session.recording_path.clone();
+                let binary = crate::lite_record::binary(&app.store.dir)?;
+                shared.lock().unwrap().session.history.push(format!("Post-processing with lite_record ({reason})"));
+                let output = crate::lite_record::post_process(&binary, std::path::Path::new(&path), report, cancel)?;
+                post_notes = crate::lite_record::summary_lines(&output);
+                let still = crate::lite_record::pending(&Recording::open(std::path::Path::new(&path))?.streams()?);
+                let mut ws = shared.lock().unwrap();
+                ws.post_process = still;
+                ws.session.history.push(format!("lite_record post-processed {path}"));
+                ws.session.history.extend(post_notes.iter().cloned());
+                app.store.save(&ws.session)?;
+                app.emit(json!({ "type": "session", "id": ws.session.id, "revision": ws.session.revision }));
+                app.emit(json!({ "type": "recording-changed", "path": path }));
+            }
+            let path = shared.lock().unwrap().session.recording_path.clone();
             let recording = Recording::open(std::path::Path::new(&path))?;
             let mut progress = |p: Progress| report(p);
             let result = mapping::build::build(&recording, &options, &mut progress, cancel)?;
@@ -317,10 +356,10 @@ impl App {
                 scans_used: result.scans_used,
                 scans_skipped: result.scans_skipped,
                 loops: map.loops.len(),
-                notes: result.notes,
+                notes: post_notes.into_iter().chain(result.notes).collect(),
                 seconds: now_seconds() - started,
             };
-            let workspace = app.require(&session_of(&path))?;
+            let workspace = shared;
             let mut workspace = workspace.lock().unwrap();
             if workspace.discarded {
                 return Ok(());
@@ -353,7 +392,15 @@ impl App {
         if let Some(preview) = self.previews.lock().unwrap().get(id) {
             return Ok(Some(preview.clone()));
         }
-        let path = self.require(id)?.lock().unwrap().session.recording_path.clone();
+        let (path, pending) = {
+            let workspace = self.require(id)?;
+            let workspace = workspace.lock().unwrap();
+            (workspace.session.recording_path.clone(), workspace.post_process.is_some())
+        };
+        // a raw lite_record recording has nothing placing its scans until Generate post-processes it: no preview
+        if pending {
+            return Ok(None);
+        }
         let session = id.to_string();
         let running = self.job(id).is_some_and(|job| job.state == "running");
         if !running {
@@ -369,6 +416,37 @@ impl App {
         Ok(None)
     }
 
+    /// A recording in a read-only folder is copied into the recordings folder (`map-builder/`) and the session moves to
+    /// the copy: what a save or lite_record's post-processing writes never touches the original.
+    fn make_writable(&self, shared: &Arc<Mutex<Workspace>>, report: &dyn Fn(Progress)) -> Result<()> {
+        let (writable, source) = {
+            let ws = shared.lock().unwrap();
+            (ws.session.writable, ws.session.recording_path.clone())
+        };
+        if writable {
+            return Ok(());
+        }
+        let source = std::path::PathBuf::from(&source);
+        let dir = self.recordings_dir.join("map-builder");
+        std::fs::create_dir_all(&dir)?;
+        let stem = source.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let extension = source.extension().unwrap_or_default().to_string_lossy().to_string();
+        let mut target = dir.join(format!("{stem}.{extension}"));
+        let mut n = 2;
+        while target.exists() {
+            target = dir.join(format!("{stem}-{n}.{extension}"));
+            n += 1;
+        }
+        report(Progress { stage: "Copying the recording into the recordings folder".into(), stage_index: 0, stage_count: 1, done: 0, total: 1, note: target.display().to_string() });
+        std::fs::copy(&source, &target).with_context(|| format!("copying {} to {}", source.display(), target.display()))?;
+        let mut ws = shared.lock().unwrap();
+        ws.session.recording_path = target.display().to_string();
+        ws.session.recording_id = format!("map-builder/{}", target.file_name().unwrap_or_default().to_string_lossy());
+        ws.session.writable = true;
+        ws.session.history.push(format!("{} is read-only: writing into a copy, {}", source.display(), target.display()));
+        Ok(())
+    }
+
     pub fn save(self: &Arc<Self>, id: &str) -> Result<Job> {
         let workspace = self.require(id)?;
         if workspace.lock().unwrap().map.is_none() {
@@ -378,30 +456,7 @@ impl App {
         self.start_job(id, "save", move |app, report, _cancel| {
             let shared = app.require(&session)?;
             // a recording in a read-only folder is copied into the recordings folder first; the session moves to it
-            let (writable, source) = {
-                let ws = shared.lock().unwrap();
-                (ws.session.writable, ws.session.recording_path.clone())
-            };
-            if !writable {
-                let source = std::path::PathBuf::from(&source);
-                let dir = app.recordings_dir.join("map-builder");
-                std::fs::create_dir_all(&dir)?;
-                let stem = source.file_stem().unwrap_or_default().to_string_lossy().to_string();
-                let extension = source.extension().unwrap_or_default().to_string_lossy().to_string();
-                let mut target = dir.join(format!("{stem}.{extension}"));
-                let mut n = 2;
-                while target.exists() {
-                    target = dir.join(format!("{stem}-{n}.{extension}"));
-                    n += 1;
-                }
-                report(Progress { stage: "Copying the recording into the recordings folder".into(), stage_index: 0, stage_count: 1, done: 0, total: 1, note: target.display().to_string() });
-                std::fs::copy(&source, &target).with_context(|| format!("copying {} to {}", source.display(), target.display()))?;
-                let mut ws = shared.lock().unwrap();
-                ws.session.recording_path = target.display().to_string();
-                ws.session.recording_id = format!("map-builder/{}", target.file_name().unwrap_or_default().to_string_lossy());
-                ws.session.writable = true;
-                ws.session.history.push(format!("{} is read-only: saving into a copy, {}", source.display(), target.display()));
-            }
+            app.make_writable(&shared, report)?;
             // a snapshot, so the page can keep reading while a big mcap is rewritten
             let snapshot = shared.lock().unwrap().clone();
             persist::save(&snapshot, |done, total| {
@@ -461,10 +516,6 @@ impl App {
             None => false,
         }
     }
-}
-
-fn session_of(path: &str) -> String {
-    session::session_id(std::path::Path::new(path))
 }
 
 #[cfg(test)]

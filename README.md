@@ -10,6 +10,13 @@ everything else is optional and in any order.
 - **Generate** (the blue orb): the global map, every scan placed through the recording's tf, loops closed (ICP + pose
   graph), ray traced so free space clears what moved. Voxel size up front; skip loop closure / ray tracing and every
   ray-tracer and pose-graph tunable under Advanced. A progress bar with stage, ETA and Cancel.
+- **lite_record recordings**: a raw one (a Livox lidar + IMU, nothing placing the scans yet) can be opened straight
+  from Recordings. Generate first runs [lite_record](https://github.com/jeff-hykin/lite_record)'s own `post_process`
+  on it (its release binary, fetched into the data dir once a day, or `LITE_RECORD_BIN`): viewable images, the sensors'
+  frame tree, Point-LIO odometry (`/pointlio_odometry`, `odom` tf, `/pointlio_path`), motion-compensated
+  `/pointlio_lidar` and its 4 cm `/global_map`, all written into the recording (a read-only one is copied first). The
+  map is then built from `/pointlio_lidar` at 4 cm. tf is looked up at each scan's header stamp, and an edge that never
+  changes counts as static, so the Livox's clock sitting minutes from the recorder's doesn't drop every scan.
 - **2D**: a top-down slice of the current voxels between z-start and z-end, over the **local floor** (a per-cell floor
   height that follows ramps and stairs, `crates/mapping/src/floor.rs`) or absolute; "auto" = floor +0.1 to +1.8 m.
   Saved views are the 2D maps (a storey + a height band), saved into the recording.

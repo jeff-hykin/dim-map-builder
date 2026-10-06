@@ -9,6 +9,8 @@ import { Icon } from "./Icon.tsx"
 
 type Options = Record<string, any>
 
+const LITE_RECORD_VOXEL = 0.04
+
 const LABELS: Record<string, [string, string]> = {
     every: ["use every Nth scan", "1 = all; higher is faster and sparser"],
     maxRange: ["max range", "m; returns farther than this are dropped"],
@@ -69,6 +71,13 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
             recordings.metadata(session.recordingId).then(setMeta).catch(() => setMeta(null))
         }
     }, [session?.id])
+    // a lite_record recording: lite_record's own map is 4 cm voxels, so this one starts at the same size
+    const liteRecord = !!session?.postProcess || (meta?.streams ?? []).some((s) => s.name.replace(/^\//, "") === "pointlio_lidar")
+    useEffect(() => {
+        if (liteRecord && !session?.buildOptions && defaults) {
+            setOptions((current) => current && { ...current, voxelSize: LITE_RECORD_VOXEL })
+        }
+    }, [liteRecord, defaults, session?.buildOptions])
     if (!session || !options || !defaults) {
         return null
     }
@@ -78,7 +87,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const set = (patch: Options) => setOptions({ ...options, ...patch })
     const group = (key: "ray" | "pgo", patch: Options) => setOptions({ ...options, [key]: { ...options[key], ...patch } })
     const clouds = (meta?.streams ?? []).filter((s) => /PointCloud2$/.test(s.type))
-    const changed = JSON.stringify({ ...options, cloudStream: "" }) !== JSON.stringify({ ...defaults, cloudStream: "" })
+    const changed = JSON.stringify({ ...options, cloudStream: "", voxelSize: 0 }) !== JSON.stringify({ ...defaults, cloudStream: "", voxelSize: 0 })
     const generate = () => {
         if (built && !confirming) {
             setConfirming(true)
@@ -99,6 +108,13 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                     </button>
                 </div>
                 <p className="hint">Every scan placed by the recording's tf, loops closed (ICP + pose graph), then ray traced so free space clears what moved. The defaults work for most recordings.</p>
+                {session.postProcess && (
+                    <div className="dim-alert info" data-post-process>
+                        <div>
+                            <strong>A raw lite_record recording.</strong> Generate first runs lite_record's post-processing on it (its Post process button): Point-LIO odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording{session.writable ? "" : " (a copy: this folder is read-only)"}. Then the map is built from the corrected scans.
+                        </div>
+                    </div>
+                )}
                 <div className="field">
                     <span>voxel size</span>
                     <span className="row" style={{ margin: 0 }}>

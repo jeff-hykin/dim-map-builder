@@ -17,6 +17,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const WORLD_FRAMES: [&str; 3] = ["world", "map", "odom"];
 /// the frame the odometry stream places, for world-frame clouds
 const ODOMETRY_FRAME: &str = "__odometry";
+/// lite_record's motion-compensated lidar: preferred over the raw scans it was made from
+pub const DESKEWED_STREAM: &str = "pointlio_lidar";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -136,9 +138,10 @@ fn pick_cloud_stream(recording: &Recording, wanted: &str) -> Result<(String, u64
         let Some(found) = found else { bail!("no point cloud stream named {wanted}") };
         return Ok((found.name.clone(), found.count));
     }
-    // the biggest cloud stream that isn't itself a map (a recorded global/local map would be circular)
+    // the biggest cloud stream that isn't itself a map (a recorded global/local map would be circular); a
+    // motion-compensated copy of the lidar (lite_record's post_process writes /pointlio_lidar) before the raw one
     let mut clouds: Vec<_> = streams.iter().filter(|s| s.kind == Kind::Cloud).collect();
-    clouds.sort_by_key(|s| (s.name.contains("map"), std::cmp::Reverse(s.count)));
+    clouds.sort_by_key(|s| (s.name.contains("map"), s.name.trim_start_matches('/') != DESKEWED_STREAM, std::cmp::Reverse(s.count)));
     let Some(best) = clouds.first() else { bail!("this recording has no point clouds") };
     Ok((best.name.clone(), best.count))
 }
@@ -153,11 +156,18 @@ struct Prepared {
 }
 
 impl Prepared {
-    /// the sensor's pose in the world for one scan, if it can be placed
-    fn sensor_pose(&self, ts: f64, frame: &str, pose: Option<[f64; 7]>, tolerance: f64) -> Option<Iso> {
+    /// the sensor's pose in the world for one scan, if it can be placed. tf is looked up at the cloud's own header
+    /// stamp first (tf edges carry header stamps too, and a recorder's log clock can sit minutes away from a device's:
+    /// lite_record's Livox stamps), then at the log time.
+    fn sensor_pose(&self, ts: f64, stamp: f64, frame: &str, pose: Option<[f64; 7]>, tolerance: f64) -> Option<Iso> {
         let stored = pose.map(|p| iso([p[0], p[1], p[2]], [p[3], p[4], p[5], p[6]]));
+        let frame = frame.trim_start_matches('/');
         match &self.placement {
-            Placement::Tf(tree) => tree.lookup(&self.world, frame.trim_start_matches('/'), ts, tolerance).or(stored),
+            Placement::Tf(tree) => (stamp > 0.0)
+                .then(|| tree.lookup(&self.world, frame, stamp, tolerance))
+                .flatten()
+                .or_else(|| tree.lookup(&self.world, frame, ts, tolerance))
+                .or(stored),
             Placement::World(odometry) => stored
                 .or_else(|| odometry.as_ref().and_then(|tree| tree.lookup(&self.world, ODOMETRY_FRAME, ts, tolerance)))
                 .or(Some(Iso::identity())),
@@ -269,7 +279,7 @@ pub fn preview(recording: &Recording, options: &BuildOptions, max_scans: usize, 
             }
         }
         let Message::Cloud(cloud) = message else { return Ok(true) };
-        let Some(sensor) = prepared.sensor_pose(ts, &cloud.frame_id, pose, options.tf_tolerance) else { return Ok(true) };
+        let Some(sensor) = prepared.sensor_pose(ts, cloud.ts, &cloud.frame_id, pose, options.tf_tolerance) else { return Ok(true) };
         let t = sensor.translation.vector;
         result.path.push([t.x as f32, t.y as f32, t.z as f32]);
         if (index - 1) % step != 0 {
@@ -314,7 +324,7 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
     result.world_frame = world.clone();
     result.notes = prepared.notes.clone();
     report("Reading the recording", 0, 1, 1, result.notes.join("; "));
-    let sensor_pose = |ts: f64, frame: &str, pose: Option<[f64; 7]>| prepared.sensor_pose(ts, frame, pose, options.tf_tolerance);
+    let sensor_pose = |ts: f64, stamp: f64, frame: &str, pose: Option<[f64; 7]>| prepared.sensor_pose(ts, stamp, frame, pose, options.tf_tolerance);
     let every = options.every.max(1);
 
     // 2. loop closure
@@ -333,7 +343,7 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
             if (index - 1) % every as u64 != 0 {
                 return Ok(true);
             }
-            let Some(sensor) = sensor_pose(ts, &cloud.frame_id, pose) else { return Ok(true) };
+            let Some(sensor) = sensor_pose(ts, cloud.ts, &cloud.frame_id, pose) else { return Ok(true) };
             let body = prepared.sensor_points(&sensor, cloud.points);
             if pgo.process(sensor, ts, &body) {
                 loops += 1;
@@ -382,7 +392,7 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
         if (index - 1) % every as u64 != 0 {
             return Ok(true);
         }
-        let Some(sensor) = sensor_pose(ts, &cloud.frame_id, pose) else {
+        let Some(sensor) = sensor_pose(ts, cloud.ts, &cloud.frame_id, pose) else {
             result.scans_skipped += 1;
             return Ok(true);
         };

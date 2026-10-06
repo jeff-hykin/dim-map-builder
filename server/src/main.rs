@@ -5,6 +5,7 @@ mod api;
 mod app;
 mod desktop;
 mod dimos_app;
+mod lite_record;
 mod persist;
 mod probe;
 mod routes;

@@ -29,13 +29,16 @@ pub fn interpolate(a: &Iso, b: &Iso, alpha: f64) -> Iso {
 struct Edge {
     /// (time, parent <- child), sorted by time
     samples: Vec<(f64, Iso)>,
+    /// every sample is the same transform: a static edge (tf_static, or one republished at a rate), true at any time.
+    /// Its stamps can be on another clock than the moving edges' (lite_record: the log clock vs the Livox's)
+    fixed: bool,
 }
 
 impl Edge {
     fn at(&self, t: f64, tolerance: f64) -> Option<Iso> {
         let samples = &self.samples;
-        if samples.len() == 1 {
-            return Some(samples[0].1);
+        if samples.len() == 1 || self.fixed {
+            return samples.first().map(|sample| sample.1);
         }
         let first = samples.first()?.0;
         let last = samples.last()?.0;
@@ -76,6 +79,10 @@ impl TfTree {
         for edge in self.edges.values_mut() {
             edge.samples.sort_by(|a, b| a.0.total_cmp(&b.0));
             edge.samples.dedup_by(|a, b| a.0 == b.0);
+            let first = edge.samples.first().map(|sample| sample.1);
+            edge.fixed = first.is_some_and(|first| {
+                edge.samples.iter().all(|(_, value)| (value.translation.vector - first.translation.vector).norm() < 1e-6 && value.rotation.angle_to(&first.rotation) < 1e-6)
+            });
         }
     }
 
@@ -167,5 +174,19 @@ mod tests {
         // outside the dynamic edge's range (beyond tolerance): no answer
         assert!(tree.lookup("world", "lidar", 20.0, 0.1).is_none());
         assert!(tree.lookup("world", "nowhere", 5.0, 0.1).is_none());
+    }
+
+    /// lite_record: the sensor edges republished at 5 Hz on the log clock, odometry on the Livox's clock 143 s behind
+    #[test]
+    fn a_constant_edge_holds_on_any_clock() {
+        let mut tree = TfTree::default();
+        for i in 0..50 {
+            tree.add(1000.0 + i as f64 * 0.2, "livox_link", "livox_frame", iso([0.0, 0.0, 0.1], [0.0, 0.0, 0.0, 1.0]));
+        }
+        tree.add(857.0, "odom", "livox_link", iso([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]));
+        tree.add(867.0, "odom", "livox_link", iso([10.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]));
+        tree.finish();
+        let p = transform_point(&tree.lookup("odom", "livox_frame", 862.0, 0.1).unwrap(), [0.0, 0.0, 0.0]);
+        assert!((p[0] - 5.0).abs() < 1e-6 && (p[2] - 0.1).abs() < 1e-6, "{p:?}");
     }
 }

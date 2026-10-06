@@ -216,6 +216,8 @@ export interface Session {
     voxelSize: number | null
     bounds: [[number, number, number], [number, number, number]] | null
     job: Job | null
+    /** why Generate runs lite_record's post_process over the recording first (a raw lite_record recording), or null */
+    postProcess: string | null
 }
 
 export type Region = { kind: "all" } | { kind: "view"; matrix: number[] } | ({ kind: "box" } & Box3)

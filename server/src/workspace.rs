@@ -65,6 +65,9 @@ pub struct Workspace {
     pub discarded: bool,
     /// the local floor, for the map version and storey levels it was made from
     floor_cache: Option<(u64, Vec<f32>, Arc<FloorModel>)>,
+    /// why lite_record's post_process should run over the recording before a build (a raw lite_record recording), or
+    /// None; read from the recording's streams when it's opened
+    pub post_process: Option<String>,
 }
 
 /// How high a Modify tool reaches: to `zEnd` (over the local floor when `relative`, else absolute z), or with
@@ -128,7 +131,7 @@ fn rotate(value: &Iso, n: [f32; 3]) -> [f32; 3] {
 
 impl Workspace {
     pub fn new(session: Session, map: Option<MapData>) -> Workspace {
-        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64, discarded: false, floor_cache: None };
+        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64, discarded: false, floor_cache: None, post_process: None };
         workspace.refresh_frame();
         workspace
     }

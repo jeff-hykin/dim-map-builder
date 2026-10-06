@@ -95,6 +95,7 @@ pub fn summary(app: &App, workspace: &Workspace) -> Value {
         object.insert("voxelSize".into(), json!(workspace.map.as_ref().map(|m| m.voxel_size)));
         object.insert("bounds".into(), json!(workspace.bounds()));
         object.insert("job".into(), json!(app.job(&session.id)));
+        object.insert("postProcess".into(), json!(workspace.post_process));
         let history = &session.history;
         object.insert("history".into(), json!(history[history.len().saturating_sub(30)..]));
     }
@@ -144,7 +145,7 @@ pub fn routes() -> Routes<Arc<App>> {
     };
     Routes::new()
         // the page and what's open
-        .endpoint("GET", "api/status", "The open map, briefly: session id, recording, stage (raw = not built yet / map), voxel count, bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.", json!({ "session": s("session id (default: the recording open in the page)") }), status)
+        .endpoint("GET", "api/status", "The open map, briefly: session id, recording, stage (raw = not built yet / map), postProcess (a raw lite_record recording: why Generate post-processes it first), voxel count, bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.", json!({ "session": s("session id (default: the recording open in the page)") }), status)
         .role("context")
         .endpoint("GET", "api/state", "What the page loads: the open session id, its full state (annotations, plans, job, history...) and Desktop's recordings folder. Only a recording opened since the server started is open; after a restart `last` names the one open before (offered, not loaded).", json!({}), state)
         .endpoint("POST", "api/open", "Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the recordings folder.", json!({ "path": required(s("the recording file")), "name": s("display name"), "id": s("Desktop's recording id"), "writable": b("false for a read-only folder: saving copies it first (default true)") }), open)
@@ -157,7 +158,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .endpoint("GET", "api/sessions/{id}", "A session's full state: recording, stage, build summary and options, transform, annotations, floor plans, job, history, undo/redo labels, bounds.", with_id(json!({})), get_session)
         .endpoint("DELETE", "api/sessions/{id}", "Discard the working copy (start over; the recording file is untouched).", with_id(json!({})), discard)
         .endpoint("GET", "api/sessions/{id}/paths", "The robot's trajectory in the map frame: { raw, corrected, loops } (loop closures as point pairs).", with_id(json!({})), paths)
-        .endpoint("POST", "api/sessions/{id}/build", "Start (re)building the global map from the recording (loop closure + ray tracing). Runs in the background: poll GET api/status (job) or watch the page. Every option is optional (GET api/build-defaults).", with_id(json!({ "voxelSize": n("meters"), "loopClosure": b(""), "rayTracing": b(""), "every": int("use every n-th scan"), "maxRange": n("meters"), "cloudStream": s("the point cloud stream"), "worldFrame": s("") })), build)
+        .endpoint("POST", "api/sessions/{id}/build", "Start (re)building the global map from the recording (loop closure + ray tracing). A raw lite_record recording (status postProcess set) gets lite_record's post_process first, written into the recording: Point-LIO odometry, motion-compensated /pointlio_lidar, its 4 cm /global_map. Runs in the background: poll GET api/status (job) or watch the page. Every option is optional (GET api/build-defaults).", with_id(json!({ "voxelSize": n("meters"), "loopClosure": b(""), "rayTracing": b(""), "every": int("use every n-th scan"), "maxRange": n("meters"), "cloudStream": s("the point cloud stream"), "worldFrame": s("") })), build)
         .endpoint("DELETE", "api/sessions/{id}/job", "Cancel the running job (build, preview or save).", with_id(json!({})), cancel)
         .endpoint("POST", "api/sessions/{id}/op", "Clean up or crop (undoable). op: floating (small disconnected clusters; params.minVoxels, default 30), outliers (statistical; params.neighbors, params.stdRatio), floor (the floor surface; params.thickness), walls (vertical surfaces; params.minHeight), keepWalls (everything but walls), cropOutside (keep only a box region), deleteInside (remove a box region), cropHeight (keep params.zMin..params.zMax). preview=true only counts (and returns the points it would remove).", with_id(json!({ "op": required(s("floating | outliers | floor | walls | keepWalls | cropOutside | deleteInside | cropHeight")), "region": region.clone(), "params": json!({ "type": "object" }), "preview": b("only count") })), op)
         .endpoint("POST", "api/sessions/{id}/transform", "Orient the map (undoable; annotations move with it): kind=rotate spins it about +z through its center by degrees; kind=level tilts it so the main floor is flat at z = 0; kind=set sets the transform {translation, rotation (x,y,z,w)}.", with_id(json!({ "kind": required(s("rotate | level | set")), "degrees": n("for rotate"), "transform": json!({ "type": "object", "description": "for set" }) })), transform)
@@ -224,6 +225,7 @@ async fn status(State(app): State<Arc<App>>, Query(args): Args) -> Result<Json<V
         "counts": { "boxes": count("boxes"), "planes": count("planes"), "points": count("points"), "areas": count("areas"), "prisms": count("prisms"), "views": count("views") },
         "plans": summary["plans"].as_array().map_or(0, |a| a.len()),
         "job": summary["job"],
+        "postProcess": summary["postProcess"],
         "canUndo": summary["undoLabel"],
         "unsaved": summary["unsaved"],
         "recent": summary["history"],
