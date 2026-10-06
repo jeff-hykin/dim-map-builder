@@ -28,6 +28,8 @@ jobs:
             # dimos.yaml's agent: lists exactly what the built server serves at agent.json
             - run: deno task check-endpoints --binary result/bin/dimos-app-server
             - run: deno fmt --check && deno lint
+            # the shared map's packing (Share → as HTML): voxel encoding and page round trips
+            - run: deno test frontend/src/share/
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
             - run: cargo test --workspace --locked

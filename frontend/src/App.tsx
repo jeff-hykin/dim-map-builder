@@ -26,6 +26,7 @@ import { useUploads, isActive } from "./ui/useUploads.ts"
 import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
 import { LoginDialog } from "./ui/LoginDialog.tsx"
 import { FloorPicker } from "./ui/FloorPicker.tsx"
+import { ShareMenu, SharePanel } from "./ui/SharePanel.tsx"
 import { EmptyState } from "./ui/EmptyState.tsx"
 import { notify } from "./dim-app/notify.js"
 
@@ -599,6 +600,7 @@ export function App() {
                         >
                             <Icon name="upload" /> Upload
                         </button>
+                        {hasMap && <ShareMenu disabled={slicing} onHtml={() => setModal("share")} />}
                     </>
                 )}
                 {(uploads.list.length > 0 || uploads.waitingForLogin) && (
@@ -754,6 +756,19 @@ export function App() {
                             </button>
                         </div>
                         <OpenPanel context={context} />
+                    </div>
+                </div>
+            )}
+            {modal === "share" && session && hasMap && (
+                <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModal(null)}>
+                    <div className="dim-panel modal" data-modal="share">
+                        <div className="modal-head">
+                            <span />
+                            <button type="button" className="dim-btn sm icon" onClick={() => setModal(null)}>
+                                <Icon name="close" />
+                            </button>
+                        </div>
+                        <SharePanel context={context} />
                     </div>
                 </div>
             )}

@@ -70,7 +70,7 @@ export const DEFAULT_UI: UiState = {
 }
 
 /** the modals over the page */
-export type Modal = "open" | "generate" | "save" | null
+export type Modal = "open" | "generate" | "save" | "share" | null
 
 export interface Context {
     session: Session | null

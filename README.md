@@ -24,6 +24,11 @@ everything else is optional and in any order.
   floor, walls, crop, level), **Saved views**. All undoable.
 - **Save** into the recording: the map, annotations and views become `map/*` streams in the same file
   ([docs/schema.md](docs/schema.md)), ready for a navigation blueprint to read.
+- **Share** (top bar) → **as HTML**: one self-contained `.html` anyone can open offline, no Desktop: the voxels the 3D
+  view shows (current edits, cropped to the slice, at the map's voxel size), in the same look (the editor's renderer
+  and voxel shader, `frontend/src/share/viewer.ts`) from the same camera, with the floor selector bottom right for a
+  multi-floor map. The voxels are packed to about half a byte each (`frontend/src/share/pack.ts`), so a 450k-voxel map
+  is a ~400 KB file. The dialog shows the size, then downloads it.
 - **Upload** the recording (with the map saved in it) to your Dimensional cloud account: the Upload button in the top
   bar, or the Save menu (which offers "Save, then upload" when there are unsaved edits). Not logged in? A dialog shows
   the page to open and the code to approve from any signed-in browser, then the upload starts by itself. Uploads run
@@ -58,7 +63,7 @@ In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (b
 | `crates/mapping` | the map math: the ray-traced voxel map (vendored from dimos), tf tree, ICP, loop closure (a port of dimos's PGO), cleanup selections, floors, floor plans, the staged build |
 | `server` | `dimos-app-server`: sessions, jobs, every action as an endpoint (`api.rs`, one table that is also `/agent.json`), save/restore |
 | `scripts/check_endpoints.ts` | checks dimos.yaml's `agent:` against the server's `--agent-json` (`--write` regenerates it) |
-| `frontend` | the page: React + Vite + three.js; `src/render` is copied from the Live Viewer (same point styles) |
+| `frontend` | the page: React + Vite + three.js; `src/render` is copied from the Live Viewer (same point styles); `src/share` the shared-map page (`vite.share.config.ts` builds its viewer) |
 | `docs` | [schema.md](docs/schema.md) (what's saved), [api.md](docs/api.md) (the endpoints) |
 
 One compiled binary at runtime: no Python, no dimos needed to build or edit maps.
@@ -66,6 +71,7 @@ One compiled binary at runtime: no Python, no dimos needed to build or edit maps
 ## Develop
 
     cargo test --workspace                      # all the non-UI logic and every endpoint
+    deno test frontend/src/share/               # the shared map's packing
     deno task check-endpoints [--write]         # dimos.yaml's agent: = the served agent.json
     cargo run -p dimos-app-server -- --port 7190 --frontend frontend/dist
     (cd frontend && npm ci && npm run dev)      # the page, against a running Desktop (DESKTOP_URL)

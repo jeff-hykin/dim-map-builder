@@ -189,6 +189,10 @@ button:focus { outline: none; }
 
 /* ── uploads to Dimensional cloud: the topbar button, the drawer, the login dialog ── */
 .uploads-button { position: relative; gap: 4px; }
+.share-menu { position: relative; }
+.share-dropdown { position: absolute; right: 0; top: calc(100% + 6px); min-width: 250px; }
+.share-dropdown .dim { margin-left: auto; color: var(--muted-fg); font-size: 11px; }
+[data-share-panel] a.dim-btn { text-decoration: none; }
 .uploads-button.failed { color: var(--danger); }
 .uploads-button .count { font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-fg, #fff); display: inline-grid; place-items: center; }
 .upload-ring { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; }
