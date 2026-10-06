@@ -73,8 +73,8 @@ button:focus { outline: none; }
 .orb:focus-visible, .dim-tab:focus-visible { box-shadow: 0 0 0 2px var(--ring-soft); }
 
 /* ── the orbs and the edit palette ── */
-.orbs { position: absolute; left: 26px; top: 26px; display: flex; gap: 14px; z-index: 6; }
-.orb { --orb: var(--primary); width: 68px; height: 68px; border-radius: 50%; border: 3px solid var(--orb); background: color-mix(in srgb, var(--card) 92%, transparent); color: var(--fg); font-size: 26px; cursor: pointer; display: inline-grid; place-items: center; box-shadow: 0 0 0 4px color-mix(in srgb, var(--orb) 14%, transparent), var(--shadow-md); transition: transform 150ms, box-shadow 150ms, background 150ms; }
+.orbs { position: absolute; left: 22px; top: 22px; display: flex; gap: 12px; z-index: 6; }
+.orb { --orb: var(--primary); width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--orb); background: color-mix(in srgb, var(--card) 92%, transparent); color: var(--fg); font-size: 20px; cursor: pointer; display: inline-grid; place-items: center; box-shadow: 0 0 0 4px color-mix(in srgb, var(--orb) 14%, transparent), var(--shadow-md); transition: transform 150ms, box-shadow 150ms, background 150ms; }
 .orb:hover:not(:disabled) { transform: scale(1.06); }
 .orb.open { background: var(--orb); color: var(--primary-fg); }
 .orb:disabled { opacity: 0.35; cursor: default; }
@@ -86,10 +86,10 @@ button:focus { outline: none; }
 .orb-slicer { --orb: var(--warn); }
 .orb-slicer.recommend { animation: slicer-glow 2.4s ease-in-out infinite; }
 @keyframes slicer-glow { 50% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--warn) 28%, transparent), 0 0 32px 6px color-mix(in srgb, var(--warn) 45%, transparent), var(--shadow-md); transform: scale(1.05); } }
-.orb-hint { position: absolute; left: 282px; top: 48px; z-index: 6; pointer-events: none; animation: palette-in 300ms ease-out; }
+.orb-hint { position: absolute; left: 216px; top: 36px; z-index: 6; pointer-events: none; animation: palette-in 300ms ease-out; }
 .app.mode-2d .orb-hint, .app.mode-split .orb-hint { display: none; } /* the 2D slice bar sits there; slicing is a 3D step */
 @media (max-width: 600px) { .orb-hint { display: none; } } /* no room beside the orbs on a phone; the slicer orb still glows */
-.slicer-panel { position: absolute; left: 26px; top: 108px; width: min(380px, calc(100% - 40px)); z-index: 7; padding: 10px 14px 12px; border-color: color-mix(in srgb, var(--warn) 45%, transparent); box-shadow: var(--shadow-lg); }
+.slicer-panel { position: absolute; left: 22px; top: 88px; width: min(380px, calc(100% - 40px)); z-index: 7; padding: 10px 14px 12px; border-color: color-mix(in srgb, var(--warn) 45%, transparent); box-shadow: var(--shadow-lg); }
 .stepper { display: flex; gap: 10px; align-items: center; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-fg); }
 .stepper .dot b { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--border); margin-right: 3px; font-weight: 600; }
 .stepper .dot.on { color: var(--warn); }
@@ -104,10 +104,10 @@ button:focus { outline: none; }
 .crop-overlay { pointer-events: none; }
 .crop-overlay path:nth-child(2), .crop-handle { pointer-events: all; }
 .crop-handle { fill: var(--warn); stroke: var(--bg); stroke-width: 1.5; }
-.palette { position: absolute; left: 36px; top: 108px; display: flex; flex-direction: column; gap: 4px; z-index: 6; padding: 4px; animation: palette-in 180ms ease-out; }
+.palette { position: absolute; left: 27px; top: 88px; display: flex; flex-direction: column; gap: 4px; z-index: 6; padding: 4px; animation: palette-in 180ms ease-out; }
 @keyframes palette-in { from { opacity: 0; transform: translateY(-8px); } }
 .palette .dim-btn { width: 34px; height: 34px; padding: 0; font-size: 16px; }
-.tool-panel { position: absolute; left: 92px; top: 108px; width: 330px; max-height: calc(100% - 126px - var(--dim-inset-bottom)); overflow: auto; z-index: 6; padding: 8px 12px 12px; box-shadow: var(--shadow-lg); }
+.tool-panel { position: absolute; left: 80px; top: 88px; width: 330px; max-height: calc(100% - 106px - var(--dim-inset-bottom)); overflow: auto; z-index: 6; padding: 8px 12px 12px; box-shadow: var(--shadow-lg); }
 .tool-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
 
 /* ── modals ── */
