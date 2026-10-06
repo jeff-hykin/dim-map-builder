@@ -29,8 +29,8 @@ pub fn interpolate(a: &Iso, b: &Iso, alpha: f64) -> Iso {
 struct Edge {
     /// (time, parent <- child), sorted by time
     samples: Vec<(f64, Iso)>,
-    /// every sample is the same transform: a static edge (tf_static, or one republished at a rate), true at any time.
-    /// Its stamps can be on another clock than the moving edges' (lite_record: the log clock vs the Livox's)
+    /// every sample is the same transform: a static edge (tf_static, or one republished at a rate), true at any time,
+    /// whatever clock its stamps are on
     fixed: bool,
 }
 
@@ -176,17 +176,17 @@ mod tests {
         assert!(tree.lookup("world", "nowhere", 5.0, 0.1).is_none());
     }
 
-    /// lite_record: the sensor edges republished at 5 Hz on the log clock, odometry on the Livox's clock 143 s behind
+    /// a sensor mount republished at 5 Hz on one clock, the odometry on another 143 s behind
     #[test]
     fn a_constant_edge_holds_on_any_clock() {
         let mut tree = TfTree::default();
         for i in 0..50 {
-            tree.add(1000.0 + i as f64 * 0.2, "livox_link", "livox_frame", iso([0.0, 0.0, 0.1], [0.0, 0.0, 0.0, 1.0]));
+            tree.add(1000.0 + i as f64 * 0.2, "sensor_link", "lidar_frame", iso([0.0, 0.0, 0.1], [0.0, 0.0, 0.0, 1.0]));
         }
-        tree.add(857.0, "odom", "livox_link", iso([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]));
-        tree.add(867.0, "odom", "livox_link", iso([10.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]));
+        tree.add(857.0, "odom", "sensor_link", iso([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]));
+        tree.add(867.0, "odom", "sensor_link", iso([10.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]));
         tree.finish();
-        let p = transform_point(&tree.lookup("odom", "livox_frame", 862.0, 0.1).unwrap(), [0.0, 0.0, 0.0]);
+        let p = transform_point(&tree.lookup("odom", "lidar_frame", 862.0, 0.1).unwrap(), [0.0, 0.0, 0.0]);
         assert!((p[0] - 5.0).abs() < 1e-6 && (p[2] - 0.1).abs() < 1e-6, "{p:?}");
     }
 }

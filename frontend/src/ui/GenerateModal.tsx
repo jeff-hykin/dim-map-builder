@@ -71,8 +71,8 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
             recordings.metadata(session.recordingId).then(setMeta).catch(() => setMeta(null))
         }
     }, [session?.id])
-    // a lite_record recording: lite_record's own map is 4 cm voxels, so this one starts at the same size
-    const liteRecord = !!session?.postProcess || (meta?.streams ?? []).some((s) => s.name.replace(/^\//, "") === "pointlio_lidar")
+    // lite_record post-processes it first, and its own map is 4 cm voxels: this one starts at the same size
+    const liteRecord = !!session?.postProcess
     useEffect(() => {
         if (liteRecord && !session?.buildOptions && defaults) {
             setOptions((current) => current && { ...current, voxelSize: LITE_RECORD_VOXEL })
@@ -111,7 +111,8 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 {session.postProcess && (
                     <div className="dim-alert info" data-post-process>
                         <div>
-                            <strong>A raw lite_record recording.</strong> Generate first runs lite_record's post-processing on it (its Post process button): Point-LIO odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording{session.writable ? "" : " (a copy: this folder is read-only)"}. Then the map is built from the corrected scans.
+                            <strong>Not post-processed yet.</strong> Generate first runs lite_record's post-processing on it (its Post process button): odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording in place. Then the map is built from the corrected scans.
+                            {!session.writable && " This recording is in a read-only folder, so it can't be: move it into the recordings folder first."}
                         </div>
                     </div>
                 )}

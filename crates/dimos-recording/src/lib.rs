@@ -4,6 +4,7 @@
 pub mod cdr;
 pub mod db;
 pub mod lcm;
+pub mod mcap_append;
 pub mod mcap_io;
 pub mod points;
 
@@ -50,6 +51,10 @@ pub struct StreamInfo {
     pub type_name: String,
     pub kind: Kind,
     pub count: u64,
+    /// the stream this one was made from (a corrected copy of a lidar), from the mcap channel's `derived_from`
+    /// metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derived_from: Option<String>,
 }
 
 /// A decoded message, with the stored observation pose a `.db` row may carry (old datasets put world poses there).
@@ -119,12 +124,12 @@ impl Recording {
         Ok(match &self.backend {
             Backend::Db(_, streams) => streams
                 .iter()
-                .map(|s| StreamInfo { name: s.name.clone(), type_name: s.kind.clone(), kind: Kind::of(&s.kind), count: s.count })
+                .map(|s| StreamInfo { name: s.name.clone(), type_name: s.kind.clone(), kind: Kind::of(&s.kind), count: s.count, derived_from: None })
                 .collect(),
             Backend::Mcap(file) => file
                 .channels()?
                 .into_iter()
-                .map(|c| StreamInfo { kind: Kind::of(&c.kind), name: c.topic, type_name: c.kind, count: c.count })
+                .map(|c| StreamInfo { kind: Kind::of(&c.kind), name: c.topic, type_name: c.kind, count: c.count, derived_from: c.derived_from })
                 .collect(),
         })
     }
@@ -150,11 +155,16 @@ impl Recording {
 
     /// Every transform in every tf stream (`tf`, `/tf`, `tf_static`, ...).
     pub fn tf_edges(&self) -> Result<Vec<TfEdge>> {
+        Ok(self.tf_edges_logged()?.into_iter().map(|(_, edge)| edge).collect())
+    }
+
+    /// Every transform with the log time of the message that carried it (to tell a header stamp's clock).
+    pub fn tf_edges_logged(&self) -> Result<Vec<(f64, TfEdge)>> {
         let mut edges = Vec::new();
         for stream in self.streams()?.into_iter().filter(|s| s.kind == Kind::Tf) {
-            self.for_each(&stream.name, |_, message, _| {
+            self.for_each(&stream.name, |ts, message, _| {
                 if let Message::Tf(list) = message {
-                    edges.extend(list);
+                    edges.extend(list.into_iter().map(|edge| (ts, edge)));
                 }
                 Ok(true)
             })?;

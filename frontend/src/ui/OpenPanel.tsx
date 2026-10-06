@@ -109,7 +109,7 @@ export function OpenPanel({ context }: { context: Context }) {
                             <div className="meta">
                                 {recording.format} · {size(recording.size)} · {age(recording.modified)}
                                 {recording.id.includes("/") ? ` · ${recording.id.split("/")[0]}` : ""}
-                                {!recording.writable ? " · read-only (saving makes a copy)" : ""}
+                                {!recording.writable ? " · read-only (can't be saved into)" : ""}
                             </div>
                         </button>
                         {details?.id === recording.id && (

@@ -17,8 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const WORLD_FRAMES: [&str; 3] = ["world", "map", "odom"];
 /// the frame the odometry stream places, for world-frame clouds
 const ODOMETRY_FRAME: &str = "__odometry";
-/// lite_record's motion-compensated lidar: preferred over the raw scans it was made from
-pub const DESKEWED_STREAM: &str = "pointlio_lidar";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -138,10 +136,12 @@ fn pick_cloud_stream(recording: &Recording, wanted: &str) -> Result<(String, u64
         let Some(found) = found else { bail!("no point cloud stream named {wanted}") };
         return Ok((found.name.clone(), found.count));
     }
-    // the biggest cloud stream that isn't itself a map (a recorded global/local map would be circular); a
-    // motion-compensated copy of the lidar (lite_record's post_process writes /pointlio_lidar) before the raw one
+    // the biggest cloud stream that isn't itself a map (a recorded global/local map would be circular), and a
+    // corrected copy of a lidar (motion-compensated, registered) before the scans it was made from
     let mut clouds: Vec<_> = streams.iter().filter(|s| s.kind == Kind::Cloud).collect();
-    clouds.sort_by_key(|s| (s.name.contains("map"), s.name.trim_start_matches('/') != DESKEWED_STREAM, std::cmp::Reverse(s.count)));
+    // a corrected copy names its source in its channel's `derived_from` metadata: the source steps aside for it
+    let sources: Vec<&str> = clouds.iter().filter_map(|s| s.derived_from.as_deref()).collect();
+    clouds.sort_by_key(|s| (s.name.contains("map"), sources.contains(&s.name.as_str()), std::cmp::Reverse(s.count)));
     let Some(best) = clouds.first() else { bail!("this recording has no point clouds") };
     Ok((best.name.clone(), best.count))
 }
@@ -153,18 +153,20 @@ struct Prepared {
     world: String,
     placement: Placement,
     notes: Vec<String>,
+    /// added to a scan's header stamp before tf is looked up: 0, or clock::offset when tf is on the log clock and the
+    /// scans aren't
+    cloud_offset: f64,
 }
 
 impl Prepared {
-    /// the sensor's pose in the world for one scan, if it can be placed. tf is looked up at the cloud's own header
-    /// stamp first (tf edges carry header stamps too, and a recorder's log clock can sit minutes away from a device's:
-    /// lite_record's Livox stamps), then at the log time.
+    /// the sensor's pose in the world for one scan, if it can be placed: tf at the scan's header stamp (moved by
+    /// cloud_offset), else at its log time
     fn sensor_pose(&self, ts: f64, stamp: f64, frame: &str, pose: Option<[f64; 7]>, tolerance: f64) -> Option<Iso> {
         let stored = pose.map(|p| iso([p[0], p[1], p[2]], [p[3], p[4], p[5], p[6]]));
         let frame = frame.trim_start_matches('/');
         match &self.placement {
             Placement::Tf(tree) => (stamp > 0.0)
-                .then(|| tree.lookup(&self.world, frame, stamp, tolerance))
+                .then(|| tree.lookup(&self.world, frame, stamp + self.cloud_offset, tolerance))
                 .flatten()
                 .or_else(|| tree.lookup(&self.world, frame, ts, tolerance))
                 .or(stored),
@@ -189,18 +191,25 @@ impl Prepared {
 fn prepare(recording: &Recording, options: &BuildOptions) -> Result<Prepared> {
     let (stream, total) = pick_cloud_stream(recording, &options.cloud_stream)?;
     let mut notes = Vec::new();
+    // tf at its header stamps; an unstamped edge (stamp 0) at the log time of the message that carried it
     let mut tree = TfTree::default();
-    for edge in recording.tf_edges()? {
-        tree.add(edge.header.ts(), &edge.header.frame_id, &edge.child, iso(edge.translation, edge.rotation));
+    for (log, edge) in recording.tf_edges_logged()? {
+        let stamp = edge.header.ts();
+        tree.add(if stamp > 0.0 { stamp } else { log }, &edge.header.frame_id, &edge.child, iso(edge.translation, edge.rotation));
     }
     tree.finish();
+    // the scans' clock, from the first ones: their header stamps are looked up in tf as they are, or moved onto the
+    // log clock when the device stamping them sits on another clock (clock::offset) and only that matches tf
     let mut first: Option<(f64, String, Option<[f64; 7]>)> = None;
+    let mut samples = Vec::new();
     recording.for_each(&stream, |ts, message, pose| {
         if let Message::Cloud(cloud) = message {
-            first = Some((ts, cloud.frame_id, pose));
-            return Ok(false);
+            if first.is_none() {
+                first = Some((ts, cloud.frame_id, pose));
+            }
+            samples.push((ts, cloud.ts));
         }
-        Ok(true)
+        Ok(samples.len() < 200)
     })?;
     let Some((first_ts, cloud_frame, first_pose)) = first else { bail!("{stream} has no readable clouds") };
     let cloud_frame = cloud_frame.trim_start_matches('/').to_string();
@@ -216,6 +225,14 @@ fn prepare(recording: &Recording, options: &BuildOptions) -> Result<Prepared> {
                 .unwrap_or_else(|| "world".into())
         };
     }
+    let shifted = crate::clock::offset(samples.iter().copied());
+    let placed = |offset: f64| samples.iter().filter(|(_, stamp)| *stamp > 0.0 && tree.lookup(&world, &cloud_frame, stamp + offset, options.tf_tolerance).is_some()).count();
+    let cloud_offset = if shifted != 0.0 && placed(shifted) > placed(0.0) {
+        notes.push(format!("{stream} is stamped {shifted:+.1} s off the log clock, and tf matches it on the log clock: shifted onto it"));
+        shifted
+    } else {
+        0.0
+    };
     let placement = if cloud_frame == world || cloud_frame.is_empty() {
         // world-frame clouds: ray trace from where the robot was (its odometry), so free space carves correctly
         let mut odometry = TfTree::default();
@@ -248,7 +265,7 @@ fn prepare(recording: &Recording, options: &BuildOptions) -> Result<Prepared> {
     } else {
         bail!("can't place {cloud_frame} clouds: no tf to {} and no stored poses (tf frames: {})", WORLD_FRAMES.join("/"), tree.frames().join(", "));
     };
-    Ok(Prepared { stream, total, world, placement, notes })
+    Ok(Prepared { stream, total, world, placement, notes, cloud_offset })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -508,6 +525,33 @@ mod tests {
         // cancel stops it
         let cancelled = build(&recording, &BuildOptions::default(), &mut |_| {}, &AtomicBool::new(true));
         assert!(cancelled.is_err_and(|e| e.is::<Cancelled>()));
+    }
+
+    /// a device clock 143 s behind the recorder's: the scans are placed whether tf was written on the device's clock
+    /// (header stamps match) or on the log clock (the scans' stamps are moved onto it); no sensor named anywhere
+    #[test]
+    fn scans_on_another_clock_are_placed_against_either_tf() {
+        let behind = 143.3;
+        for tf_on_log_clock in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("rig.mcap");
+            let mut messages: Vec<(&str, &str, &str, f64, Vec<u8>)> = Vec::new();
+            for step in 0..30 {
+                let log = 1000.0 + step as f64 * 0.1;
+                let device = log - behind - 0.02;
+                let points: Vec<[f32; 3]> = (-20..20).flat_map(|i| [[i as f32 * 0.1, 1.5, 0.0], [i as f32 * 0.1, -1.5, 0.0]]).collect();
+                messages.push(("/scan", "lcm", "sensor_msgs.PointCloud2", log, encode_xyz_cloud(&Header::at(device, "lidar"), &points, None)));
+                let stamp = if tf_on_log_clock { log } else { device };
+                let edge = TfEdge { header: Header::at(stamp, "odom"), child: "lidar".into(), translation: [step as f64 * 0.1, 0.0, 0.0], rotation: [0.0, 0.0, 0.0, 1.0] };
+                messages.push(("/tf", "lcm", "tf2_msgs.TFMessage", stamp, encode_tf(&[edge])));
+            }
+            dimos_recording::mcap_io::write_fixture(&path, &messages);
+            let recording = Recording::open(&path).unwrap();
+            let options = BuildOptions { voxel_size: 0.1, loop_closure: false, ..Default::default() };
+            let result = build(&recording, &options, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+            assert_eq!(result.scans_used, 30, "tf on the log clock: {tf_on_log_clock}");
+            assert_eq!(result.notes.iter().any(|n| n.contains("shifted onto it")), tf_on_log_clock, "{:?}", result.notes);
+        }
     }
 
     fn rusqlite_free_db(path: &std::path::Path) -> dimos_recording::db::Connection {

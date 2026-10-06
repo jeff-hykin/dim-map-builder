@@ -8,7 +8,8 @@
 //!   map/views        std_msgs.String          JSON: the saved 2D views (each a storey and a height band)
 //!   map/slice        std_msgs.String          JSON: the slicer's view {zMin, zMax, yaw, xMin, xMax, yMin, yMax} or null
 //!   map/floor_<n>    nav_msgs.OccupancyGrid   storey n's occupancy grid, when exported; origin z = the floor
-//! Saving again replaces them (and drops the `map_builder_*` streams older versions wrote). Opening a recording that
+//! Saving again replaces them in a .db (and drops the `map_builder_*` streams older versions wrote); in an .mcap it
+//! appends a newer message to each, in place (no copy of the recording), and loading takes the newest. Opening a recording that
 //! has them (and no working session) restores the session from them; older `map_builder` saves still open.
 use crate::session::{Annotations, BuildSummary, MapData, Session, Transform};
 use crate::workspace::Workspace;
@@ -100,15 +101,15 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
         (slice_name(), lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.slice)?)),
     ];
     writes.extend(floors.into_iter().map(|(name, payload)| (name, lcm::OCCUPANCY_GRID_TYPE.into(), payload)));
-    // earlier saves' floors beyond today's count go too
-    let stale: Vec<String> = Recording::open(path)?
-        .streams()?
-        .into_iter()
-        .map(|s| s.name)
-        .filter(|name| (name.starts_with(&floor_name(0)[..floor_name(0).len() - 1]) || name.starts_with(legacy_prefix)) && !writes.iter().any(|(w, _, _)| w == name))
-        .collect();
     match format {
         Format::Db => {
+        // earlier saves' floors beyond today's count go too
+        let stale: Vec<String> = Recording::open(path)?
+            .streams()?
+            .into_iter()
+            .map(|s| s.name)
+            .filter(|name| (name.starts_with(&floor_name(0)[..floor_name(0).len() - 1]) || name.starts_with(legacy_prefix)) && !writes.iter().any(|(w, _, _)| w == name))
+            .collect();
             let mut connection = db::Connection::open(path).with_context(|| format!("opening {} to write", path.display()))?;
             connection.busy_timeout(std::time::Duration::from_secs(10))?;
             let total = writes.len() as u64 + 1;
@@ -129,10 +130,11 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
             progress(total, total);
         }
         Format::Mcap => {
-            let mut replace: Vec<String> = writes.iter().map(|(name, _, _)| name.clone()).collect();
-            replace.extend(stale);
+            // appended in place: an earlier save's messages stay (the newest wins when loading), stale floors with them
+            progress(0, 1);
             let channels: Vec<mcap_io::NewChannel> = writes.into_iter().map(|(topic, kind, payload)| mcap_io::NewChannel { topic, kind, messages: vec![(now, payload)] }).collect();
-            mcap_io::rewrite_with(path, &replace, &channels, progress)?;
+            mcap_io::append(path, &channels)?;
+            progress(1, 1);
         }
     }
     Ok(())

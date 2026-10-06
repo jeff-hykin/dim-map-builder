@@ -35,9 +35,9 @@ agent:
             method: GET
             path: api/status
             description: >-
-                The open map, briefly: session id, recording, stage (raw = not built yet / map), postProcess (a raw
-                lite_record recording: why Generate post-processes it first), voxel count, bounds, floors, annotation
-                counts, running job, what can be undone, unsaved edits, recent history.
+                The open map, briefly: session id, recording, stage (raw = not built yet / map), postProcess (a lidar +
+                IMU recording with no odometry: why Generate runs lite_record's post_process first), voxel count,
+                bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.
             params:
                 session:
                     description: 'session id (default: the recording open in the page)'
@@ -69,7 +69,7 @@ agent:
                     required: true
                     type: string
                 writable:
-                    description: 'false for a read-only folder: saving copies it first (default true)'
+                    description: 'false for a read-only folder: saving is refused, recordings are never copied (default true)'
                     type: boolean
         -
             method: GET
@@ -181,10 +181,10 @@ agent:
             method: POST
             path: 'api/sessions/{id}/build'
             description: >-
-                Start (re)building the global map from the recording (loop closure + ray tracing). A raw lite_record
-                recording (status postProcess set) gets lite_record's post_process first, written into the recording:
-                Point-LIO odometry, motion-compensated /pointlio_lidar, its 4 cm /global_map. Runs in the background:
-                poll GET api/status (job) or watch the page. Every option is optional (GET api/build-defaults).
+                Start (re)building the global map from the recording (loop closure + ray tracing). A recording with a
+                lidar + IMU and no odometry (status postProcess set) gets lite_record's post_process first, in place:
+                odometry, corrected scans, its voxel map. Runs in the background: poll GET api/status (job) or watch the
+                page. Every option is optional (GET api/build-defaults).
             params:
                 cloudStream:
                     description: the point cloud stream
@@ -733,8 +733,8 @@ agent:
             method: POST
             path: 'api/sessions/{id}/save'
             description: >-
-                Write the map and every annotation into the recording file (a background job; a read-only recording is
-                copied into the recordings folder first).
+                Write the map and every annotation into the recording file (a background job, in place: an .mcap gets
+                the new messages appended, nothing is copied; a recording in a read-only folder is refused).
             params:
                 id:
                     description: 'session id, or `current` (the recording open in the page)'

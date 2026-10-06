@@ -231,7 +231,7 @@ pub struct Session {
     pub id: String,
     pub recording_id: String,
     pub recording_path: String,
-    /// false for recordings in one of Desktop's read-only folders: saving writes a copy into the recordings folder
+    /// false for recordings in one of Desktop's read-only folders: saving and post-processing are refused (nothing is ever copied)
     #[serde(default = "yes")]
     pub writable: bool,
     pub name: String,

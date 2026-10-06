@@ -1,11 +1,14 @@
 //! `.mcap` recordings: channels are either ROS 2 `cdr` (what the Live Viewer's recorder transcodes to, so Foxglove
-//! opens them) or `lcm` (raw dimos LCM bytes, type in the channel's `lcm_type` metadata). mcap has no in-place append,
-//! so saving writes a copy with every original record plus the new channels, then renames it over the original.
+//! opens them) or `lcm` (raw dimos LCM bytes, type in the channel's `lcm_type` metadata). Saving appends in place
+//! (`append`): the summary is cut off, the new chunks go where it was and a summary covering both is put back, so a
+//! save costs the bytes saved, never a copy of the recording.
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 pub const LCM_TYPE_KEY: &str = "lcm_type";
+/// channel metadata naming the topic a channel was made from (a corrected copy of a lidar names the raw one)
+pub const DERIVED_FROM_KEY: &str = "derived_from";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct McapChannel {
@@ -14,6 +17,7 @@ pub struct McapChannel {
     /// the schema name (`sensor_msgs/msg/PointCloud2`) for cdr, the dimos type (`sensor_msgs.PointCloud2`) for lcm
     pub kind: String,
     pub count: u64,
+    pub derived_from: Option<String>,
 }
 
 pub struct McapFile {
@@ -54,6 +58,7 @@ impl McapFile {
                 encoding: channel.message_encoding.clone(),
                 kind,
                 count: 0,
+                derived_from: channel.metadata.get(DERIVED_FROM_KEY).filter(|v| !v.is_empty()).cloned(),
             });
             entry.count += count;
         };
@@ -117,64 +122,20 @@ pub struct NewChannel {
     pub messages: Vec<(f64, Vec<u8>)>,
 }
 
-/// Rewrites `path` with every original message except those on `replace_topics` (an earlier save's channels), plus
-/// `channels`. Writes to a sibling temp file and renames it over the original only when complete.
-pub fn rewrite_with(path: &Path, replace_topics: &[String], channels: &[NewChannel], mut progress: impl FnMut(u64, u64)) -> Result<()> {
-    let source = McapFile::open(path)?;
-    let total = source.bytes().len() as u64;
-    let temp = path.with_extension("mcap.saving");
-    {
-        let file = std::io::BufWriter::new(std::fs::File::create(&temp).with_context(|| format!("creating {}", temp.display()))?);
-        // the original's chunk compression is kept (an uncompressed recording stays uncompressed)
-        let mut writer = mcap::WriteOptions::new().compression(source.compression()).create(file)?;
-        let mut ids: HashMap<u16, u16> = HashMap::new();
-        let mut schemas: HashMap<u16, u16> = HashMap::new();
-        let mut written = 0u64;
-        for message in mcap::MessageStream::new(source.bytes())? {
-            let Ok(message) = message else { break };
-            if replace_topics.contains(&message.channel.topic) {
-                continue;
-            }
-            let id = match ids.get(&message.channel.id) {
-                Some(id) => *id,
-                None => {
-                    let schema_id = match &message.channel.schema {
-                        Some(schema) => match schemas.get(&schema.id) {
-                            Some(id) => *id,
-                            None => {
-                                let id = writer.add_schema(&schema.name, &schema.encoding, &schema.data)?;
-                                schemas.insert(schema.id, id);
-                                id
-                            }
-                        },
-                        None => 0,
-                    };
-                    let id = writer.add_channel(schema_id, &message.channel.topic, &message.channel.message_encoding, &message.channel.metadata)?;
-                    ids.insert(message.channel.id, id);
-                    id
-                }
-            };
-            let header = mcap::records::MessageHeader { channel_id: id, sequence: message.sequence, log_time: message.log_time, publish_time: message.publish_time };
-            writer.write_to_known_channel(&header, &message.data)?;
-            written += message.data.len() as u64;
-            if written % (16 << 20) < message.data.len() as u64 {
-                progress(written.min(total), total);
-            }
+/// Appends `channels` to the finished recording at `path` in place (mcap_append): nothing already in it is rewritten
+/// or removed, so a reader of an earlier save's channels takes the newest message (`McapFile::latest`). A recording
+/// with no summary (cut short) can't be appended to; it's refused rather than copied.
+pub fn append(path: &Path, channels: &[NewChannel]) -> Result<()> {
+    let mut appender = crate::mcap_append::Appender::open(path)?;
+    for channel in channels {
+        let mut metadata = BTreeMap::new();
+        metadata.insert(LCM_TYPE_KEY.to_string(), channel.kind.clone());
+        let id = appender.channel(&channel.topic, 0, "lcm", &metadata);
+        for (ts, payload) in &channel.messages {
+            appender.write(id, (ts.max(0.0) * 1e9) as u64, payload.clone())?;
         }
-        for channel in channels {
-            let mut metadata = BTreeMap::new();
-            metadata.insert(LCM_TYPE_KEY.to_string(), channel.kind.clone());
-            let id = writer.add_channel(0, &channel.topic, "lcm", &metadata)?;
-            for (sequence, (ts, payload)) in channel.messages.iter().enumerate() {
-                let time = (ts.max(0.0) * 1e9) as u64;
-                let header = mcap::records::MessageHeader { channel_id: id, sequence: sequence as u32, log_time: time, publish_time: time };
-                writer.write_to_known_channel(&header, payload)?;
-            }
-        }
-        writer.finish()?;
     }
-    std::fs::rename(&temp, path).with_context(|| format!("replacing {}", path.display()))?;
-    progress(total, total);
+    appender.finish()?;
     Ok(())
 }
 
@@ -206,28 +167,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rewrite_keeps_originals_and_replaces_previous_saves() {
+    fn a_save_appends_in_place_and_the_newest_wins() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("x.mcap");
         write_fixture(&path, &[("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1.0, vec![1, 2]), ("/odd", "lcm", "x.Y", 2.0, vec![3])]);
-        let save = |text: &[u8]| {
-            let channel = NewChannel { topic: "/map_builder/annotations".into(), kind: "std_msgs.String".into(), messages: vec![(5.0, text.to_vec())] };
-            rewrite_with(&path, &["/map_builder/annotations".into()], &[channel], |_, _| {}).unwrap();
+        let before = std::fs::metadata(&path).unwrap().len();
+        let save = |ts: f64, text: &[u8]| {
+            let channel = NewChannel { topic: "/map_builder/annotations".into(), kind: "std_msgs.String".into(), messages: vec![(ts, text.to_vec())] };
+            append(&path, &[channel]).unwrap();
         };
-        save(b"first");
-        save(b"second");
+        save(5.0, b"first");
+        save(6.0, b"second");
         let file = McapFile::open(&path).unwrap();
         let channels = file.channels().unwrap();
         let topics: Vec<_> = channels.iter().map(|c| (c.topic.as_str(), c.encoding.as_str(), c.kind.as_str(), c.count)).collect();
         assert_eq!(
             topics,
-            [("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1), ("/map_builder/annotations", "lcm", "std_msgs.String", 1), ("/odd", "lcm", "x.Y", 1)]
+            [("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1), ("/map_builder/annotations", "lcm", "std_msgs.String", 2), ("/odd", "lcm", "x.Y", 1)]
         );
-        assert_eq!(file.latest("/map_builder/annotations").unwrap(), Some((5.0, b"second".to_vec())));
-        assert!(!path.with_extension("mcap.saving").exists());
-        // the fixture is uncompressed; so is the rewrite
-        assert!(file.compression().is_none());
-        let summary = mcap::Summary::read(file.bytes()).unwrap().unwrap();
-        assert!(summary.chunk_indexes.iter().all(|c| c.compression.is_empty()));
+        assert_eq!(file.latest("/map_builder/annotations").unwrap(), Some((6.0, b"second".to_vec())));
+        assert_eq!(file.latest("/lidar").unwrap(), Some((1.0, vec![1, 2])));
+        // grew by the saves, not by a copy; nothing left beside it
+        assert!(std::fs::metadata(&path).unwrap().len() < before + 4096);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_recording_cut_short_is_refused_not_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.mcap");
+        write_fixture(&path, &[("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1.0, vec![1, 2])]);
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::write(&path, &bytes[..bytes.len() - 40]).unwrap();
+        let channel = NewChannel { topic: "/a".into(), kind: "std_msgs.String".into(), messages: vec![(1.0, vec![1])] };
+        assert!(append(&path, &[channel]).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes[..bytes.len() - 40]);
     }
 }

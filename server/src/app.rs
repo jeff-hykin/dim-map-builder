@@ -316,8 +316,7 @@ impl App {
             let mut post_notes = Vec::new();
             let pending = shared.lock().unwrap().post_process.clone();
             if let Some(reason) = pending {
-                // lite_record writes into the recording: one in a read-only folder is copied first, as a save does
-                app.make_writable(&shared, report)?;
+                Self::require_writable(&shared)?;
                 let path = shared.lock().unwrap().session.recording_path.clone();
                 let binary = crate::lite_record::binary(&app.store.dir)?;
                 shared.lock().unwrap().session.history.push(format!("Post-processing with lite_record ({reason})"));
@@ -416,34 +415,13 @@ impl App {
         Ok(None)
     }
 
-    /// A recording in a read-only folder is copied into the recordings folder (`map-builder/`) and the session moves to
-    /// the copy: what a save or lite_record's post-processing writes never touches the original.
-    fn make_writable(&self, shared: &Arc<Mutex<Workspace>>, report: &dyn Fn(Progress)) -> Result<()> {
-        let (writable, source) = {
-            let ws = shared.lock().unwrap();
-            (ws.session.writable, ws.session.recording_path.clone())
-        };
-        if writable {
-            return Ok(());
+    /// Everything the Map Editor writes goes into the recording in place; one in a read-only folder is refused, never
+    /// copied (a copy per edit is how a disk of recordings fills up).
+    fn require_writable(shared: &Arc<Mutex<Workspace>>) -> Result<()> {
+        let ws = shared.lock().unwrap();
+        if !ws.session.writable {
+            bail!("{} is in a read-only folder: the Map Editor writes into recordings in place and never copies them; move it into the recordings folder (Recordings can) and open it from there", ws.session.recording_path);
         }
-        let source = std::path::PathBuf::from(&source);
-        let dir = self.recordings_dir.join("map-builder");
-        std::fs::create_dir_all(&dir)?;
-        let stem = source.file_stem().unwrap_or_default().to_string_lossy().to_string();
-        let extension = source.extension().unwrap_or_default().to_string_lossy().to_string();
-        let mut target = dir.join(format!("{stem}.{extension}"));
-        let mut n = 2;
-        while target.exists() {
-            target = dir.join(format!("{stem}-{n}.{extension}"));
-            n += 1;
-        }
-        report(Progress { stage: "Copying the recording into the recordings folder".into(), stage_index: 0, stage_count: 1, done: 0, total: 1, note: target.display().to_string() });
-        std::fs::copy(&source, &target).with_context(|| format!("copying {} to {}", source.display(), target.display()))?;
-        let mut ws = shared.lock().unwrap();
-        ws.session.recording_path = target.display().to_string();
-        ws.session.recording_id = format!("map-builder/{}", target.file_name().unwrap_or_default().to_string_lossy());
-        ws.session.writable = true;
-        ws.session.history.push(format!("{} is read-only: writing into a copy, {}", source.display(), target.display()));
         Ok(())
     }
 
@@ -455,8 +433,7 @@ impl App {
         let session = id.to_string();
         self.start_job(id, "save", move |app, report, _cancel| {
             let shared = app.require(&session)?;
-            // a recording in a read-only folder is copied into the recordings folder first; the session moves to it
-            app.make_writable(&shared, report)?;
+            Self::require_writable(&shared)?;
             // a snapshot, so the page can keep reading while a big mcap is rewritten
             let snapshot = shared.lock().unwrap().clone();
             persist::save(&snapshot, |done, total| {
