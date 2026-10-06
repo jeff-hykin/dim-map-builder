@@ -1,5 +1,5 @@
 /*
-  dim-app theme (v0.10.1) — dimOS Desktop's two design languages for apps, value for value from the design docs
+  dim-app theme (v0.15.0) — dimOS Desktop's two design languages for apps, value for value from the design docs
   (portal_design_language.html, research_design_language.html).
 
     Portal   (dark,  body.science.dark)  void #05070d, ink #ece8f0, one accent: Dimensional blue #7cc8ec.
@@ -9,9 +9,16 @@
                                          Gently rounded (8–14px cards and controls, pills for chips / toggles / bars).
                                          Instrument Serif for titles, Inter for reading, uppercase Plex Mono micro-labels.
 
-  theme.js picks the one dimOS Desktop's theme follows (a light Desktop skin → Research, any other → Portal) and keeps
-  following it. It sets <body class="science [dark]">, <html data-dim-theme="portal|research"> and Desktop's corners
+  These two palettes are the defaults. Inside dimOS Desktop, theme.js applies the exact tokens Desktop published for its
+  active skin (localStorage "portal.themeTokens": every variable of the theme contract below, inline on <body>), so an
+  app looks like the Desktop around it in any skin; the skin's light/dark picks body.science[.dark] for the structural
+  rules. Off Desktop (nothing published): Portal. It sets <body class="science [dark]">, <html data-dim-theme=
+  "portal|research"> (dark | light), <html data-dim-tokens="<skin>"> while following Desktop, and Desktop's corners
   (<html data-corners="sharp|rounded">).
+
+  The theme contract (Desktop's, the portal mockup's src.html): --bg --fg --muted-fg --primary --primary-fg --ok --warn
+  --danger --info --surface --raised --input-bg --hover --sel --border --border-strong --hair --radius --radius-sm
+  --radius-lg --radius-xl --radius-pill --shadow --shadow-lg --blur --sans --mono --display --label-case --track-label.
 
   Components are .dim-* classes; every color, radius and font is a variable below, so app CSS that uses the variables
   follows both themes. Radius tokens are 0 in Portal, and Portal also squares every corner the way its doc does
@@ -131,6 +138,20 @@
     --display: "Instrument Serif", Georgia, serif;
     --track-label: 0.14em;
     --track-btn: 0;
+    --label-case: uppercase; /* section heads and micro-labels */
+    --head-font: var(--mono);
+    --head-color: var(--primary);
+    --heading-weight: 500;
+
+    /* surfaces (Desktop's theme contract) */
+    --surface: #ffffff; /* panels and bars */
+    --raised: #ffffff; /* menus, popovers, modals */
+    --hover: rgba(32, 33, 31, 0.05);
+    --glass: rgba(255, 255, 255, 0.92);
+    --blur: blur(10px);
+    --scrim: rgba(0, 0, 0, 0.25);
+    --close-red: #c2412f;
+    --close-red-hover: #d6452f;
 
     /* radius: "Gently rounded: 8–14px on cards and controls, full pills for chips and the ask box" */
     --radius: 8px; /* controls: buttons, inputs, selects */
@@ -236,6 +257,19 @@ body.science.dark {
     --display: "Michroma", "Eurostile", sans-serif;
     --track-label: 0.2em;
     --track-btn: 0.04em;
+    --label-case: uppercase;
+    --head-font: var(--display);
+    --head-color: var(--primary);
+    --heading-weight: 400;
+
+    --surface: #0e0c13;
+    --raised: #0e0c13;
+    --hover: rgba(255, 255, 255, 0.04);
+    --glass: rgba(14, 12, 19, 0.82);
+    --blur: blur(10px);
+    --scrim: rgba(4, 3, 8, 0.62);
+    --close-red: #f0707f;
+    --close-red-hover: #c8384d;
 
     --radius: 0;
     --radius-sm: 0;
@@ -282,11 +316,16 @@ body.science.dark {
     --axis-z: #7cc8ec;
 }
 
-/* Portal: "Square corners, everywhere. No rounding." (the doc's `*{border-radius:0!important}`) */
-body.science.dark *,
-body.science.dark *::before,
-body.science.dark *::after,
-body.science.dark *::-webkit-scrollbar-thumb {
+/* Portal: "Square corners, everywhere. No rounding." (the doc's `*{border-radius:0!important}`): the bundled Portal, or
+   whichever Desktop skin is square (theme.js marks html[data-dim-square] when its panel radius is 0) */
+html:not([data-dim-tokens]) body.science.dark *,
+html:not([data-dim-tokens]) body.science.dark *::before,
+html:not([data-dim-tokens]) body.science.dark *::after,
+html:not([data-dim-tokens]) body.science.dark *::-webkit-scrollbar-thumb,
+html[data-dim-square] body.science *,
+html[data-dim-square] body.science *::before,
+html[data-dim-square] body.science *::after,
+html[data-dim-square] body.science *::-webkit-scrollbar-thumb {
     border-radius: 0 !important;
 }
 
@@ -403,8 +442,8 @@ body.science.dark {
 }
 body.science.dark .dim-h1 {
     font: 400 18px/1.3 var(--display);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    letter-spacing: var(--track-label);
+    text-transform: var(--label-case);
 }
 /* an app's name in its own bar: Research's serif ("titles, greetings, the clock, card names"); Portal's Michroma
    (uppercase, wide tracking, small sizes only) */
@@ -417,8 +456,8 @@ body.science.dark .dim-h1 {
 }
 body.science.dark .dim-title {
     font: 400 12px/1.3 var(--display);
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
+    letter-spacing: var(--track-label);
+    text-transform: var(--label-case);
 }
 
 /* section heads: Research `h2{font:500 10.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--blue)}`;
@@ -426,8 +465,8 @@ body.science.dark .dim-title {
 .dim-h2,
 .dim-card-title {
     font: 500 10.5px/1.5 var(--mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    letter-spacing: var(--track-label);
+    text-transform: var(--label-case);
     color: var(--primary);
     display: flex;
     align-items: center;
@@ -435,22 +474,22 @@ body.science.dark .dim-title {
 }
 body.science.dark .dim-h2 {
     font: 400 12px/1.5 var(--display);
-    letter-spacing: 0.22em;
+    letter-spacing: var(--track-label);
 }
 /* card heads + micro-labels: Research `.box h3` mono; Portal `.box h3{font:10px var(--display);letter-spacing:.2em;color:var(--dim)}` */
 .dim-h3,
 .dim-label {
     font: 500 10.5px/1.5 var(--mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    letter-spacing: var(--track-label);
+    text-transform: var(--label-case);
     color: var(--muted-fg);
 }
 body.science.dark .dim-h3,
 body.science.dark .dim-label,
 body.science.dark .dim-card-title {
     font: 400 10px/1.5 var(--display);
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
+    letter-spacing: var(--track-label);
+    text-transform: var(--label-case);
     color: var(--dim);
 }
 .dim-muted {
@@ -536,8 +575,8 @@ body.science.dark .dim-modal > header {
     padding: 10px 14px;
     border-bottom-color: var(--line);
     font: 400 10px var(--display);
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
+    letter-spacing: var(--track-label);
+    text-transform: var(--label-case);
     color: var(--dim);
 }
 .dim-sheet > footer,
@@ -1393,8 +1432,8 @@ body.science.dark .dim-tooltip {
 .dim-table th {
     text-align: left;
     font: 500 10px/1.4 var(--mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    letter-spacing: var(--track-label);
+    text-transform: var(--label-case);
     color: var(--muted-fg);
     padding: 9px 14px;
     border-bottom: 1px solid var(--hair);
@@ -1417,7 +1456,7 @@ body.science.dark .dim-table {
 }
 body.science.dark .dim-table th {
     font: 400 10px/1.4 var(--display);
-    letter-spacing: 0.18em;
+    letter-spacing: var(--track-label);
     padding: 8px 12px;
 }
 body.science.dark .dim-table td {
@@ -1795,8 +1834,8 @@ body.science.dark * {
 }
 .dim-empty-label {
     font: 500 10.5px/1.5 var(--mono);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    letter-spacing: var(--track-label);
+    text-transform: var(--label-case);
     color: var(--primary);
 }
 .dim-empty.warn .dim-empty-label {
@@ -1834,7 +1873,7 @@ body.science.dark .dim-empty.warn {
 }
 body.science.dark .dim-empty-label {
     font: 400 10px/1.5 var(--display);
-    letter-spacing: 0.2em;
+    letter-spacing: var(--track-label);
     color: var(--dim);
 }
 body.science.dark .dim-empty-title {

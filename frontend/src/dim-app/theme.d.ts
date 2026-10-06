@@ -6,7 +6,12 @@ export type ThemeDetail = {
     /** Desktop's skin id ("portal", "research", "vibeslop", …) */
     skin: string
     corners: Corners
+    /** the theme tokens Desktop published for its skin (null off Desktop: theme.css's bundled Portal) */
+    tokens: Record<string, string> | null
 }
+/** What Desktop's shell published for its active skin (localStorage "portal.themeTokens"), or null */
+export type DesktopTheme = { skin: string; light: boolean; tokens: Record<string, string> }
+export function desktopTheme(): DesktopTheme | null
 export function desktopSkin(): string
 export function corners(): Corners
 export function isDark(): boolean

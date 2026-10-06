@@ -1,25 +1,24 @@
-// dim-app theme: the app follows dimOS Desktop's theme (Settings → Appearance), and keeps following it.
+// dim-app theme: the app looks like dimOS Desktop around it (Settings → Appearance), and keeps following it.
 //
 //     import "./theme.css"   // (or <link rel="stylesheet" href=".../theme.css">)
-//     import { initTheme, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.14.1/theme.js"
-//     initTheme()                                   // body.science [+ .dark], html[data-dim-theme], html[data-corners]
+//     import { initTheme, onThemeChange, themeColors } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.15.0/theme.js"
+//     initTheme()                                   // body.science [+ .dark] + Desktop's tokens, html[data-dim-theme]
 //     onThemeChange(({ dark }) => renderer.setClearColor(themeColors().sceneBg))
 //     .drive-bar { bottom: calc(12px + var(--dim-inset-bottom)) }   // initTheme() also keeps --dim-inset-* current
 //
-// Two palettes (theme.css): Portal (dark) and Research (light). Desktop's theme (its skin) picks one: a light skin is
-// Research, every other one Portal. Apps are served from Desktop's origin (/apps/<name>/), so Desktop's saved skin and
-// corners are in localStorage "portal.theme" / "portal.corners", and a change there reaches every open app at once (the
-// storage event); GET /api/ui-settings/themes gives Desktop's current one (and which skins are light) when the browser
-// has no saved copy. Off Desktop's origin, with neither: Portal.
+// Apps are served from Desktop's origin (/apps/<name>/), and Desktop's shell publishes its active skin's resolved theme
+// tokens in localStorage "portal.themeTokens" ({skin, light, tokens}: every variable of the theme contract, the names
+// theme.css uses). initTheme() puts those exact values inline on <body>, so the app shows the same colors, fonts, radii
+// and shadows as Desktop in every skin, and a change reaches every open app at once (the storage event). The skin's
+// light/dark picks theme.css's structural rules (body.science.dark). With nothing published (off Desktop's origin, or
+// opened before Desktop ever ran): theme.css's bundled Portal.
 
 const SKIN_KEY = "portal.theme"
 const CORNERS_KEY = "portal.corners"
-// Desktop's light skins (its ui/src/skin.ts), until /api/ui-settings/themes says which ones are
-const lightSkins = new Set(["research", "vibeslop-light", "solarpunk"])
+const TOKENS_KEY = "portal.themeTokens"
 const listeners = new Set()
 let installed = false
-let serverSkin = null
-let serverCorners = null
+let appliedTokens = []
 
 function stored(key) {
     try {
@@ -29,29 +28,46 @@ function stored(key) {
     }
 }
 
+/** The tokens Desktop published for its active skin: `{ skin, light, tokens }`, or null when there are none. */
+export function desktopTheme() {
+    try {
+        const theme = JSON.parse(stored(TOKENS_KEY) ?? "null")
+        if (theme && typeof theme.skin === "string" && theme.tokens && typeof theme.tokens === "object") {
+            return { skin: theme.skin, light: !!theme.light, tokens: theme.tokens }
+        }
+    } catch {
+        // unreadable: as if none
+    }
+    return null
+}
+
 /** Desktop's current skin id ("portal", "research", "vibeslop", …); "portal" when Desktop can't be asked. */
 export function desktopSkin() {
-    return stored(SKIN_KEY) || serverSkin || "portal"
+    return desktopTheme()?.skin || stored(SKIN_KEY) || "portal"
 }
 
-/** True when the Portal (dark) palette is showing: Desktop's skin is a dark one. */
+/** True when the page is dark: Desktop's skin is a dark one (the bundled Portal when nothing is published). */
 export function isDark() {
-    return !lightSkins.has(desktopSkin())
+    const theme = desktopTheme()
+    return theme ? !theme.light : true
 }
 
-/** "portal" or "research" */
+/** "portal" (dark) or "research" (light): which of theme.css's structural rule sets applies. */
 export function themeName() {
     return isDark() ? "portal" : "research"
 }
 
-/** Desktop's corners setting: "sharp", "rounded", or "theme" (each palette's own). */
+/** Desktop's corners setting: "sharp", "rounded", or "theme" (the skin's own). */
 export function corners() {
-    const value = stored(CORNERS_KEY) || serverCorners
+    const value = stored(CORNERS_KEY)
     return value === "sharp" || value === "rounded" ? value : "theme"
 }
 
+const isZero = (value) => !value || /^0(px)?$/.test(String(value).trim())
+
 function apply() {
-    const dark = isDark()
+    const theme = desktopTheme()
+    const dark = theme ? !theme.light : true
     const root = document.documentElement
     root.style.colorScheme = dark ? "dark" : "light"
     root.dataset.dimTheme = dark ? "portal" : "research"
@@ -63,15 +79,38 @@ function apply() {
         root.dataset.corners = corner
         root.style.setProperty("--dim-corner-radius", corner === "rounded" ? "10px" : "0px")
     }
+    if (theme) {
+        root.dataset.dimTokens = theme.skin
+        root.toggleAttribute("data-dim-square", isZero(theme.tokens["--radius-lg"]))
+        if (theme.tokens["--bg"]) {
+            root.style.setProperty("background", theme.tokens["--bg"])
+        }
+    } else {
+        delete root.dataset.dimTokens
+        root.removeAttribute("data-dim-square")
+        root.style.removeProperty("background")
+    }
     if (document.body) {
-        document.body.classList.add("science")
-        document.body.classList.toggle("dark", dark)
+        const body = document.body
+        body.classList.add("science")
+        body.classList.toggle("dark", dark)
+        for (const name of appliedTokens) {
+            body.style.removeProperty(name)
+        }
+        appliedTokens = []
+        for (const [name, value] of Object.entries(theme?.tokens ?? {})) {
+            if (name.startsWith("--") && typeof value === "string") {
+                body.style.setProperty(name, value)
+                appliedTokens.push(name)
+            }
+        }
     }
     const detail = {
         dark,
         theme: dark ? "portal" : "research",
         skin: desktopSkin(),
         corners: corner,
+        tokens: theme?.tokens ?? null,
     }
     for (const listener of listeners) {
         try {
@@ -81,32 +120,6 @@ function apply() {
         }
     }
     dispatchEvent(new CustomEvent("dim-theme", { detail }))
-}
-
-/** Asks Desktop (same origin) for its current theme and which skins are light; nothing to ask off Desktop's origin. */
-async function askDesktop() {
-    if (!location.pathname.startsWith("/apps/")) {
-        return
-    }
-    try {
-        const response = await fetch(new URL("/api/ui-settings/themes", location.origin))
-        if (!response.ok) {
-            return
-        }
-        const { themes, current, corners } = await response.json()
-        for (const theme of themes ?? []) {
-            if (theme.light) {
-                lightSkins.add(theme.id)
-            } else {
-                lightSkins.delete(theme.id)
-            }
-        }
-        serverSkin = typeof current === "string" ? current : null
-        serverCorners = typeof corners === "string" ? corners : null
-        apply()
-    } catch {
-        // Desktop not reachable: the saved copy, or Portal
-    }
 }
 
 /** The theme's faces (theme.css @font-face); loading starts in initTheme, so no view shows a fallback first. */
@@ -138,16 +151,15 @@ export function initTheme() {
         installed = true
         initInsets()
         themeFontsReady()
-        // Desktop saving a new theme or corners (in its own page or another tab) is a storage event here
+        // Desktop publishing a new skin's tokens or corners (in its own page or another tab) is a storage event here
         addEventListener("storage", (event) => {
-            if (event.key === null || event.key === SKIN_KEY || event.key === CORNERS_KEY) {
+            if (event.key === null || event.key === TOKENS_KEY || event.key === SKIN_KEY || event.key === CORNERS_KEY) {
                 apply()
             }
         })
         if (!document.body) {
             document.addEventListener("DOMContentLoaded", apply, { once: true })
         }
-        askDesktop()
     }
     apply()
     signalReady()
@@ -220,7 +232,7 @@ export function insets() {
     )
 }
 
-/** Calls `listener({ dark, theme, skin, corners })` on every change. Returns an unsubscribe function. */
+/** Calls `listener({ dark, theme, skin, corners, tokens })` on every change. Returns an unsubscribe function. */
 export function onThemeChange(listener) {
     listeners.add(listener)
     return () => listeners.delete(listener)

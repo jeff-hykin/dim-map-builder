@@ -2,27 +2,24 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <!-- dim-app first-paint (dim-app vendor.js keeps this block current): the theme's page color before any CSS or JS
-             loads, so the app never flashes white. Portal (dark) #05070d, Research (light) paper #f5f4ef; Desktop's saved
-             theme (localStorage "portal.theme"; a light skin is Research), as theme.js picks, else Portal. -->
+        <!-- dim-app first-paint (dim-app vendor.js keeps this block current): the page color before any CSS or JS loads, so
+             the app never flashes white: Desktop's published --bg (localStorage "portal.themeTokens", as theme.js applies it),
+             else the bundled Portal #05070d. -->
         <style>
             html {
                 background: #05070d;
                 color-scheme: dark;
             }
-            html[data-dim-first-paint="light"] {
-                background: #f5f4ef;
-                color-scheme: light;
-            }
         </style>
         <script>
             try {
-                const skin = localStorage.getItem("portal.theme")
-                if (["research", "vibeslop-light", "solarpunk"].includes(skin)) {
-                    document.documentElement.dataset.dimFirstPaint = "light"
+                const theme = JSON.parse(localStorage.getItem("portal.themeTokens") || "null")
+                if (theme && theme.tokens && theme.tokens["--bg"]) {
+                    document.documentElement.style.background = theme.tokens["--bg"]
+                    document.documentElement.style.colorScheme = theme.light ? "light" : "dark"
                 }
             } catch {
-                // storage unavailable: Portal
+                // storage unavailable, or nothing published: Portal
             }
         </script>
         <!-- /dim-app first-paint -->
