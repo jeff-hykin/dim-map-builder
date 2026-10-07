@@ -14,8 +14,6 @@ export interface ZenohInfo {
     apps: string
     zenohPrefix?: string
     zenohGatewayUrl: string
-    /** deprecated: the gateway at its old path, /zenoh-web */
-    zenohWebUrl: string
     client: string
     up: boolean
 }
