@@ -565,7 +565,8 @@ export function App() {
     return (
         <div className={`app mode-${mode} ${sliding ? "sliding" : ""}`}>
             <header className="topbar">
-                <span className="dim-title title">Map Editor</span>
+                {/* inside Desktop, its window bar already names the app */}
+                {window.parent === window && <span className="dim-title title">Map Editor</span>}
                 <button type="button" className="dim-btn sm icon recording-name" title={session ? `${session.recordingPath} (open another)` : "Pick a recording"} onClick={() => setModal("open")} data-action="open">
                     {session ? <><Icon name="chevron-down" /> {session.name}</> : "Pick a recording…"}
                 </button>
