@@ -29,7 +29,7 @@ pub async fn post(base: &str, path: &str, body: &Value) -> Result<Value> {
 
 /// Backend → page (Desktop's docs/events.md): forwards every event the app emits to Desktop's relay,
 /// `POST <desktopUrl>/desktop/frontend/<name>/events`, which publishes it on `<ns>/apps/<name>/frontend/events` for the
-/// page's zenoh-web connection (dim-app's appEvents). One task, one POST at a time, so events arrive in order; a failure
+/// page's zenoh-gateway connection (dim-app's appEvents). One task, one POST at a time, so events arrive in order; a failure
 /// is logged once per message and never stops it.
 pub fn spawn_relay(app: std::sync::Arc<crate::app::App>, desktop_url: String, name: String) {
     let path = relay_path(&name, "events");

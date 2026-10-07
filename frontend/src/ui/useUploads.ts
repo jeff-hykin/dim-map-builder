@@ -1,5 +1,5 @@
 // Uploads to Dimensional cloud: Desktop's queue (../../dimos/uploads), read once and again whenever the dimos server says
-// it changed (its zenoh events <ns>/dimos/events/upload, uploads, upload-removed, on the page's one zenoh-web
+// it changed (its zenoh events <ns>/dimos/events/upload, uploads, upload-removed, on the page's one zenoh-gateway
 // connection; also after that connection comes back), so uploads the agent starts show up too; plus the login flow.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, uploads as uploadsApi, type CloudAccount, type Upload } from "../core/api.ts"

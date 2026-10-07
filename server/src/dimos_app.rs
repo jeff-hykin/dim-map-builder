@@ -13,6 +13,8 @@ pub struct DimosApp {
     pub path: Option<String>,
     pub data_dir: Option<String>,
     pub desktop_url: Option<String>,
+    pub zenoh_gateway_url: Option<String>,
+    /// deprecated: the gateway at its old path, /zenoh-web
     pub zenoh_web_url: Option<String>,
     pub zenoh_connect: Option<String>,
     pub dimos_dir: Option<String>,
@@ -43,13 +45,14 @@ mod tests {
 
     #[test]
     fn reads_desktops_json() {
-        let app = parse(r#"{"version":1,"name":"b","socket":"/s/b.sock","url":"http://127.0.0.1:7341/apps/b/","path":"/apps/b/","dataDir":"/d/b","desktopUrl":"http://127.0.0.1:7341","zenohConnect":"","later":"ignored"}"#).unwrap();
+        let app = parse(r#"{"version":1,"name":"b","socket":"/s/b.sock","url":"http://127.0.0.1:7341/apps/b/","path":"/apps/b/","dataDir":"/d/b","desktopUrl":"http://127.0.0.1:7341","zenohGatewayUrl":"/zenoh-gateway","zenohConnect":"","later":"ignored"}"#).unwrap();
         assert_eq!(app.version, 1);
         assert_eq!(app.name.as_deref(), Some("b"));
         assert_eq!(app.socket.as_deref(), Some("/s/b.sock"));
         assert_eq!(app.data_dir.as_deref(), Some("/d/b"));
         assert_eq!(app.desktop_url.as_deref(), Some("http://127.0.0.1:7341"));
         assert_eq!(app.zenoh_connect.as_deref(), Some(""));
+        assert_eq!(app.zenoh_gateway_url.as_deref(), Some("/zenoh-gateway"));
         assert_eq!(app.zenoh_web_url, None);
     }
 }

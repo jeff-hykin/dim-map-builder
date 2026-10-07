@@ -1,6 +1,6 @@
 // Log in to Dimensional cloud: Desktop starts dimos's device login, we show the page to open and the code to enter
 // there (from any signed-in browser: this laptop, a phone), and wait until it's approved: the dimos server says so on
-// its zenoh event <ns>/dimos/events/cloud-login (the page's one zenoh-web connection; re-read after a reconnect).
+// its zenoh event <ns>/dimos/events/cloud-login (the page's one zenoh-gateway connection; re-read after a reconnect).
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, type LoginState } from "../core/api.ts"
 import { getZenoh } from "../dim-app/zenoh.js"

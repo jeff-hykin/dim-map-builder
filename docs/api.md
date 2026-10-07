@@ -50,7 +50,7 @@ voxels), `GET api/sessions/{id}/preview.bin` (the raw recording at a glance; 202
 api/sessions/{id}/view` (the page reports its camera and UI state, saved with the session), `POST api/captures/{n}` (the
 page answering a screenshot request). Events reach the page over zenoh (Desktop's docs/events.md): the server POSTs each
 to Desktop's relay (`/desktop/frontend/<name>/events`), which publishes it on `<ns>/apps/<name>/frontend/events`, and
-the page hears it on its one zenoh-web connection (dim-app's appEvents), in order: `job`, `session`, `preview`,
+the page hears it on its one zenoh-gateway connection (dim-app's appEvents), in order: `job`, `session`, `preview`,
 `opened`, `discarded`, `ui`, `setView`, `capture`, `upload`. After that connection comes back the page re-reads.
 
 Jobs: `{ id, kind: "build" | "preview" | "save", state: "running" | "done" | "failed" | "cancelled", progress: { stage,
@@ -120,7 +120,7 @@ type Upload = {
   waits for the save job, then queues it) or "Upload as last saved".
 - The page reads `GET /dimos/uploads` once, then follows the dimos server's zenoh events (`<ns>/dimos/events/upload`
   carries the whole upload, progress included; `uploads` and `upload-removed` make it re-read), and re-reads after its
-  zenoh-web connection comes back. No polling.
+  zenoh-gateway connection comes back. No polling.
 - A 404 / 405 from these means a Desktop from before them: the page says it needs a newer Desktop.
 - Page errors go to Desktop's error feed (`POST ../../api/errors`, dim-app `errors.js`) for its agent.
 

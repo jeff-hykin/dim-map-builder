@@ -28,6 +28,10 @@ pub struct Args {
     port: Option<u16>,
     #[arg(long, env = "DIMOS_DESKTOP_URL", default_value = "")]
     desktop_url: String,
+    /// the zenoh gateway (DIMOS_APP's zenohGatewayUrl)
+    #[arg(long, default_value = "")]
+    zenoh_gateway_url: String,
+    /// deprecated: older Desktops' zenoh-web 0.4, which the zenoh-gateway 0.5 client doesn't speak
     #[arg(long, env = "ZENOH_WEB_URL", default_value = "")]
     zenoh_web_url: String,
     #[arg(long, env = "ZENOH_CONNECT", default_value = "")]
@@ -68,6 +72,7 @@ async fn main() -> Result<()> {
         args.data = path(&app.data_dir).or(args.data);
         args.recordings = path(&app.recordings_dir).or(args.recordings);
         set(&mut args.desktop_url, &app.desktop_url);
+        set(&mut args.zenoh_gateway_url, &app.zenoh_gateway_url);
         set(&mut args.zenoh_web_url, &app.zenoh_web_url);
         set(&mut args.zenoh_connect, &app.zenoh_connect);
         set(&mut args.dimos_dir, &app.dimos_dir);
