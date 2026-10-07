@@ -1,6 +1,6 @@
 // The standard way an app's backend pushes events to its page (Desktop's docs/events.md): the backend publishes each
 // JSON event on its frontend topic `events` (`publishFrontend("events", event)`, or DimAppBackend's publishEvent), and
-// the page hears it on its one zenoh-web connection, in order (reliable delivery, one key).
+// the page hears it on its one zenoh-gateway connection, in order (reliable delivery, one key).
 //
 //     import { appEvents } from "./dim-app/events.js"
 //     const stop = appEvents((event) => { ... }, { onOpen, onClose })

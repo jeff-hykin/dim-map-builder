@@ -1,5 +1,5 @@
 // Topic checking shared by pages (zenoh.js) and servers (frontend_publish.js, backend_state.js), kept apart from zenoh.js
-// so a backend that publishes never pulls in the browser's zenoh-web client.
+// so a backend that publishes never pulls in the browser's zenoh-gateway client.
 
 /** `<topic…>` chunks the relay accepts (letters, digits, `-`, `_`, `.`); `*` / `**` allowed for subscribing. */
 export function checkTopic(topic, { wildcards = false } = {}) {

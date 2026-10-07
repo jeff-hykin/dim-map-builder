@@ -1,36 +1,38 @@
 title: Map Editor
 spec-version: v1.0 # the dimos.yaml spec version this file follows
-# Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams.
-# Dimensional cloud: log in and queue uploads of the recording (these need a Desktop with cloud uploads; an older
-# Desktop rejects unknown dimos-api entries, so it won't install this version).
-dimos-api:
-    - GET /recordings
-    - GET /recordings/{id}
-    - GET /dimos/cloud/account
-    - POST /dimos/cloud/login
-    - GET /dimos/cloud/login
-    - DELETE /dimos/cloud/login
-    - POST /dimos/cloud/logout
-    - GET /dimos/uploads
-    - POST /dimos/uploads
-    - DELETE /dimos/uploads
-    - DELETE /dimos/uploads/{id}
-    - POST /dimos/uploads/{id}/retry
-    - POST /api/notifications
-# the dim-app SDK's zenoh client (backend state, events): /zenoh-web and how it finds it
-zenoh-web: ">=0.4 <0.5"
-# what its server answers only its own pages (its agent: endpoints are the public API)
-private:
-    - api/state/*
-    - api/captures/*
-    - api/sessions/*
-    - api/ui/*
-    - api/events/*
+uses:
+    # Dimensional cloud: log in and queue uploads of the recording (these need a Desktop with cloud uploads; an older
+    # Desktop doesn't serve them, so it won't install this version).
+    "@dimos-gateway":
+        - GET /cloud/account
+        - POST /cloud/login
+        - GET /cloud/login
+        - DELETE /cloud/login
+        - POST /cloud/logout
+        - GET /uploads
+        - POST /uploads
+        - DELETE /uploads
+        - DELETE /uploads/{id}
+        - POST /uploads/{id}/retry
+    # Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams.
+    "@desktop-gateway":
+        - GET /recordings
+        - GET /recordings/{id}
+        - POST /api/notifications
+    # the dim-app SDK's zenoh client (backend state, events): the zenoh bridge and how it finds it
+    "@zenoh-gateway": ">=0.4 <0.5"
 # Desktop's nix builds of this app pull from this cache (CI fills it)
 caches:
     - url: https://dimos-desktop.cachix.org
       key: "dimos-desktop.cachix.org-1:A4P35aGJGmCan92LWyamtSFXMqaVE+VRFYnrJ8QMTeQ="
-agent:
+provides:
+    # what its server answers only its own pages (its endpoints: below are the public API)
+    private:
+        - api/state/*
+        - api/captures/*
+        - api/sessions/*
+        - api/ui/*
+        - api/events/*
     description: >-
         Map Editor: build, clean, annotate and save a 3D voxel map of a robot's recording, in the 'map' frame: meters,
         +z up, the floor of the main storey near z = 0 once levelled. Session routes take {id}: `current` is the

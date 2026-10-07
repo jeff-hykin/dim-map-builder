@@ -1,4 +1,4 @@
-// A page's one connection to Desktop's zenoh-web bridge (Desktop's docs/events.md): backend → frontend is always zenoh,
+// A page's one connection to Desktop's zenoh-gateway (Desktop's docs/events.md): backend → frontend is always zenoh,
 // frontend → backend is plain HTTP. Every subscription on a page shares this one connection (a module singleton, kept on
 // globalThis so two copies of dim-app on one page share it too).
 //
@@ -9,7 +9,7 @@
 //     zenoh.onReconnect(() => reloadEverything()) // events published while the link was down are gone
 //
 // Where things are comes from Desktop's `GET /api/desktop/zenoh?app=<name>` (relative to the app:
-// `../../api/desktop/zenoh`). The client is zenoh_web_client.js (vendored, so nothing loads from the network); an app
+// `../../api/desktop/zenoh`). The client is zenoh_gateway_client.js (vendored, so nothing loads from the network); an app
 // that already has its own copy passes `connect`. Discovery and connecting retry with backoff (0.5 s doubling to 10 s);
 // once connected the client reconnects by itself and its subscriptions come back on their own.
 
@@ -56,9 +56,9 @@ function parsePayload(message, parse) {
 }
 
 class AppZenoh {
-    /** @type {any} the discovery answer ({ namespace, desktop, dimos, apps, zenohPrefix?, zenohWebUrl, client, up }) */
+    /** @type {any} the discovery answer ({ namespace, desktop, dimos, apps, zenohPrefix?, zenohGatewayUrl, client, up }) */
     info = null
-    /** @type {any} the zenoh-web client (ZenohWeb) once connected */
+    /** @type {any} the zenoh-gateway client (ZenohGateway) once connected */
     client = null
     /** @type {"connecting" | "connected" | "degraded" | "lost"} */
     state = "connecting"
@@ -122,11 +122,11 @@ class AppZenoh {
             }
             return await response.json()
         })
-        const connect = this.#options.connect ?? (await import("./zenoh_web_client.js")).connect
-        const bridge = this.#options.zenohWebUrl ?? this.info.zenohWebUrl ?? "/zenoh-web"
-        const url = /^[a-z]+:\/\//i.test(bridge) ? bridge : new URL(bridge.replace(/^\/+/, ""), this.base).href
+        const connect = this.#options.connect ?? (await import("./zenoh_gateway_client.js")).connect
+        const gateway = this.#options.zenohGatewayUrl ?? this.info.zenohGatewayUrl ?? "/zenoh-gateway"
+        const url = /^[a-z]+:\/\//i.test(gateway) ? gateway : new URL(gateway.replace(/^\/+/, ""), this.base).href
         this.client = await this.#retry(
-            "connecting to zenoh-web",
+            "connecting to zenoh-gateway",
             () => connect(url, this.#options.connectOptions ?? {}),
         )
         this.client.onState((state) => this.#setState(state))
@@ -177,9 +177,9 @@ class AppZenoh {
     }
 
     /**
-     * A raw subscription on the shared connection: `callback(message)` with zenoh-web's `{ key, bytes, timestamp, … }`.
+     * A raw subscription on the shared connection: `callback(message)` with zenoh-gateway's `{ key, bytes, timestamp, … }`.
      * `key` is a key expression, or a function of the discovery answer (for keys under `<ns>`). Subscriptions to the
-     * same key with the same options share one zenoh-web channel.
+     * same key with the same options share one zenoh-gateway channel.
      * @returns {() => void} unsubscribe
      */
     subscribe(key, options, callback) {
@@ -296,11 +296,11 @@ class AppZenoh {
 }
 
 /**
- * The page's one zenoh-web connection (created on the first call; later calls' options are ignored).
+ * The page's one zenoh-gateway connection (created on the first call; later calls' options are ignored).
  * @param {{ app?: string, href?: string, base?: string, connect?: (url: string, options: object) => Promise<any>,
- *   connectOptions?: object, zenohWebUrl?: string, fetch?: typeof fetch }} [options]
- *   `app`: the install name (default: from /apps/<name>/ in the URL); `connect`: a zenoh-web client's connect (default:
- *   the vendored zenoh_web_client.js); `connectOptions`: passed to it (e.g. `{ heartbeatHz: 10 }` for deadman publishers)
+ *   connectOptions?: object, zenohGatewayUrl?: string, fetch?: typeof fetch }} [options]
+ *   `app`: the install name (default: from /apps/<name>/ in the URL); `connect`: a zenoh-gateway client's connect
+ *   (default: the vendored zenoh_gateway_client.js); `connectOptions`: passed to it (e.g. `{ heartbeatHz: 10 }` for deadman publishers)
  * @returns {AppZenoh}
  */
 export function getZenoh(options = {}) {

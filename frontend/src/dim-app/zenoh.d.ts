@@ -13,6 +13,8 @@ export interface ZenohInfo {
     dimos: string
     apps: string
     zenohPrefix?: string
+    zenohGatewayUrl: string
+    /** deprecated: the gateway at its old path, /zenoh-web */
     zenohWebUrl: string
     client: string
     up: boolean
@@ -70,7 +72,7 @@ export interface GetZenohOptions {
     base?: string
     connect?: (url: string, options: Record<string, unknown>) => Promise<unknown>
     connectOptions?: Record<string, unknown>
-    zenohWebUrl?: string
+    zenohGatewayUrl?: string
     fetch?: typeof fetch
 }
 export function appBase(href: string): { base: string; app: string | null }

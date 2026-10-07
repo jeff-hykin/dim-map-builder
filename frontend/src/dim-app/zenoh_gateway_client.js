@@ -2,11 +2,11 @@
 // deno-fmt-ignore-file
 // @ts-nocheck
 /* eslint-disable */
-// zenoh-web's browser client (https://github.com/jeff-hykin/zenoh-web, client/zenoh_web.ts at 63b72dd, the commit Desktop's
-// bridge is built from), as esm.sh's development bundle: plain JS, no imports, so it loads offline. zenoh.js imports it.
-// Refresh: curl -sL https://esm.sh/gh/jeff-hykin/zenoh-web@<commit>/es2022/client/zenoh_web.ts.development.bundle.mjs
-/* esm.sh - github:jeff-hykin/zenoh-web#63b72dd/client/zenoh_web.ts */
-// node_modules/jeff-hykin/zenoh-web/client/vendor/fzstd.ts
+// zenoh-gateway's browser client (https://github.com/jeff-hykin/zenoh-gateway, client/zenoh_gateway.ts at 28c17f0, the
+// commit Desktop's gateway is built from), as esm.sh's development bundle: plain JS, no imports, so it loads offline.
+// zenoh.js imports it. Refresh: curl -sL https://esm.sh/gh/jeff-hykin/zenoh-gateway@<commit>/es2022/client/zenoh_gateway.ts.development.bundle.mjs
+/* esm.sh - github:jeff-hykin/zenoh-gateway#28c17f0/client/zenoh_gateway.ts */
+// node_modules/jeff-hykin/zenoh-gateway/client/vendor/fzstd.ts
 var ab = ArrayBuffer;
 var u8 = Uint8Array;
 var u16 = Uint16Array;
@@ -567,7 +567,7 @@ function decompress(dat, buf) {
   return cct(bufs, ol);
 }
 
-// node_modules/jeff-hykin/zenoh-web/client/zenoh_web.ts
+// node_modules/jeff-hykin/zenoh-gateway/client/zenoh_gateway.ts
 var Priority = Object.freeze({
   REAL_TIME: 1,
   INTERACTIVE_HIGH: 2,
@@ -577,20 +577,28 @@ var Priority = Object.freeze({
   DATA_LOW: 6,
   BACKGROUND: 7
 });
-var codecDecoders = /* @__PURE__ */ new Map();
-function registerCodec(name, decoder) {
+var encodingDecoders = /* @__PURE__ */ new Map();
+function registerEncoding(name, decoder) {
   if (typeof name !== "string" || name.length === 0) {
-    throw new TypeError(`zenoh-web: registerCodec needs a codec name, got ${String(name)}`);
+    throw new TypeError(`zenoh-gateway: registerEncoding needs an encoding name, got ${String(name)}`);
   }
   if (typeof decoder !== "function") {
-    throw new TypeError(`zenoh-web: registerCodec("${name}") needs a decoder function`);
+    throw new TypeError(`zenoh-gateway: registerEncoding("${name}") needs a decoder function`);
   }
-  const existing = codecDecoders.get(name);
+  const existing = encodingDecoders.get(name);
   if (existing !== void 0 && existing !== decoder) {
-    throw new Error(`zenoh-web: a decoder for codec "${name}" is already registered`);
+    throw new Error(`zenoh-gateway: a decoder for encoding "${name}" is already registered`);
   }
-  codecDecoders.set(name, decoder);
+  encodingDecoders.set(name, decoder);
 }
+function channelOf(options, encodings) {
+  if (options.channel !== void 0) {
+    return options.channel;
+  }
+  const output = options.encoding === void 0 ? void 0 : encodings.find((info) => info.name === options.encoding)?.output;
+  return output === "video" ? "video-h264" : output === "audio" ? "audio-opus" : "data";
+}
+var channelMimes = { "video-h264": "video/H264", "video-vp8": "video/VP8", "video-vp9": "video/VP9", "video-av1": "video/AV1", "audio-opus": "audio/opus" };
 var backedUpBytes = 64 * 1024;
 var resumeBytes = 16 * 1024;
 var gatherTimeoutMs = 3e3;
@@ -641,6 +649,18 @@ function toBase64(bytes) {
 }
 var keyDecoder = new TextDecoder();
 var zstdFlag = 1;
+var fieldsFlag = 2;
+var deleteFlag = 4;
+var metaFlag = 8;
+function splitMeta(message) {
+  const view = new DataView(message.buffer, message.byteOffset, message.byteLength);
+  const encodingLength = view.getUint16(0, true);
+  const encoding = keyDecoder.decode(message.subarray(2, 2 + encodingLength));
+  const attachmentLength = view.getUint32(2 + encodingLength, true);
+  const attachmentStart = 6 + encodingLength;
+  const attachment = attachmentLength > 0 ? message.slice(attachmentStart, attachmentStart + attachmentLength) : void 0;
+  return { encoding, attachment, payload: message.subarray(attachmentStart + attachmentLength) };
+}
 function decodeFrame(buffer) {
   const view = new DataView(buffer);
   const keyLength = view.getUint16(0, true);
@@ -662,7 +682,7 @@ function decodeFields(message) {
   const bytes = message.byteOffset % 8 === 0 ? message : message.slice();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes[0] !== 1) {
-    throw new Error(`zenoh-web: unknown fields format version ${bytes[0]}`);
+    throw new Error(`zenoh-gateway: unknown fields format version ${bytes[0]}`);
   }
   const fields = {};
   let offset = 2;
@@ -679,7 +699,7 @@ function decodeFields(message) {
     }
     const TypedArray = fieldArrays[dtype];
     if (TypedArray === void 0) {
-      throw new Error(`zenoh-web: field ${name} has unknown dtype ${dtype}`);
+      throw new Error(`zenoh-gateway: field ${name} has unknown dtype ${dtype}`);
     }
     const scaling = (flags & 1) === 1 ? Array.from({ length: 2 * components }, (_, index) => view.getFloat64(offset + 8 * index, true)) : null;
     offset += scaling === null ? 0 : 16 * components;
@@ -755,7 +775,7 @@ function waitIceGathering(peer) {
 var Acceptance = class {
   promise;
   settled = false;
-  #bridgeAccepted = false;
+  #gatewayAccepted = false;
   #channelOpen = false;
   #resolve = () => {
   };
@@ -769,8 +789,8 @@ var Acceptance = class {
     this.promise.catch(() => {
     });
   }
-  bridgeAccepted() {
-    this.#bridgeAccepted = true;
+  gatewayAccepted() {
+    this.#gatewayAccepted = true;
     this.#settleIfReady();
   }
   channelOpened() {
@@ -778,7 +798,7 @@ var Acceptance = class {
     this.#settleIfReady();
   }
   #settleIfReady() {
-    if (!this.settled && this.#bridgeAccepted && this.#channelOpen) {
+    if (!this.settled && this.#gatewayAccepted && this.#channelOpen) {
       this.settled = true;
       this.#resolve();
     }
@@ -802,9 +822,9 @@ var Endpoint = class {
   channel = null;
   closed = false;
   rejectionReason = null;
-  bridgeStats = null;
+  gatewayStats = null;
   acceptance = new Acceptance();
-  /** Resolves once the bridge accepted this channel; rejects with the bridge's reason otherwise. */
+  /** Resolves once the gateway accepted this channel; rejects with the gateway's reason otherwise. */
   ready() {
     return this.acceptance.promise;
   }
@@ -817,11 +837,11 @@ var Endpoint = class {
     waitOpen(channel, openTimeoutMs).then(() => acceptance.channelOpened(), (error) => acceptance.reject(error));
   }
   _accepted() {
-    this.acceptance.bridgeAccepted();
+    this.acceptance.gatewayAccepted();
   }
   _rejected(reason) {
     this.rejectionReason = reason;
-    this.acceptance.reject(new Error(`zenoh-web: bridge rejected ${this.key}: ${reason}`));
+    this.acceptance.reject(new Error(`zenoh-gateway: gateway rejected ${this.key}: ${reason}`));
     this.owner._forget(this);
   }
   close() {
@@ -838,19 +858,19 @@ var Subscription = class extends Endpoint {
     super(owner, id, key);
     this.options = options;
     this.callback = callback;
-    this.codecKind = options.codec === void 0 ? null : owner.codecs.find((info) => info.name === options.codec)?.output ?? "data";
+    this.channelName = channelOf(options, owner.encodings);
   }
   options;
   callback;
   received = 0;
   /** chunked messages dropped incomplete (lost chunk or abandoned for a newer message) */
   partialDropped = 0;
-  /** codec payloads that failed to decode in this page */
+  /** encoded payloads that failed to decode in this page */
   decodeErrors = 0;
-  /** video and audio codecs: the track (also on each message as `mediaStream`) */
+  /** video and audio channels: the track (also on each message as `mediaStream`) */
   mediaStream = null;
-  /** where the codec's output arrives (null: no codec, raw bytes) */
-  codecKind;
+  /** what the messages travel on */
+  channelName;
   #warnedNoDecoder = false;
   #transceiver = null;
   /** drops before the current channel (each new channel restarts seq at 0) */
@@ -871,7 +891,7 @@ var Subscription = class extends Endpoint {
     }
     return this.acceptance.settled ? "open" : "connecting";
   }
-  /** messages the bridge accepted for us but we never got whole (queue, age, maxHz, network) */
+  /** messages the gateway accepted for us but we never got whole (queue, age, maxHz, network) */
   get dropped() {
     const span = this.#maxSeq < 0 ? 0 : this.#maxSeq - this.#firstSeq + 1;
     return this.#droppedBefore + Math.max(0, span - this.#receivedOnChannel);
@@ -885,21 +905,28 @@ var Subscription = class extends Endpoint {
     this.#bytesSinceAck = 0;
     this.#partials.clear();
     const acceptance = this.beginAttempt();
-    if (this.codecKind !== "video" && this.codecKind !== "audio") {
+    const channelName = this.channelName;
+    if (channelName === "data") {
       this.#openChannel(peer, acceptance, null);
       return;
     }
     this.#transceiver = null;
-    const codec = String(this.options.codec);
-    this.owner._acquireTransceiver(peer, this.codecKind, codec).then((transceiver) => {
+    const kind = channelName === "audio-opus" ? "audio" : "video";
+    const mime = channelMimes[channelName];
+    const playable = globalThis.RTCRtpReceiver?.getCapabilities?.(kind)?.codecs.some((codec) => codec.mimeType.toLowerCase() === mime.toLowerCase()) ?? true;
+    if (!playable) {
+      acceptance.reject(new Error(`zenoh-gateway: this browser can't play ${channelName} (no ${mime} decoder); pick another channel`));
+      return;
+    }
+    this.owner._acquireTransceiver(peer, kind, channelName).then((transceiver) => {
       if (this.closed || acceptance !== this.acceptance) {
-        this.owner._releaseTransceiver(peer, codec, transceiver);
+        this.owner._releaseTransceiver(peer, channelName, transceiver);
         return;
       }
       this.#transceiver = transceiver;
       this.mediaStream = new MediaStream([transceiver.receiver.track]);
       this.#openChannel(peer, acceptance, transceiver.mid);
-    }, (error) => acceptance.reject(new Error(`zenoh-web: ${this.codecKind} renegotiation for ${this.key} failed: ${error.message}`)));
+    }, (error) => acceptance.reject(new Error(`zenoh-gateway: ${channelName} renegotiation for ${this.key} failed: ${error.message}`)));
   }
   #openChannel(peer, acceptance, mid) {
     const label = JSON.stringify({ type: "sub", key: this.key, id: this.id, opts: this.options, ...mid === null ? {} : { mid } });
@@ -920,13 +947,13 @@ var Subscription = class extends Endpoint {
     super.close();
     const peer = this.owner._peer;
     if (this.#transceiver && peer) {
-      this.owner._releaseTransceiver(peer, String(this.options.codec), this.#transceiver);
+      this.owner._releaseTransceiver(peer, this.channelName, this.#transceiver);
     }
     this.#transceiver = null;
   }
   #onFrame(channel, frame, frameBytes) {
     if (frame.chunkCount <= 1) {
-      this.#deliver({ key: frame.key, bytes: frame.chunk, timestamp: frame.timestamp, seq: frame.seq }, frame.flags);
+      this.#deliver({ key: frame.key, kind: "put", bytes: frame.chunk, timestamp: frame.timestamp, seq: frame.seq }, frame.flags);
     } else {
       this.#addChunk(frame);
     }
@@ -961,7 +988,7 @@ var Subscription = class extends Endpoint {
         this.partialDropped++;
       }
     }
-    this.#deliver({ key: partial.key, bytes, timestamp: partial.timestamp, seq: frame.seq }, partial.flags);
+    this.#deliver({ key: partial.key, kind: "put", bytes, timestamp: partial.timestamp, seq: frame.seq }, partial.flags);
   }
   #evictPartials(limit) {
     while (this.#partials.size > limit) {
@@ -970,26 +997,30 @@ var Subscription = class extends Endpoint {
       this.partialDropped++;
     }
   }
-  /** Adds the codec's decoded form; false if it can't be decoded. */
-  #decode(message) {
+  /** Adds the encoding's decoded form; false if it can't be decoded. */
+  #decode(message, flags) {
     try {
-      if (this.codecKind === "video" || this.codecKind === "audio") {
-        message.video = this.codecKind === "video" ? decodeVideoFrameInfo(message.bytes) : void 0;
+      if (this.channelName !== "data") {
+        message.video = this.channelName.startsWith("video-") ? decodeVideoFrameInfo(message.bytes) : void 0;
         message.mediaStream = this.mediaStream ?? void 0;
         return true;
       }
-      const name = String(this.options.codec);
-      const decoder = codecDecoders.get(name) ?? (this.codecKind === "fields" ? decodeFields : void 0);
+      if ((flags & fieldsFlag) !== 0) {
+        message.decoded = decodeFields(message.bytes);
+        return true;
+      }
+      const name = String(this.options.encoding);
+      const decoder = encodingDecoders.get(name);
       if (decoder !== void 0) {
         message.decoded = decoder(message.bytes, message);
       } else if (!this.#warnedNoDecoder) {
         this.#warnedNoDecoder = true;
-        console.warn(`zenoh-web: no decoder registered for codec "${name}" (registerCodec("${name}", decoder)); msg.bytes carries its encoded bytes`);
+        console.info(`zenoh-gateway: no decoder registered for encoding "${name}" (registerEncoding("${name}", decoder)); msg.bytes carries its bytes`);
       }
       return true;
     } catch (error) {
       this.decodeErrors++;
-      console.error(`zenoh-web: ${this.options.codec} payload on ${message.key} did not decode`, error);
+      console.error(`zenoh-gateway: ${this.options.encoding} payload on ${message.key} did not decode`, error);
       return false;
     }
   }
@@ -999,11 +1030,25 @@ var Subscription = class extends Endpoint {
         message.bytes = decompress(message.bytes);
       } catch (error) {
         this.decodeErrors++;
-        console.error(`zenoh-web: zstd message on ${message.key} did not decompress`, error);
+        console.error(`zenoh-gateway: zstd message on ${message.key} did not decompress`, error);
         return;
       }
     }
-    if (this.codecKind !== null && !this.#decode(message)) {
+    message.kind = (flags & deleteFlag) !== 0 ? "delete" : "put";
+    if ((flags & metaFlag) !== 0) {
+      try {
+        const { encoding, attachment, payload } = splitMeta(message.bytes);
+        message.encoding = encoding;
+        message.attachment = attachment;
+        message.bytes = payload;
+      } catch (error) {
+        this.decodeErrors++;
+        console.error(`zenoh-gateway: bad sample header on ${message.key}`, error);
+        return;
+      }
+    }
+    if (message.kind === "delete") {
+    } else if (this.options.encoding !== void 0 && !this.#decode(message, flags)) {
       return;
     }
     this.received++;
@@ -1017,10 +1062,10 @@ var Subscription = class extends Endpoint {
     try {
       this.callback(message);
     } catch (error) {
-      console.error(`zenoh-web: subscriber callback for ${this.key} threw`, error);
+      console.error(`zenoh-gateway: subscriber callback for ${this.key} threw`, error);
     }
   }
-  /** Tells the bridge we processed every frame up to frameId: 4 bytes, little endian. */
+  /** Tells the gateway we processed every frame up to frameId: 4 bytes, little endian. */
   #consumed(channel, frameId, byteLength) {
     if (frameId > this.#highestConsumedFrame) {
       this.#highestConsumedFrame = frameId;
@@ -1065,7 +1110,7 @@ var Publisher = class extends Endpoint {
   /** why the deadman fired: "heartbeat" | "disconnected" | "shutdown" */
   tripReason = null;
   deadmanArmed = false;
-  /** why the bridge is dropping this publisher's puts right now (another client's lease), else null */
+  /** why the gateway is dropping this publisher's puts right now (another client's lease), else null */
   blocked = null;
   #last = null;
   /** stamped frames waiting for the channel (reliable: all, latest: only the newest) */
@@ -1108,16 +1153,20 @@ var Publisher = class extends Endpoint {
   }
   #checkUsable() {
     if (this.closed) {
-      throw new Error(`zenoh-web: publisher ${this.key} is closed`);
+      throw new Error(`zenoh-gateway: publisher ${this.key} is closed`);
     }
     if (this.rejectionReason !== null) {
-      throw new Error(`zenoh-web: publisher ${this.key} was rejected by the bridge: ${this.rejectionReason}`);
+      throw new Error(`zenoh-gateway: publisher ${this.key} was rejected by the gateway: ${this.rejectionReason}`);
     }
     if (this.tripped) {
-      throw new Error(`zenoh-web: publisher ${this.key} is tripped (deadman fired: ${this.tripReason}); create a new publisher`);
+      throw new Error(`zenoh-gateway: publisher ${this.key} is tripped (deadman fired: ${this.tripReason}); create a new publisher`);
     }
   }
   /** `timestamp`: when the value was produced, in this client's clock (`z.now()`); defaults to now. */
+  /** A zenoh delete on this publisher's key (over the control channel; needs the `publish` grant). */
+  delete(options = {}) {
+    return this.owner.delete(this.key, options);
+  }
   put(value, { timestamp } = {}) {
     this.#checkUsable();
     const bytes = toBytes(value);
@@ -1146,12 +1195,12 @@ var Publisher = class extends Endpoint {
     }
   }
   /**
-   * Stores `value` on the bridge; it is published once (REAL_TIME, reliable) if this frontend's
-   * heartbeat stops, it disconnects, or the bridge shuts down. Then this publisher is tripped.
+   * Stores `value` on the gateway; it is published once (REAL_TIME, reliable) if this frontend's
+   * heartbeat stops, it disconnects, or the gateway shuts down. Then this publisher is tripped.
    */
   setDeadman(value) {
     if (!this.owner.options.heartbeatHz) {
-      throw new Error("zenoh-web: setDeadman needs a heartbeat; connect(url, { heartbeatHz: 5, heartbeatMisses: 3 })");
+      throw new Error("zenoh-gateway: setDeadman needs a heartbeat; connect(url, { heartbeatHz: 5, heartbeatMisses: 3 })");
     }
     this.#checkUsable();
     const bytes = toBytes(value);
@@ -1181,7 +1230,7 @@ var Publisher = class extends Endpoint {
       try {
         listener(reason);
       } catch (error) {
-        console.error("zenoh-web: onTripped listener threw", error);
+        console.error("zenoh-gateway: onTripped listener threw", error);
       }
     }
   }
@@ -1235,24 +1284,24 @@ var Lease = class {
       try {
         listener(reason);
       } catch (error) {
-        console.error("zenoh-web: onLost listener threw", error);
+        console.error("zenoh-gateway: onLost listener threw", error);
       }
     }
   }
 };
-var ZenohWeb = class {
+var ZenohGateway = class {
   state = "connecting";
   /** per subscribed/published key expression */
   stats = {};
-  /** latest round trip to the bridge (heartbeat, else control ping) */
+  /** latest round trip to the gateway (heartbeat, else control ping) */
   rttMs = null;
-  /** bridge clock minus this client's clock, from the lowest-RTT recent sample */
+  /** gateway clock minus this client's clock, from the lowest-RTT recent sample */
   clockOffsetMs = null;
-  /** bridge-side heartbeat, clock and bandwidth stats */
-  bridgeStats = null;
-  /** the codecs the bridge runs, fetched on connect */
-  codecs = [];
-  /** the ICE servers in use (the bridge's unless given) */
+  /** gateway-side heartbeat, clock and bandwidth stats */
+  gatewayStats = null;
+  /** the message encodings the gateway runs, fetched on connect */
+  encodings = [];
+  /** the ICE servers in use (the gateway's unless given) */
   iceServers = [];
   /** leases held, by group */
   _leases = /* @__PURE__ */ new Map();
@@ -1267,7 +1316,7 @@ var ZenohWeb = class {
   #heartbeatPaused = false;
   #clockSamples = [];
   #endpoints = /* @__PURE__ */ new Set();
-  /** every endpoint by id, including tripped/rejected ones the bridge may still talk about */
+  /** every endpoint by id, including tripped/rejected ones the gateway may still talk about */
   #endpointsById = /* @__PURE__ */ new Map();
   #requests = /* @__PURE__ */ new Map();
   #stateListeners = /* @__PURE__ */ new Set();
@@ -1283,7 +1332,7 @@ var ZenohWeb = class {
   #markConnected = () => {
   };
   /** video transceivers of closed subscriptions, reused before adding new ones */
-  /** per codec: transceivers whose track carries its format, free for the next subscription */
+  /** per channel: transceivers whose track carries its format, free for the next subscription */
   #freeTransceivers = /* @__PURE__ */ new Map();
   constructor(url, options = {}) {
     this.url = url.replace(/\/+$/, "");
@@ -1305,11 +1354,11 @@ var ZenohWeb = class {
       try {
         listener(state);
       } catch (error) {
-        console.error("zenoh-web: state listener threw", error);
+        console.error("zenoh-gateway: state listener threw", error);
       }
     }
   }
-  /** NTP-style sample: t0/t3 in our clock, t1/t2 bridge receive/send in its clock. */
+  /** NTP-style sample: t0/t3 in our clock, t1/t2 gateway receive/send in its clock. */
   #addClockSample(t0, t1, t2, t3) {
     const rttMs = t3 - t0 - (t2 - t1);
     const offsetMs = (t1 - t0 + (t2 - t3)) / 2;
@@ -1324,7 +1373,7 @@ var ZenohWeb = class {
     this.clockOffsetMs = best.offsetMs;
     this.rttMs = rttMs;
   }
-  /** Clock-sync ping over control; also reports our current estimate to the bridge. */
+  /** Clock-sync ping over control; also reports our current estimate to the gateway. */
   async #controlPing() {
     const t0 = this.now();
     const response = await this._request({ op: "ping", t0, offsetMs: this.clockOffsetMs, rttMs: this.rttMs }, pingTimeoutMs);
@@ -1335,11 +1384,11 @@ var ZenohWeb = class {
     return this.#peer;
   }
   /**
-   * A recvonly transceiver bound to a bridge track of `codec`'s format: a free one, or a new one
-   * added through a renegotiation over `control` (the bridge answers with a track for the new m-line).
+   * A recvonly transceiver bound to a gateway track of `channel`'s format: a free one, or a new one
+   * added through a renegotiation over `control` (the gateway answers with a track for the new m-line).
    */
-  _acquireTransceiver(peer, kind, codec) {
-    const free = this.#freeTransceivers.get(peer)?.get(codec)?.pop();
+  _acquireTransceiver(peer, kind, channel) {
+    const free = this.#freeTransceivers.get(peer)?.get(channel)?.pop();
     if (free) {
       return Promise.resolve(free);
     }
@@ -1357,10 +1406,10 @@ var ZenohWeb = class {
       }
       await peer.setLocalDescription(await peer.createOffer());
       const offer = peer.localDescription;
-      const response = await this._request({ op: "renegotiate", codec, sdp: { type: offer?.type, sdp: offer?.sdp } }, openTimeoutMs);
+      const response = await this._request({ op: "renegotiate", channel, sdp: { type: offer?.type, sdp: offer?.sdp } }, openTimeoutMs);
       await peer.setRemoteDescription(response.sdp);
       if (response.mid !== transceiver.mid) {
-        throw new Error(`bridge bound mid ${String(response.mid)}, expected ${String(transceiver.mid)}`);
+        throw new Error(`gateway bound mid ${String(response.mid)}, expected ${String(transceiver.mid)}`);
       }
       return transceiver;
     };
@@ -1369,10 +1418,10 @@ var ZenohWeb = class {
     });
     return result;
   }
-  _releaseTransceiver(peer, codec, transceiver) {
+  _releaseTransceiver(peer, channel, transceiver) {
     if (peer === this.#peer && peer.connectionState !== "closed") {
       const byCodec = this.#freeTransceivers.get(peer) ?? /* @__PURE__ */ new Map();
-      byCodec.set(codec, [...byCodec.get(codec) ?? [], transceiver]);
+      byCodec.set(channel, [...byCodec.get(channel) ?? [], transceiver]);
       this.#freeTransceivers.set(peer, byCodec);
     }
   }
@@ -1388,13 +1437,16 @@ var ZenohWeb = class {
     }
     const auth = this.options.token === void 0 ? {} : { authorization: `Bearer ${this.options.token}` };
     let iceServers = this.options.iceServers;
+    let iceTransportPolicy = this.options.iceTransportPolicy;
     if (iceServers === void 0) {
-      const response = await fetch(`${this.url}/zenoh-web/ice`, { headers: auth }).catch(() => null);
+      const response = await fetch(`${this.url}/zenoh-gateway/ice`, { headers: auth }).catch(() => null);
       await this.#refuseIfUnauthorized(response);
-      iceServers = response?.ok ? (await response.json()).iceServers : [];
+      const ice = response?.ok ? await response.json() : {};
+      iceServers = ice.iceServers ?? [];
+      iceTransportPolicy ??= ice.iceTransportPolicy;
     }
     this.iceServers = iceServers;
-    const peer = new RTCPeerConnection({ iceServers, iceTransportPolicy: this.options.iceTransportPolicy ?? "all" });
+    const peer = new RTCPeerConnection({ iceServers, iceTransportPolicy: iceTransportPolicy ?? "all" });
     const control = peer.createDataChannel("control", { ordered: true });
     this.#peer = peer;
     this.#control = control;
@@ -1429,14 +1481,15 @@ var ZenohWeb = class {
       });
       await this.#refuseIfUnauthorized(response, peer);
       if (!response.ok) {
-        throw new Error(`bridge refused offer: ${response.status} ${await response.text()}`);
+        throw new Error(`gateway refused offer: ${response.status} ${await response.text()}`);
       }
       await peer.setRemoteDescription(await response.json());
       await waitOpen(control, openTimeoutMs);
-      this.codecs = Object.freeze((await this._request({ op: "codecs" }, pingTimeoutMs)).codecs);
+      this.encodings = Object.freeze((await this._request({ op: "encodings" }, pingTimeoutMs)).encodings);
       for (let index = 0; index < initialClockPings; index++) {
         await this.#controlPing();
       }
+      await this.#redeclare();
     } catch (error) {
       this.#onLost(generation);
       throw error;
@@ -1444,12 +1497,12 @@ var ZenohWeb = class {
     this.#setState("connected");
     this.#markConnected();
   }
-  /** A 401 is final: no reconnecting with a token the bridge refuses (or revoked). */
+  /** A 401 is final: no reconnecting with a token the gateway refuses (or revoked). */
   async #refuseIfUnauthorized(response, peer) {
     if (response?.status === 401) {
       peer?.close();
       this.close();
-      throw new Error(`zenoh-web: bridge refused the token: ${await response.text()}`);
+      throw new Error(`zenoh-gateway: gateway refused the token: ${await response.text()}`);
     }
   }
   #attachHeartbeat(peer) {
@@ -1473,7 +1526,7 @@ var ZenohWeb = class {
       }, 1e3 / this.options.heartbeatHz);
     }
   }
-  /** Stops sending heartbeats (the bridge then fires this frontend's deadmen); for testing deadman wiring. */
+  /** Stops sending heartbeats (the gateway then fires this frontend's deadmen); for testing deadman wiring. */
   pauseHeartbeat() {
     this.#heartbeatPaused = true;
   }
@@ -1509,7 +1562,7 @@ var ZenohWeb = class {
             await this._open();
             return;
           } catch (error) {
-            console.warn("zenoh-web: reconnect failed", error);
+            console.warn("zenoh-gateway: reconnect failed", error);
             await sleep(reconnectDelayMs);
           }
         }
@@ -1521,6 +1574,10 @@ var ZenohWeb = class {
     try {
       response = JSON.parse(text);
     } catch {
+      return;
+    }
+    if (response.event === "query" || response.event === "liveliness" || response.event === "matching") {
+      this.#routeApiEvent(response);
       return;
     }
     if (response.event !== void 0) {
@@ -1547,7 +1604,7 @@ var ZenohWeb = class {
     if (response.ok) {
       request.resolve(response);
     } else {
-      request.reject(new Error(`zenoh-web bridge: ${response.error ?? "error"}`));
+      request.reject(new Error(`zenoh-gateway: ${response.error ?? "error"}`));
     }
   }
   _request(body, timeoutMs) {
@@ -1565,7 +1622,7 @@ var ZenohWeb = class {
       control.send(JSON.stringify({ id, ...body }));
     });
   }
-  /** Options are checked by the bridge: a bad one rejects the subscription (`state`, `ready()`). */
+  /** Options are checked by the gateway: a bad one rejects the subscription (`state`, `ready()`). */
   subscribe(key, options, callback) {
     const subscription = new Subscription(this, this.#nextId++, key, { ...options }, callback);
     this.#addEndpoint(subscription);
@@ -1591,16 +1648,106 @@ var ZenohWeb = class {
     }
     this.#refreshStats(null);
   }
-  /** zenoh query. */
-  async get(key, { timeoutMs = 5e3 } = {}) {
-    const response = await this._request({ op: "get", key, timeoutMs }, timeoutMs + 2e3);
-    const replies = response.replies;
-    return replies.map((reply) => {
-      if (reply.error !== void 0) {
-        return { key: null, bytes: fromBase64(reply.error), error: true };
-      }
-      return { key: reply.key ?? null, bytes: fromBase64(reply.bytes ?? "") };
-    });
+  /** zenoh query: `key` may carry parameters after `?` (or pass `parameters`). */
+  async get(key, options = {}) {
+    const timeoutMs = options.timeoutMs ?? 5e3;
+    const response = await this._request({ op: "get", key, ...getRequestFields(options), timeoutMs }, timeoutMs + 2e3);
+    return response.replies.map(parseReply);
+  }
+  /** Queries with fixed options, like zenoh's querier. */
+  querier(key, options = {}) {
+    return new Querier(this, key, options);
+  }
+  /** One zenoh put (needs the `publish` grant). */
+  async put(key, value, options = {}) {
+    await this._request({ op: "put", key, bytes: toBase64(toBytes(value)), ...putRequestFields(options, this.clockOffsetMs) }, pingTimeoutMs);
+  }
+  /** One zenoh delete (needs the `publish` grant). */
+  async delete(key, options = {}) {
+    await this._request({ op: "delete", key, ...putRequestFields(options, this.clockOffsetMs) }, pingTimeoutMs);
+  }
+  /**
+   * Answers zenoh queries on `key` from this page (needs the `queryable` grant). The callback gets
+   * each query; reply with `query.reply(...)` (any number of times), then `query.finalize()`.
+   */
+  async declareQueryable(key, options, callback) {
+    const queryable = new Queryable(this, key, options.complete ?? false, callback);
+    await queryable._declare();
+    this.#apiHandles.add(queryable);
+    return queryable;
+  }
+  /** A liveliness token on `key`, alive until undeclared or this page goes (needs `liveliness`). */
+  async declareToken(key) {
+    const token = new LivelinessToken(this, key);
+    await token._declare();
+    this.#apiHandles.add(token);
+    return token;
+  }
+  /** Tokens appearing (`alive: true`) and going under `key`; `history` also reports the ones already alive. */
+  async livelinessSubscribe(key, options, callback) {
+    const subscriber = new LivelinessSubscriber(this, key, options.history ?? false, callback);
+    await subscriber._declare();
+    this.#apiHandles.add(subscriber);
+    return subscriber;
+  }
+  /** The keys of the liveliness tokens alive under `key`. */
+  async livelinessGet(key, { timeoutMs = 5e3 } = {}) {
+    const response = await this._request({ op: "livelinessGet", key, timeoutMs }, timeoutMs + 2e3);
+    return response.tokens;
+  }
+  /** Whether a publisher ("subscribers") or a querier ("queryables") on `key` would reach anyone now. */
+  async matchingStatus(key, target = "subscribers") {
+    const response = await this._request({ op: "matchingStatus", key, matching: target }, pingTimeoutMs + 5e3);
+    return Boolean(response.matching);
+  }
+  /** Called each time `matchingStatus(key, target)` changes. */
+  async matchingListener(key, target, callback) {
+    const listener = new MatchingListener(this, key, target, callback);
+    await listener._declare();
+    this.#apiHandles.add(listener);
+    return listener;
+  }
+  /** The gateway's zenoh session: its id, and the routers and peers it is connected to. */
+  async info() {
+    const response = await this._request({ op: "info" }, pingTimeoutMs);
+    return { zid: String(response.zid), routers: response.routers, peers: response.peers };
+  }
+  /** api handles by event and id, and events that came before their handle's id did */
+  #apiRoutes = /* @__PURE__ */ new Map();
+  #apiEarly = /* @__PURE__ */ new Map();
+  /** declared queryables, tokens and listeners: re-declared after a reconnect */
+  #apiHandles = /* @__PURE__ */ new Set();
+  _route(event, id, handler) {
+    const routeKey = `${event}:${id}`;
+    this.#apiRoutes.set(routeKey, handler);
+    for (const early of this.#apiEarly.get(routeKey) ?? []) {
+      handler(early);
+    }
+    this.#apiEarly.delete(routeKey);
+  }
+  _unroute(event, id) {
+    this.#apiRoutes.delete(`${event}:${id}`);
+  }
+  _forgetHandle(handle) {
+    this.#apiHandles.delete(handle);
+  }
+  #routeApiEvent(response) {
+    const idField = { query: "queryableId", liveliness: "subId", matching: "listenerId" }[response.event];
+    const routeKey = `${response.event}:${response[idField]}`;
+    const handler = this.#apiRoutes.get(routeKey);
+    if (handler) {
+      handler(response);
+    } else if (this.#apiEarly.size < 1e3) {
+      this.#apiEarly.set(routeKey, [...this.#apiEarly.get(routeKey) ?? [], response]);
+    }
+  }
+  /** After a reconnect the gateway has none of this page's declarations: make them again. */
+  async #redeclare() {
+    this.#apiRoutes.clear();
+    this.#apiEarly.clear();
+    for (const handle of this.#apiHandles) {
+      await handle._declare().catch((error) => console.error("zenoh-gateway: re-declaring after reconnect failed", error));
+    }
   }
   /**
    * Keys currently live on the zenoh network under `filter`, including ones never subscribed to.
@@ -1612,13 +1759,13 @@ var ZenohWeb = class {
     return response.topics;
   }
   /**
-   * Takes (or renews) the exclusive right to publish on `group`'s keys among this bridge's clients: the
+   * Takes (or renews) the exclusive right to publish on `group`'s keys among this gateway's clients: the
    * server's group, or `keys` for one it doesn't define. Needs a heartbeat; it ends when the heartbeat
    * stops, at `maxSeconds`, on disconnect, by `release()` or by force-expiry (`onLost` says which).
    */
   async lease(group, { keys, maxSeconds } = {}) {
     if (!this.options.heartbeatHz) {
-      throw new Error("zenoh-web: a lease needs a heartbeat; connect(url, { heartbeatHz: 5, heartbeatMisses: 3 })");
+      throw new Error("zenoh-gateway: a lease needs a heartbeat; connect(url, { heartbeatHz: 5, heartbeatMisses: 3 })");
     }
     const response = await this._request({ op: "lease", group, keys, maxSeconds }, pingTimeoutMs);
     const lease = new Lease(this, group, response.keys, response.expiresInMs ?? null);
@@ -1630,7 +1777,7 @@ var ZenohWeb = class {
   async expireLease(group) {
     await this._request({ op: "expireLease", group }, pingTimeoutMs);
   }
-  /** Polls bridge stats (and, without a heartbeat, clock sync) once; also runs on a timer while connected. */
+  /** Polls gateway stats (and, without a heartbeat, clock sync) once; also runs on a timer while connected. */
   async pollStats() {
     try {
       await this.#controlPing();
@@ -1645,29 +1792,29 @@ var ZenohWeb = class {
     }
     const response = await this._request({ op: "stats" }, pingTimeoutMs).catch(() => null);
     if (response) {
-      this.bridgeStats = { clock: response.clock, heartbeat: response.heartbeat, bandwidth: response.bandwidth ?? null };
+      this.gatewayStats = { clock: response.clock, heartbeat: response.heartbeat, bandwidth: response.bandwidth ?? null };
     }
     this.#refreshStats(response?.channels ?? null);
   }
-  #refreshStats(bridgeChannels) {
-    if (bridgeChannels) {
-      const byId = new Map(bridgeChannels.map((channel) => [channel.id, channel]));
+  #refreshStats(gatewayChannels) {
+    if (gatewayChannels) {
+      const byId = new Map(gatewayChannels.map((channel) => [channel.id, channel]));
       for (const endpoint of this.#endpointsById.values()) {
-        endpoint.bridgeStats = byId.get(endpoint.id) ?? null;
+        endpoint.gatewayStats = byId.get(endpoint.id) ?? null;
       }
     }
     const stats = {};
     for (const endpoint of this.#endpoints) {
-      const entry = stats[endpoint.key] ??= { received: 0, dropped: 0, backlogBytes: 0, rttMs: this.rttMs, bridge: null };
-      const bridge = endpoint.bridgeStats;
-      entry.bridge = bridge;
+      const entry = stats[endpoint.key] ??= { received: 0, dropped: 0, backlogBytes: 0, rttMs: this.rttMs, gateway: null };
+      const gateway = endpoint.gatewayStats;
+      entry.gateway = gateway;
       if (endpoint instanceof Subscription) {
         entry.received += endpoint.received;
         entry.dropped += endpoint.dropped;
-        entry.backlogBytes += bridge ? Number(bridge.stats.queuedBytes) + Number(bridge.stats.outstandingBytes) : 0;
+        entry.backlogBytes += gateway ? Number(gateway.stats.queuedBytes) + Number(gateway.stats.outstandingBytes) : 0;
       } else {
         entry.received += endpoint.sent;
-        entry.dropped += endpoint.dropped + (bridge ? Number(bridge.stats.droppedStale) : 0);
+        entry.dropped += endpoint.dropped + (gateway ? Number(gateway.stats.droppedStale) : 0);
         entry.backlogBytes += endpoint.channel?.bufferedAmount ?? 0;
       }
     }
@@ -1698,21 +1845,237 @@ var ZenohWeb = class {
   }
 };
 async function connect(url, options = {}) {
-  const client = new ZenohWeb(url, options);
+  const client = new ZenohGateway(url, options);
   await client._open();
   client._startStats();
   return client;
 }
+function parseReply(reply) {
+  if (reply.error !== void 0) {
+    return { key: null, bytes: fromBase64(reply.error), error: true, encoding: reply.encoding };
+  }
+  return {
+    key: reply.key ?? null,
+    bytes: fromBase64(reply.bytes ?? ""),
+    kind: reply.kind,
+    encoding: reply.encoding,
+    attachment: reply.attachment === void 0 ? void 0 : fromBase64(reply.attachment),
+    timestamp: reply.timestamp
+  };
+}
+function putRequestFields(options, clockOffsetMs = null) {
+  return {
+    encoding: options.encoding,
+    attachment: options.attachment === void 0 ? void 0 : toBase64(toBytes(options.attachment)),
+    priority: options.priority,
+    congestionControl: options.congestionControl,
+    express: options.express,
+    timestamp: options.timestamp === void 0 ? void 0 : options.timestamp + (clockOffsetMs ?? 0)
+  };
+}
+function getRequestFields(options) {
+  return {
+    parameters: options.parameters,
+    payload: options.payload === void 0 ? void 0 : toBase64(toBytes(options.payload)),
+    encoding: options.encoding,
+    attachment: options.attachment === void 0 ? void 0 : toBase64(toBytes(options.attachment)),
+    target: options.target,
+    consolidation: options.consolidation,
+    priority: options.priority,
+    congestionControl: options.congestionControl,
+    express: options.express
+  };
+}
+var Querier = class {
+  constructor(owner, key, options) {
+    this.owner = owner;
+    this.key = key;
+    this.options = options;
+  }
+  owner;
+  key;
+  options;
+  /** A query with the querier's options, plus these per-call ones. */
+  get(options = {}) {
+    return this.owner.get(this.key, { ...this.options, ...options });
+  }
+  /** Whether a queryable would answer now. */
+  matchingStatus() {
+    return this.owner.matchingStatus(this.key, "queryables");
+  }
+  matchingListener(callback) {
+    return this.owner.matchingListener(this.key, "queryables", callback);
+  }
+};
+var Query = class {
+  constructor(owner, id, key, parameters, payload, encoding, attachment) {
+    this.owner = owner;
+    this.id = id;
+    this.key = key;
+    this.parameters = parameters;
+    this.payload = payload;
+    this.encoding = encoding;
+    this.attachment = attachment;
+  }
+  owner;
+  id;
+  key;
+  parameters;
+  payload;
+  encoding;
+  attachment;
+  #finalized = false;
+  /** Replies with a sample on `key` (default: the query's key). Any number of replies, then `finalize()`. */
+  async reply(value, options = {}) {
+    await this.owner._request({
+      op: "reply",
+      queryId: this.id,
+      key: options.key ?? "",
+      bytes: toBase64(toBytes(value)),
+      ...putRequestFields(options, this.owner.clockOffsetMs)
+    }, pingTimeoutMs);
+  }
+  async replyErr(value, options = {}) {
+    await this.owner._request({ op: "replyErr", queryId: this.id, bytes: toBase64(toBytes(value)), encoding: options.encoding }, pingTimeoutMs);
+  }
+  /** Replies that `key` (default: the query's key) was deleted. */
+  async replyDel(options = {}) {
+    await this.owner._request({ op: "replyDel", queryId: this.id, key: options.key ?? "", ...putRequestFields(options) }, pingTimeoutMs);
+  }
+  /** No more replies: the asker's get completes. (The gateway finalizes forgotten queries after two minutes.) */
+  async finalize() {
+    if (!this.#finalized) {
+      this.#finalized = true;
+      await this.owner._request({ op: "finalizeQuery", queryId: this.id }, pingTimeoutMs);
+    }
+  }
+};
+var Queryable = class {
+  constructor(owner, key, complete, callback) {
+    this.owner = owner;
+    this.key = key;
+    this.complete = complete;
+    this.callback = callback;
+  }
+  owner;
+  key;
+  complete;
+  callback;
+  #id = 0;
+  async _declare() {
+    const response = await this.owner._request({ op: "declareQueryable", key: this.key, complete: this.complete }, pingTimeoutMs);
+    this.#id = Number(response.queryableId);
+    this.owner._route("query", this.#id, (event) => {
+      const query = new Query(
+        this.owner,
+        Number(event.queryId),
+        String(event.key),
+        String(event.parameters ?? ""),
+        event.payload === void 0 ? void 0 : fromBase64(String(event.payload)),
+        event.encoding === void 0 ? void 0 : String(event.encoding),
+        event.attachment === void 0 ? void 0 : fromBase64(String(event.attachment))
+      );
+      try {
+        this.callback(query);
+      } catch (error) {
+        console.error(`zenoh-gateway: queryable callback for ${this.key} threw`, error);
+      }
+    });
+  }
+  async undeclare() {
+    this.owner._forgetHandle(this);
+    this.owner._unroute("query", this.#id);
+    await this.owner._request({ op: "undeclareQueryable", queryableId: this.#id }, pingTimeoutMs);
+  }
+};
+var LivelinessToken = class {
+  constructor(owner, key) {
+    this.owner = owner;
+    this.key = key;
+  }
+  owner;
+  key;
+  #id = 0;
+  async _declare() {
+    this.#id = Number((await this.owner._request({ op: "declareToken", key: this.key }, pingTimeoutMs)).tokenId);
+  }
+  async undeclare() {
+    this.owner._forgetHandle(this);
+    await this.owner._request({ op: "undeclareToken", tokenId: this.#id }, pingTimeoutMs);
+  }
+};
+var LivelinessSubscriber = class {
+  constructor(owner, key, history, callback) {
+    this.owner = owner;
+    this.key = key;
+    this.history = history;
+    this.callback = callback;
+  }
+  owner;
+  key;
+  history;
+  callback;
+  #id = 0;
+  async _declare() {
+    this.#id = Number((await this.owner._request({ op: "livelinessSubscribe", key: this.key, history: this.history }, pingTimeoutMs)).subId);
+    this.owner._route("liveliness", this.#id, (event) => {
+      try {
+        this.callback({ key: String(event.key), alive: event.kind === "put" });
+      } catch (error) {
+        console.error(`zenoh-gateway: liveliness callback for ${this.key} threw`, error);
+      }
+    });
+  }
+  async undeclare() {
+    this.owner._forgetHandle(this);
+    this.owner._unroute("liveliness", this.#id);
+    await this.owner._request({ op: "livelinessUnsubscribe", subId: this.#id }, pingTimeoutMs);
+  }
+};
+var MatchingListener = class {
+  constructor(owner, key, target, callback) {
+    this.owner = owner;
+    this.key = key;
+    this.target = target;
+    this.callback = callback;
+  }
+  owner;
+  key;
+  target;
+  callback;
+  #id = 0;
+  async _declare() {
+    this.#id = Number((await this.owner._request({ op: "declareMatchingListener", key: this.key, matching: this.target }, pingTimeoutMs)).listenerId);
+    this.owner._route("matching", this.#id, (event) => {
+      try {
+        this.callback(Boolean(event.matching));
+      } catch (error) {
+        console.error(`zenoh-gateway: matching callback for ${this.key} threw`, error);
+      }
+    });
+  }
+  async undeclare() {
+    this.owner._forgetHandle(this);
+    this.owner._unroute("matching", this.#id);
+    await this.owner._request({ op: "undeclareMatchingListener", listenerId: this.#id }, pingTimeoutMs);
+  }
+};
 export {
   Lease,
+  LivelinessSubscriber,
+  LivelinessToken,
+  MatchingListener,
   Priority,
   Publisher,
+  Querier,
+  Query,
+  Queryable,
   Subscription,
-  ZenohWeb,
+  ZenohGateway,
   connect,
   decodeFields,
   decodeFrame,
   decodeVideoFrameInfo,
   encodePut,
-  registerCodec
+  registerEncoding
 };
