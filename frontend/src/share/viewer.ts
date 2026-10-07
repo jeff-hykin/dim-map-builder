@@ -2,8 +2,8 @@
 // into the exported file, it draws the packed voxels with the editor's renderer (render/viewer.ts and its point
 // shader, the same look, slice turn and clip), the floor selector bottom right for a multi-floor map, Frame / Top.
 import * as THREE from "three"
-import themeCss from "../dim-app/theme.css?raw"
-import { initTheme } from "../dim-app/theme.js"
+import themeCss from "../dim-app/source/theme.css?raw"
+import { initTheme } from "../dim-app/source/theme.js"
 import { dimIcon } from "../dim-icons.js"
 import { applyLook, makePointMaterial, type CubeShade } from "../render/pointMaterial.ts"
 import { Viewer } from "../render/viewer.ts"

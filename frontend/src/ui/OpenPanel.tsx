@@ -4,7 +4,7 @@ import { recordings, type DesktopRecording, type RecordingMetadata } from "../co
 import type { Context } from "./context.ts"
 import { Icon } from "./Icon.tsx"
 import { EmptyState } from "./EmptyState.tsx"
-import { getZenoh } from "../dim-app/zenoh.js"
+import { getZenoh } from "../dim-app/source/zenoh.js"
 
 function size(bytes: number) {
     return bytes > 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(0.1, bytes / 1e6).toFixed(1)} MB`

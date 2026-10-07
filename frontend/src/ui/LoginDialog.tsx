@@ -3,7 +3,7 @@
 // its zenoh event <ns>/dimos/events/cloud-login (the page's one zenoh-gateway connection; re-read after a reconnect).
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, type LoginState } from "../core/api.ts"
-import { getZenoh } from "../dim-app/zenoh.js"
+import { getZenoh } from "../dim-app/source/zenoh.js"
 import { Icon } from "./Icon.tsx"
 
 function Copy({ text, action, label }: { text: string; action: string; label: string }) {

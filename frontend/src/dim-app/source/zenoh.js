@@ -2,7 +2,7 @@
 // frontend → backend is plain HTTP. Every subscription on a page shares this one connection (a module singleton, kept on
 // globalThis so two copies of dim-app on one page share it too).
 //
-//     import { getZenoh } from "./dim-app/zenoh.js"
+//     import { getZenoh } from "./dim-app/source/zenoh.js"
 //     const zenoh = getZenoh() // app name from /apps/<name>/ in the page's URL
 //     const off = zenoh.subscribeFrontend("status", (status) => render(status)) // <ns>/apps/<name>/frontend/status
 //     zenoh.subscribeDesktop("apps", () => reloadApps()) // <ns>/desktop/events/apps ("*" = every type)

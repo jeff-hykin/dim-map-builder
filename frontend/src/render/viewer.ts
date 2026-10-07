@@ -5,7 +5,7 @@ import * as THREE from "three"
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
 import { CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js"
 import { Store } from "../core/store.ts"
-import { themeColors } from "../dim-app/theme.js"
+import { themeColors } from "../dim-app/source/theme.js"
 import { focusDistance, POINT_BACKGROUND } from "./pointMaterial.ts"
 import { FRAME_BUDGET_MS, splatFallback } from "./rendering.ts"
 

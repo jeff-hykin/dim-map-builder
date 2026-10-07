@@ -28,7 +28,7 @@ import { LoginDialog } from "./ui/LoginDialog.tsx"
 import { FloorPicker } from "./ui/FloorPicker.tsx"
 import { ShareMenu, SharePanel } from "./ui/SharePanel.tsx"
 import { EmptyState } from "./ui/EmptyState.tsx"
-import { notify } from "./dim-app/notify.js"
+import { notify } from "./dim-app/source/notify.js"
 
 const MODES: { id: ViewMode; label: string }[] = [
     { id: "3d", label: "3D" },

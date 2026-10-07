@@ -3,7 +3,7 @@
 // connection; also after that connection comes back), so uploads the agent starts show up too; plus the login flow.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, uploads as uploadsApi, type CloudAccount, type Upload } from "../core/api.ts"
-import { getZenoh } from "../dim-app/zenoh.js"
+import { getZenoh } from "../dim-app/source/zenoh.js"
 
 export interface Uploads {
     list: Upload[]

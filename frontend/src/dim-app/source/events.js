@@ -2,7 +2,7 @@
 // JSON event on its frontend topic `events` (`publishFrontend("events", event)`, or DimAppBackend's publishEvent), and
 // the page hears it on its one zenoh-gateway connection, in order (reliable delivery, one key).
 //
-//     import { appEvents } from "./dim-app/events.js"
+//     import { appEvents } from "./dim-app/source/events.js"
 //     const stop = appEvents((event) => { ... }, { onOpen, onClose })
 //
 // `onOpen()` runs when the connection is up (first time and after every reconnect: re-GET then, events sent while it

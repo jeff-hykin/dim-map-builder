@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type PrismAnnotation, type SavedView, type Slice } from "../core/api.ts"
 import { Store, useStore } from "../core/store.ts"
 import { columnFloors, computeSlice, floorHeightImage, PLAN_STYLE, setPlanTheme, sliceLayers, type FloorModel } from "../core/slice.ts"
-import { isDark, onThemeChange } from "../dim-app/theme.js"
+import { isDark, onThemeChange } from "../dim-app/source/theme.js"
 import type { Context, View2d } from "./context.ts"
 import { modifyTool, planTool, polygonTool } from "./tools.ts"
 

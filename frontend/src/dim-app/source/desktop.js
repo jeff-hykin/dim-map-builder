@@ -1,6 +1,6 @@
 // Opening other apps from an app, and first-run / empty-state messages that send the user there.
 //
-//     import { appInstalled, emptyState, openApp } from "./dim-app/desktop.js"
+//     import { appInstalled, emptyState, openApp } from "./dim-app/source/desktop.js"
 //     await openApp("launcher", { kind: "blueprint", stream: "cmd_vel" }) // the Launcher, on blueprints that drive
 //     await openApp("dim-controller", { path: "#record" })                 // another app (its install name)
 //     if (!(await appInstalled("dim-controller"))) { ... }                 // built-ins are always installed
