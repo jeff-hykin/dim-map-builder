@@ -1,5 +1,5 @@
 title: Map Editor
-dimos-desktop-api: ">=2 <3"
+spec-version: v1.0 # the dimos.yaml spec version this file follows
 # Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams.
 # Dimensional cloud: log in and queue uploads of the recording (these need a Desktop with cloud uploads; an older
 # Desktop rejects unknown dimos-api entries, so it won't install this version).
