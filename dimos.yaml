@@ -16,6 +16,16 @@ dimos-api:
     - DELETE /dimos/uploads
     - DELETE /dimos/uploads/{id}
     - POST /dimos/uploads/{id}/retry
+    - POST /api/notifications
+# the dim-app SDK's zenoh client (backend state, events): /zenoh-web and how it finds it
+zenoh-web: ">=0.4 <0.5"
+# what its server answers only its own pages (its agent: endpoints are the public API)
+private:
+    - api/state/*
+    - api/captures/*
+    - api/sessions/*
+    - api/ui/*
+    - api/events/*
 # Desktop's nix builds of this app pull from this cache (CI fills it)
 caches:
     - url: https://dimos-desktop.cachix.org
