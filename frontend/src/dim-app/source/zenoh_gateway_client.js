@@ -2,10 +2,10 @@
 // deno-fmt-ignore-file
 // @ts-nocheck
 /* eslint-disable */
-// zenoh-gateway's browser client (https://github.com/jeff-hykin/zenoh-gateway, client/zenoh_gateway.ts at 28c17f0, the
-// commit Desktop's gateway is built from), as esm.sh's development bundle: plain JS, no imports, so it loads offline.
+// zenoh-gateway's browser client (https://github.com/jeff-hykin/zenoh-gateway, client/zenoh_gateway.ts at 097bc12; its
+// gateway crate is still 0.5.1, what Desktop runs), as esm.sh's development bundle: plain JS, no imports, so it loads offline.
 // zenoh.js imports it. Refresh: curl -sL https://esm.sh/gh/jeff-hykin/zenoh-gateway@<commit>/es2022/client/zenoh_gateway.ts.development.bundle.mjs
-/* esm.sh - github:jeff-hykin/zenoh-gateway#28c17f0/client/zenoh_gateway.ts */
+/* esm.sh - github:jeff-hykin/zenoh-gateway#097bc12/client/zenoh_gateway.ts */
 // node_modules/jeff-hykin/zenoh-gateway/client/vendor/fzstd.ts
 var ab = ArrayBuffer;
 var u8 = Uint8Array;
@@ -882,6 +882,25 @@ var Subscription = class extends Endpoint {
   #bytesSinceAck = 0;
   #ackTimer = null;
   #partials = /* @__PURE__ */ new Map();
+  /**
+   * Changes the running subscription's options in place: same channel and track, no resubscribe; the gateway's
+   * next frame uses them. Reconnects keep them too.
+   */
+  async update(changes) {
+    await this.ready();
+    await this.owner._request({ op: "updateSubscription", subId: this.id, opts: changes }, pingTimeoutMs);
+    const options = { ...this.options };
+    for (const [name, value] of Object.entries(changes)) {
+      if (name === "encodeOptions") {
+        options.encodeOptions = { ...this.options.encodeOptions, ...value };
+      } else if (value === null) {
+        delete options[name];
+      } else {
+        options[name] = value;
+      }
+    }
+    this.options = options;
+  }
   get state() {
     if (this.closed) {
       return "closed";
@@ -920,7 +939,7 @@ var Subscription = class extends Endpoint {
     }
     this.owner._acquireTransceiver(peer, kind, channelName).then((transceiver) => {
       if (this.closed || acceptance !== this.acceptance) {
-        this.owner._releaseTransceiver(peer, channelName, transceiver);
+        this.owner._releaseTransceiver(peer, transceiver);
         return;
       }
       this.#transceiver = transceiver;
@@ -947,7 +966,7 @@ var Subscription = class extends Endpoint {
     super.close();
     const peer = this.owner._peer;
     if (this.#transceiver && peer) {
-      this.owner._releaseTransceiver(peer, this.channelName, this.#transceiver);
+      this.owner._releaseTransceiver(peer, this.#transceiver);
     }
     this.#transceiver = null;
   }
@@ -1331,9 +1350,6 @@ var ZenohGateway = class {
   });
   #markConnected = () => {
   };
-  /** video transceivers of closed subscriptions, reused before adding new ones */
-  /** per channel: transceivers whose track carries its format, free for the next subscription */
-  #freeTransceivers = /* @__PURE__ */ new Map();
   constructor(url, options = {}) {
     this.url = url.replace(/\/+$/, "");
     this.options = { reconnect: true, statsIntervalMs: 1e3, heartbeatHz: 0, heartbeatMisses: 3, ...options };
@@ -1384,14 +1400,11 @@ var ZenohGateway = class {
     return this.#peer;
   }
   /**
-   * A recvonly transceiver bound to a gateway track of `channel`'s format: a free one, or a new one
-   * added through a renegotiation over `control` (the gateway answers with a track for the new m-line).
+   * A new recvonly transceiver bound to a gateway track of `channel`'s format, added through a renegotiation over
+   * `control` (the gateway answers with a track for the new m-line). Never a reused one: Chrome stopped assembling
+   * a reused receiver's frames after a few quick close-and-reopen switches.
    */
   _acquireTransceiver(peer, kind, channel) {
-    const free = this.#freeTransceivers.get(peer)?.get(channel)?.pop();
-    if (free) {
-      return Promise.resolve(free);
-    }
     const run = async () => {
       await this.#connected;
       if (peer !== this.#peer) {
@@ -1418,11 +1431,10 @@ var ZenohGateway = class {
     });
     return result;
   }
-  _releaseTransceiver(peer, channel, transceiver) {
-    if (peer === this.#peer && peer.connectionState !== "closed") {
-      const byCodec = this.#freeTransceivers.get(peer) ?? /* @__PURE__ */ new Map();
-      byCodec.set(channel, [...byCodec.get(channel) ?? [], transceiver]);
-      this.#freeTransceivers.set(peer, byCodec);
+  /** A closed subscription's transceiver stops; the next renegotiation frees its m-line (Chrome reuses the slot). */
+  _releaseTransceiver(peer, transceiver) {
+    if (peer.connectionState !== "closed" && transceiver.currentDirection !== "stopped") {
+      transceiver.stop();
     }
   }
   async _open() {
@@ -1432,9 +1444,6 @@ var ZenohGateway = class {
     this.#connected = new Promise((resolve) => {
       this.#markConnected = resolve;
     });
-    if (this.#peer) {
-      this.#freeTransceivers.delete(this.#peer);
-    }
     const auth = this.options.token === void 0 ? {} : { authorization: `Bearer ${this.options.token}` };
     let iceServers = this.options.iceServers;
     let iceTransportPolicy = this.options.iceTransportPolicy;

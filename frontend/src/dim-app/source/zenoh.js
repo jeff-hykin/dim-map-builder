@@ -36,6 +36,24 @@ export function appBase(href) {
     return { base: `${url.origin}${match[1]}/`, app: decodeURIComponent(match[2]) }
 }
 
+/**
+ * `options` with `changes` applied as zenoh-gateway's `Subscription.update` applies them: `null` removes an option (back
+ * to the gateway's default), `encodeOptions` merges.
+ */
+export function updatedOptions(options, changes) {
+    const merged = { ...options }
+    for (const [name, value] of Object.entries(changes ?? {})) {
+        if (name === "encodeOptions" && value !== null) {
+            merged.encodeOptions = { ...options.encodeOptions, ...value }
+        } else if (value === null) {
+            delete merged[name]
+        } else {
+            merged[name] = value
+        }
+    }
+    return merged
+}
+
 const decoder = new TextDecoder()
 
 /** A sample's payload: JSON (default; a sample that isn't JSON is skipped), "text" or "bytes". */
@@ -180,29 +198,80 @@ class AppZenoh {
      * A raw subscription on the shared connection: `callback(message)` with zenoh-gateway's `{ key, bytes, timestamp, … }`.
      * `key` is a key expression, or a function of the discovery answer (for keys under `<ns>`). Subscriptions to the
      * same key with the same options share one zenoh-gateway channel.
-     * @returns {() => void} unsubscribe
+     *
+     * The returned function unsubscribes; it also has `.unsubscribe()` and `.update(changes)`, which changes the running
+     * channel's options in place (zenoh-gateway's `Subscription.update`: maxHz, minQuality, qualityToHzTradeoff,
+     * bandwidthPriority, maxBitrate, minResolutionScale, maxResolution, playoutDelay, encodeOptions.quality; `null` puts
+     * one back to its default; the gateway refuses anything else). A channel shared with other subscribers isn't
+     * changed under them: this subscriber moves to a channel with the new options instead.
+     * @returns {(() => void) & { unsubscribe(): void, update(changes: object): Promise<void> }}
      */
     subscribe(key, options, callback) {
         const keyOf = typeof key === "function" ? key : () => key
         const id = typeof key === "function" ? `${key.dimAppKey ?? key}` : key
-        const entryId = `${id}\u0000${JSON.stringify(options ?? {})}`
-        let entry = this.#subscriptions.get(entryId)
-        if (!entry) {
-            entry = { key: keyOf, options: options ?? {}, callbacks: new Set(), handle: null }
-            this.#subscriptions.set(entryId, entry)
-            if (this.client) {
-                this.#open(entry)
+        const entryIdOf = (options) => `${id}\u0000${JSON.stringify(options ?? {})}`
+        const join = (options) => {
+            const entryId = entryIdOf(options)
+            let entry = this.#subscriptions.get(entryId)
+            if (!entry) {
+                entry = { id: entryId, key: keyOf, options: options ?? {}, callbacks: new Set(), handle: null }
+                this.#subscriptions.set(entryId, entry)
+                if (this.client) {
+                    this.#open(entry)
+                }
             }
+            entry.callbacks.add(own)
+            return entry
         }
-        const own = (message) => callback(message)
-        entry.callbacks.add(own)
-        return () => {
+        const leave = (entry) => {
             entry.callbacks.delete(own)
-            if (entry.callbacks.size === 0 && this.#subscriptions.get(entryId) === entry) {
-                this.#subscriptions.delete(entryId)
+            if (entry.callbacks.size === 0 && this.#subscriptions.get(entry.id) === entry) {
+                this.#subscriptions.delete(entry.id)
                 entry.handle?.close()
             }
         }
+        const own = (message) => callback(message)
+        let entry = join(options)
+        let closed = false
+        const unsubscribe = () => {
+            closed = true
+            leave(entry)
+        }
+        unsubscribe.unsubscribe = unsubscribe
+        unsubscribe.update = async (changes) => {
+            if (closed) {
+                throw new Error(`[dim-app] zenoh: update on a closed subscription to ${id}`)
+            }
+            const next = updatedOptions(entry.options, changes)
+            const nextId = entryIdOf(next)
+            if (nextId === entry.id) {
+                return
+            }
+            if (entry.callbacks.size > 1 || this.#subscriptions.has(nextId)) {
+                // shared (or another channel already has these options): move this subscriber, the others keep theirs
+                const from = entry
+                entry = join(next)
+                leave(from)
+                return
+            }
+            // alone on its channel: the same channel and track take the new options (put back if the gateway refuses)
+            const rekey = (target, id, options) => {
+                this.#subscriptions.delete(target.id)
+                Object.assign(target, { id, options })
+                this.#subscriptions.set(id, target)
+            }
+            const [target, previousId, previousOptions] = [entry, entry.id, entry.options]
+            rekey(target, nextId, next)
+            try {
+                await target.handle?.update(changes)
+            } catch (error) {
+                if (target.id === nextId && !this.#subscriptions.has(previousId)) {
+                    rekey(target, previousId, previousOptions)
+                }
+                throw error
+            }
+        }
+        return unsubscribe
     }
 
     #subscribeUnder(describe, keyOf, callback, { parse = "json", delivery = "reliable", ...rest } = {}) {

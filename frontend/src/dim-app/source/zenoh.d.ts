@@ -26,6 +26,13 @@ export interface PayloadOptions extends SubscribeOptions {
     /** default "json" (a sample that isn't JSON is skipped) */
     parse?: "json" | "text" | "bytes"
 }
+/** Calling it unsubscribes; `update` changes the running channel's options in place (zenoh-gateway's Subscription.update). */
+export interface ZenohSubscription {
+    (): void
+    unsubscribe(): void
+    update(changes: Record<string, unknown>): Promise<void>
+}
+export function updatedOptions<T extends Record<string, unknown>>(options: T, changes: Record<string, unknown>): T
 export interface AppZenoh {
     readonly base: string | null
     readonly app: string | null
@@ -39,27 +46,27 @@ export interface AppZenoh {
         key: string | ((info: ZenohInfo) => string),
         options: SubscribeOptions,
         callback: (message: ZenohMessage) => void,
-    ): () => void
+    ): ZenohSubscription
     subscribeFrontend<T = unknown>(
         topic: string,
         callback: (payload: T, message: ZenohMessage) => void,
         options?: PayloadOptions,
-    ): () => void
+    ): ZenohSubscription
     subscribeDesktop<T = unknown>(
         type: string,
         callback: (event: T, message: ZenohMessage) => void,
         options?: PayloadOptions,
-    ): () => void
+    ): ZenohSubscription
     subscribeDimos<T = unknown>(
         type: string,
         callback: (event: T, message: ZenohMessage) => void,
         options?: PayloadOptions,
-    ): () => void
+    ): ZenohSubscription
     subscribeJob<T = unknown>(
         jobId: string,
         callback: (event: T, message: ZenohMessage) => void,
         options?: PayloadOptions,
-    ): () => void
+    ): ZenohSubscription
     onState(listener: (state: ConnectionState) => void): () => void
     onReconnect(listener: () => void): () => void
     close(): void

@@ -1,14 +1,14 @@
 // Opening other apps from an app, and first-run / empty-state messages that send the user there.
 //
 //     import { appInstalled, emptyState, openApp } from "./dim-app/source/desktop.js"
-//     await openApp("launcher", { kind: "blueprint", stream: "cmd_vel" }) // the Launcher, on blueprints that drive
+//     await openApp("launcher", { stream: "cmd_vel" }) // the Launcher, on blueprints that drive
 //     await openApp("dim-controller", { path: "#record" })                 // another app (its install name)
 //     if (!(await appInstalled("dim-controller"))) { ... }                 // built-ins are always installed
 //
 //     const card = emptyState({
 //         title: "You need to launch a blueprint with a cmd_vel topic before you can control a robot",
 //         body: "The Controller drives whatever robot a running blueprint connects to.",
-//         actions: [{ label: "Open the Launcher", app: "launcher", params: { kind: "blueprint", stream: "cmd_vel" } }],
+//         actions: [{ label: "Open the Launcher", app: "launcher", params: { stream: "cmd_vel" } }],
 //     })
 //     container.replaceChildren(card)
 //
@@ -24,8 +24,8 @@ export const BUILTIN_APPS = Object.freeze({
     desktop: "Desktop",
 })
 
-/** The Launcher's filters `openApp("launcher", params)` sets (the rest are cleared, so an old search can't hide them). */
-const LAUNCHER_FIELDS = ["query", "kind", "robot", "selected", "stream"]
+/** The Launcher's filters `openApp("launcher", params)` sets, as [param, link key]. */
+const LAUNCHER_LINK = [["query", "q"], ["robot", "robot"], ["stream", "needs"], ["selected", "blueprint"]]
 
 /** True when this page is served by dimOS Desktop (under /apps/<name>/). */
 export function underDesktop() {
@@ -93,11 +93,11 @@ export async function appInstalled(id, options) {
 /**
  * Opens `id` in Desktop: an installed app (install name or title) or a built-in (`launcher`, `appstore`,
  * `settings`, `desktop`). `params.path` opens the app at that path (e.g. "#record", "?recording=x"). For the
- * Launcher, `params` may set its filters: `query`, `kind` ("blueprint" | "module" | "skill"), `robot`, `stream`
- * (e.g. "cmd_vel": only what has a module with that input or output), `selected`.
+ * Launcher, `params` sets its filters, passed in its link: `query`, `robot`, `stream` (e.g. "cmd_vel": only what
+ * has a module with that input or output), `selected` (a blueprint).
  * Resolves to true when Desktop was asked to open it, false when it can't be (outside Desktop, not installed).
  * @param {string} id
- * @param {{ path?: string, query?: string, kind?: string, robot?: string, stream?: string, selected?: string }} [params]
+ * @param {{ path?: string, query?: string, robot?: string, stream?: string, selected?: string }} [params]
  */
 export async function openApp(id, params = {}) {
     if (!underDesktop()) {
@@ -113,19 +113,17 @@ export async function openApp(id, params = {}) {
         }
         app = found.name ?? found.id
     }
-    if (app === "launcher") {
-        const state = Object.fromEntries(LAUNCHER_FIELDS.map((field) => [field, params[field] ?? ""]))
-        try {
-            await fetch("/api/launcher/state", {
-                method: "PUT",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify(state),
-            })
-        } catch {
-            // the Launcher still opens, unfiltered
+    let path = params.path ?? null
+    if (app === "launcher" && path == null) {
+        // the Launcher reads its filters from its link (no Desktop endpoint to declare)
+        const link = new URLSearchParams()
+        for (const [field, key] of LAUNCHER_LINK) {
+            if (params[field]) {
+                link.set(key, params[field])
+            }
         }
+        path = link.size ? `?${link}` : null
     }
-    const path = params.path ?? null
     if (inDesktopShell()) {
         parent.postMessage({ dimosShell: 1, type: "open_app", app, path }, location.origin)
         return true

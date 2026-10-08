@@ -4,9 +4,9 @@ export type DesktopApp = { name: string; id?: string; title: string; url: string
 export type OpenAppParams = {
     path?: string
     query?: string
-    kind?: "" | "blueprint" | "module" | "skill"
     robot?: string
     stream?: string
+    /** a blueprint */
     selected?: string
 }
 export function underDesktop(): boolean
