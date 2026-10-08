@@ -9,7 +9,7 @@
 //     zenoh.onReconnect(() => reloadEverything()) // events published while the link was down are gone
 //
 // Where things are comes from Desktop's `GET /api/desktop/zenoh?app=<name>` (relative to the app:
-// `../../api/desktop/zenoh`). The client is zenoh_gateway_client.js (vendored, so nothing loads from the network); an app
+// `../../api/desktop/zenoh`). The client is vendor/zenoh-gateway/zenoh_gateway.js (vendored, so nothing loads from the network); an app
 // that already has its own copy passes `connect`. Discovery and connecting retry with backoff (0.5 s doubling to 10 s);
 // once connected the client reconnects by itself and its subscriptions come back on their own.
 
@@ -140,7 +140,7 @@ class AppZenoh {
             }
             return await response.json()
         })
-        const connect = this.#options.connect ?? (await import("./zenoh_gateway_client.js")).connect
+        const connect = this.#options.connect ?? (await import("./vendor/zenoh-gateway/zenoh_gateway.js")).connect
         const gateway = this.#options.zenohGatewayUrl ?? this.info.zenohGatewayUrl ?? "/zenoh-gateway"
         const url = /^[a-z]+:\/\//i.test(gateway) ? gateway : new URL(gateway.replace(/^\/+/, ""), this.base).href
         this.client = await this.#retry(
@@ -369,7 +369,7 @@ class AppZenoh {
  * @param {{ app?: string, href?: string, base?: string, connect?: (url: string, options: object) => Promise<any>,
  *   connectOptions?: object, zenohGatewayUrl?: string, fetch?: typeof fetch }} [options]
  *   `app`: the install name (default: from /apps/<name>/ in the URL); `connect`: a zenoh-gateway client's connect
- *   (default: the vendored zenoh_gateway_client.js); `connectOptions`: passed to it (e.g. `{ heartbeatHz: 10 }` for deadman publishers)
+ *   (default: the vendored vendor/zenoh-gateway/zenoh_gateway.js); `connectOptions`: passed to it (e.g. `{ heartbeatHz: 10 }` for deadman publishers)
  * @returns {AppZenoh}
  */
 export function getZenoh(options = {}) {
