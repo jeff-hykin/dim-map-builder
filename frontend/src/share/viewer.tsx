@@ -6,8 +6,13 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import * as THREE from "three"
 import { Card, DimThemeProvider, EmptyState, Hud, Label, Segmented, Text } from "dimos-react"
-import { applyLook, makePointMaterial, Scene3D, SceneControls, setClipBox, type Viewer } from "dimos-react/three"
+import { applyLook, CUBE_SHADES, makePointMaterial, Scene3D, SceneControls, setClipBox, type Viewer } from "dimos-react/three"
 import { fromBase64, SHARE_IDS, type SharedMap, unpackVoxels } from "./pack.ts"
+
+// the page's shade name, if this library still has it (an older share may name one it dropped)
+const knownShade = (shade?: string): keyof typeof CUBE_SHADES => {
+    return shade !== undefined && Object.hasOwn(CUBE_SHADES, shade) ? (shade as keyof typeof CUBE_SHADES) : "soft"
+}
 
 function percentile(values: Float32Array, axis: number, low: number, high: number): [number, number] {
     const count = values.length / 3
@@ -45,7 +50,7 @@ function buildMap(viewer: Viewer, meta: SharedMap, positions: Float32Array) {
         rangeMin: null,
         rangeMax: null,
         opacity: 1,
-        cubeShade: meta.look.shade ?? "soft",
+        cubeShade: knownShade(meta.look.shade),
     }, meta.range)
     root.updateMatrixWorld()
     const frame = () => {

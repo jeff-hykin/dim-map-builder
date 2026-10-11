@@ -22,7 +22,11 @@
                         pname = "dim-map-builder-frontend";
                         version = "0.1.0";
                         src = ./frontend;
-                        npmDepsHash = "sha256-hOjgnpEISToWrJRNR6tT1tifPAlObavsu0oYdGp75XA=";
+                        npmDepsHash = "sha256-rA6ZKicuxRNe1DsZNvNGu/+yGEicqb+wWVsc9TXM4uE=";
+                        # dimos-react is a git dependency built by its `prepare` (vite build): npm skips that under the hook's
+                        # --ignore-scripts, and its nested install writes to the npm cache
+                        npmInstallFlags = [ "--ignore-scripts=false" ];
+                        makeCacheWritable = true;
                         installPhase = ''
                             cp -r dist $out
                         '';

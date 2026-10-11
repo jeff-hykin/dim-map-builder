@@ -18,7 +18,7 @@ export function AnnotationRow(
     return (
         <ListRow
             icon={<StatusDot tone={tone} label={toneLabel} />}
-            title={<TextInput size="sm" value={name} onCommit={onRename} onClick={(event: MouseEvent) => event.stopPropagation()} />}
+            title={<TextInput size="sm" value={name} onCommit={onRename} onClick={(event) => event.stopPropagation()} />}
             meta={detail === undefined ? undefined : <Text small mono muted>{detail}</Text>}
             actions={
                 <>

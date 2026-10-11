@@ -24,7 +24,7 @@ export function PolygonPanel({ context }: { context: Context }) {
             precision={2}
             value={prism[key]}
             title={key === "height" ? "height over its base (m)" : "base z (m)"}
-            onClick={(event: MouseEvent) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
             onChange={(value: number) => run(api.patch(session.id, prism.id, { [key]: value }))}
             data-prism-field={key}
             style={{ width: 64 }}
