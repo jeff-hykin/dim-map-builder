@@ -22,7 +22,7 @@
                         pname = "dim-map-builder-frontend";
                         version = "0.1.0";
                         src = ./frontend;
-                        npmDepsHash = "";
+                        npmDepsHash = "sha256-rdI5ylnl97fbsM8lWSuj/7PfTmOjvELB563BuIJFZqM=";
                         # npm unpacks the dimos-react git dependency through its cache
                         makeCacheWritable = true;
                         installPhase = ''
