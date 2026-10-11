@@ -73,7 +73,7 @@ In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (b
 | `crates/mapping` | the map math: the ray-traced voxel map (vendored from dimos), tf tree, ICP, loop closure (a port of dimos's PGO), cleanup selections, floors, floor plans, the staged build |
 | `server` | `dimos-app-server`: sessions, jobs, every action as an endpoint (`api.rs`, one table that is also `/agent.json`), save/restore |
 | `scripts/check_endpoints.ts` | checks dimos.yaml's `agent:` against the server's `--agent-json` (`--write` regenerates it) |
-| `frontend` | the page: React + Vite + three.js; `src/render` is copied from the Live Viewer (same point styles); `src/share` the shared-map page (`vite.share.config.ts` builds its viewer) |
+| `frontend` | the page: React + Vite, built from [dimos-react](https://github.com/jeff-hykin/dimos-react) (every control, panel and dialog, Desktop's theme, and the 3D view: its renderer, point styles and palettes); `src/core/scene.ts` is the editor on top of that view; `src/share` the shared-map page (`vite.share.config.ts` builds its viewer) |
 | `docs` | [schema.md](docs/schema.md) (what's saved), [api.md](docs/api.md) (the endpoints) |
 
 One compiled binary at runtime: no Python, no dimos needed to build or edit maps.
@@ -82,7 +82,6 @@ One compiled binary at runtime: no Python, no dimos needed to build or edit maps
 
     cargo test --workspace                      # all the non-UI logic and every endpoint
     deno test frontend/src/share/               # the shared map's packing
-    deno test frontend/src/render/palette_test.ts   # the repeating height palettes
     deno task check-endpoints [--write]         # dimos.yaml's agent: = the served agent.json
     cargo run -p dimos-app-server -- --port 7190 --frontend frontend/dist
     (cd frontend && npm ci && npm run dev)      # the page, against a running Desktop (DESKTOP_URL)

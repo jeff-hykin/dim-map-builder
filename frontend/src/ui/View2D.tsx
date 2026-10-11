@@ -6,19 +6,21 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type PrismAnnotation, type SavedView, type Slice } from "../core/api.ts"
 import { Store, useStore } from "../core/store.ts"
 import { columnFloors, computeSlice, floorHeightImage, PLAN_STYLE, setPlanTheme, sliceLayers, type FloorModel } from "../core/slice.ts"
-import { isDark, onThemeChange } from "../dim-app/source/theme.js"
+import { Card, Hud, Text, useTheme } from "dimos-react"
+import { gradientCss } from "dimos-react/three"
+import { ANNOTATION_COLORS } from "../core/colors.ts"
 import type { Context, View2d } from "./context.ts"
 import { modifyTool, planTool, polygonTool } from "./tools.ts"
 
-const AREA_COLORS: Record<string, string> = { "no-go": "#ff5f6d", zone: "#7fc8f8", slow: "#ffd166" }
-const PRISM_COLOR = "#7af0a8"
+const AREA_COLORS: Record<string, string> = { "no-go": ANNOTATION_COLORS.removal, zone: ANNOTATION_COLORS.agent, slow: ANNOTATION_COLORS.selected }
+const PRISM_COLOR = ANNOTATION_COLORS.user
 const NO_MAP = new Store({ revision: 0 })
 const NO_SLICE = new Store<{ slice: Slice | null }>({ slice: null })
 /** a window event: frame the 2D view on the map again */
 export const FIT_2D = "map-builder:fit-2d"
 /** a window event carrying a saved view: look where it looked */
 export const APPLY_2D = "map-builder:apply-2d"
-const SELECTED_COLOR = "#ffd166"
+const SELECTED_COLOR = ANNOTATION_COLORS.selected
 
 interface Raster {
     floor: HTMLCanvasElement
@@ -116,17 +118,12 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
         }
     }
     // the plan follows the theme (Portal: glowing blueprint, Research: ink on paper); re-raster when it changes
+    const { dark } = useTheme()
     const [themeRevision, setThemeRevision] = useState(0)
     useEffect(() => {
-        setPlanTheme(isDark())
-        const unsubscribe = onThemeChange(({ dark }) => {
-            setPlanTheme(dark)
-            setThemeRevision((n) => n + 1)
-        })
-        return () => {
-            unsubscribe()
-        }
-    }, [])
+        setPlanTheme(dark)
+        setThemeRevision((n) => n + 1)
+    }, [dark])
 
     // the slicer's view: the map turned by its yaw, clipped to its box
     const shownSlice = useStore(scene?.sliceStore ?? NO_SLICE).slice
@@ -379,13 +376,13 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             }
         }
         for (const area of session.annotations.areas.filter((a) => a.floor === storey)) {
-            const color = AREA_COLORS[area.kind] ?? "#7af0a8"
+            const color = AREA_COLORS[area.kind] ?? ANNOTATION_COLORS.user
             outline(area.polygon, color, true, `${area.name}${area.kind === "no-go" ? " ⛔" : ""}`)
         }
         for (const prism of prisms) {
             const selected = selectedPrism?.id === prism.id
             const corners = dragVertex.current?.id === prism.id ? dragVertex.current.polygon : prism.polygon
-            outline(corners, selected ? SELECTED_COLOR : prism.source === "agent" ? "#7fc8f8" : PRISM_COLOR, true, `${prism.label} · ${prism.height.toFixed(2)} m`)
+            outline(corners, selected ? SELECTED_COLOR : prism.source === "agent" ? ANNOTATION_COLORS.agent : PRISM_COLOR, true, `${prism.label} · ${prism.height.toFixed(2)} m`)
             if (selected && !minimap) {
                 for (const [x, y] of corners) {
                     const [sx, sy] = toScreen(x, y)
@@ -395,7 +392,7 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             }
         }
         const drafts: [string, [number, number][], [number, number] | null][] = [
-            [AREA_COLORS[plans.kind] ?? "#7af0a8", plans.draft, plans.hover],
+            [AREA_COLORS[plans.kind] ?? ANNOTATION_COLORS.user, plans.draft, plans.hover],
             [PRISM_COLOR, polygon.draft, polygon.hover],
         ]
         for (const [color, draft, hover] of drafts) {
@@ -403,14 +400,14 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 outline(hover ? [...draft, hover] : draft, color, false, undefined, true)
                 for (const [x, y] of draft) {
                     const [sx, sy] = toScreen(x, y)
-                    g.fillStyle = "#ffd166"
+                    g.fillStyle = ANNOTATION_COLORS.selected
                     g.fillRect(sx - 3, sy - 3, 6, 6)
                 }
             }
         }
         for (const point of session.annotations.planPoints.filter((p) => p.floor === storey)) {
             const [sx, sy] = toScreen(point.position[0], point.position[1])
-            g.fillStyle = "#7af0a8"
+            g.fillStyle = ANNOTATION_COLORS.user
             g.beginPath()
             g.arc(sx, sy, minimap ? 3 : 6, 0, Math.PI * 2)
             g.fill()
@@ -444,7 +441,7 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             g.strokeStyle = g.fillStyle
             g.stroke()
             g.lineWidth = 1.5
-            g.strokeStyle = active.tool === "erase" ? "#ff5f6d" : active.tool === "straighten" ? "#ffd166" : "#7af0a8"
+            g.strokeStyle = active.tool === "erase" ? ANNOTATION_COLORS.removal : active.tool === "straighten" ? ANNOTATION_COLORS.selected : ANNOTATION_COLORS.user
             g.stroke()
             g.lineCap = "butt"
         }
@@ -848,9 +845,12 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
         <div className={minimap ? "minimap-view" : "plan-view"} ref={host} data-view2d={kind} style={{ cursor }}>
             <canvas ref={canvas} />
             {heightImage && !minimap && (
-                <div className="dim-panel glass height-legend">
-                    floor height {heightImage.range[0].toFixed(2)} … {heightImage.range[1].toFixed(2)} m <span className="ramp" />
-                </div>
+                <Hud position="bottom-left">
+                    <Card glass padded={false} style={{ flexDirection: "row", alignItems: "center", gap: 8, padding: "4px 8px" }}>
+                        <Text small>floor height {heightImage.range[0].toFixed(2)} … {heightImage.range[1].toFixed(2)} m</Text>
+                        <span aria-hidden="true" style={{ display: "inline-block", width: 120, height: 8, background: gradientCss("turbo") }} />
+                    </Card>
+                </Hud>
             )}
         </div>
     )

@@ -1,6 +1,6 @@
 // The 2D view's raster: a top-down slice of the current voxels between z-start and z-end, either over the local
 // floor (the server's per-cell floor heights, so stairs and ramps stay in the slice) or as absolute heights.
-import { sampleGradient } from "../render/gradients.ts"
+import { sampleGradient } from "dimos-react"
 import type { Slice as MapSlice } from "./api.ts"
 
 export interface FloorStorey {

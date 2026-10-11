@@ -1,7 +1,7 @@
 // The uploads drawer: Desktop's upload queue (this app's and any other's), with progress, speed, ETA, cancel, retry,
 // readable errors (a login prompt when that's the problem), and the Dimensional account.
+import { Alert, Badge, Button, Card, Column, FloatingPanel, IconButton, Progress, Row, Spacer, Text } from "dimos-react"
 import type { Upload } from "../core/api.ts"
-import { Icon } from "./Icon.tsx"
 import { isActive, type Uploads } from "./useUploads.ts"
 
 export function bytes(n: number): string {
@@ -28,8 +28,8 @@ export function timeLeft(seconds: number | null): string {
 }
 
 const PHASES: Record<string, string> = { preparing: "Preparing", compress: "Compressing", upload: "Uploading", finishing: "Finishing" }
-const BADGE: Record<Upload["state"], [string, string]> = {
-    queued: ["", "queued"],
+const BADGE: Record<Upload["state"], ["default" | "info" | "ok" | "danger" | "warn", string]> = {
+    queued: ["default", "queued"],
     uploading: ["info", "uploading"],
     done: ["ok", "done"],
     failed: ["danger", "failed"],
@@ -50,67 +50,60 @@ function Item({ upload, uploads }: { upload: Upload; uploads: Uploads }) {
     const measured = upload.state === "uploading" && upload.phase === "upload" && upload.bytesTotal > 0
     const percent = measured ? Math.floor((upload.bytesDone / upload.bytesTotal) * 100) : upload.state === "done" ? 100 : 0
     return (
-        <li className={`dim-panel upload ${upload.state}`} data-upload={upload.id} data-upload-state={upload.state}>
-            <div className="upload-head">
-                <span className="upload-name" title={upload.path}>
+        <Card padded data-upload={upload.id} data-upload-state={upload.state} style={{ gap: 6, opacity: upload.state === "done" ? 0.85 : 1 }}>
+            <Row>
+                <Text as="strong" title={upload.path} style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {upload.name}
-                </span>
-                <span className="dim-mono dim">{bytes(upload.size)}</span>
-                <span className={`dim-badge ${badge}`}>{label}</span>
-            </div>
+                </Text>
+                <Text small mono muted>{bytes(upload.size)}</Text>
+                <Badge tone={badge}>{label}</Badge>
+            </Row>
             {upload.state === "uploading" && (
                 <>
-                    <div className={`bar ${measured ? "" : "indeterminate"}`}>
-                        <div style={{ width: measured ? `${percent}%` : undefined }} />
-                    </div>
-                    <div className="dim-mono upload-numbers">
-                        <span>{PHASES[upload.phase ?? ""] ?? upload.phase ?? "Starting"}{measured ? ` · ${percent}%` : "…"}</span>
-                        {measured && (
-                            <span>
-                                {bytes(upload.bytesDone)} / {bytes(upload.bytesTotal)}
-                            </span>
-                        )}
-                        {measured && upload.rateBps != null && <span>{bytes(upload.rateBps)}/s</span>}
-                        {measured && <span data-eta>{timeLeft(upload.etaSeconds)}</span>}
-                    </div>
+                    <Progress value={measured ? upload.bytesDone / upload.bytesTotal : undefined} />
+                    <Row wrap gap={10}>
+                        <Text small mono muted>{PHASES[upload.phase ?? ""] ?? upload.phase ?? "Starting"}{measured ? ` · ${percent}%` : "…"}</Text>
+                        {measured && <Text small mono muted>{bytes(upload.bytesDone)} / {bytes(upload.bytesTotal)}</Text>}
+                        {measured && upload.rateBps != null && <Text small mono muted>{bytes(upload.rateBps)}/s</Text>}
+                        <Spacer />
+                        {measured && <Text small mono muted data-eta>{timeLeft(upload.etaSeconds)}</Text>}
+                    </Row>
                 </>
             )}
-            {upload.state === "queued" && upload.errorCode !== "not_logged_in" && <div className="hint">Waiting for the uploads ahead of it.</div>}
+            {upload.state === "queued" && upload.errorCode !== "not_logged_in" && <Text small muted>Waiting for the uploads ahead of it.</Text>}
             {upload.state === "done" && (
-                <div className="hint">
+                <Text small muted>
                     {upload.skipped ? "Already in the cloud: nothing to send." : "Uploaded."}
-                    {upload.uploadId && <span className="dim-mono"> id {upload.uploadId.slice(0, 12)}</span>}
-                </div>
+                    {upload.uploadId && <Text mono> id {upload.uploadId.slice(0, 12)}</Text>}
+                </Text>
             )}
-            {upload.notice && <div className="dim-alert warn upload-notice">{upload.notice}</div>}
+            {upload.notice && <Alert tone="warn">{upload.notice}</Alert>}
             {upload.error && upload.state !== "done" && (
-                <div className="problem" data-upload-error={upload.errorCode ?? "failed"}>
+                <Text small tone="danger" data-upload-error={upload.errorCode ?? "failed"}>
                     {upload.error}
-                    {upload.log && <div className="dim-mono dim upload-log">details: {upload.log}</div>}
-                </div>
+                    {upload.log && <Text as="div" small mono muted style={{ wordBreak: "break-all" }}>details: {upload.log}</Text>}
+                </Text>
             )}
-            <div className="row end">
+            <Row justify="flex-end">
                 {upload.errorCode === "not_logged_in" && upload.state === "failed" && (
-                    <button type="button" className="dim-btn sm primary" onClick={() => uploads.openLogin()} data-action="upload-login">
+                    <Button size="sm" variant="primary" onClick={() => uploads.openLogin()} data-action="upload-login">
                         Log in
-                    </button>
+                    </Button>
                 )}
                 {(upload.state === "failed" || upload.state === "cancelled") && (
-                    <button type="button" className={`dim-btn sm ${upload.errorCode === "not_logged_in" ? "" : "primary"}`} onClick={() => uploads.retry(upload.id)} data-action="upload-retry">
-                        <Icon name="refresh" /> Retry
-                    </button>
+                    <Button size="sm" icon="refresh" variant={upload.errorCode === "not_logged_in" ? "default" : "primary"} onClick={() => uploads.retry(upload.id)} data-action="upload-retry">
+                        Retry
+                    </Button>
                 )}
-                {isActive(upload) ? (
-                    <button type="button" className="dim-btn sm danger" onClick={() => uploads.cancel(upload.id)} data-action="upload-cancel">
-                        Cancel
-                    </button>
-                ) : (
-                    <button type="button" className="dim-btn sm ghost" onClick={() => uploads.cancel(upload.id)} data-action="upload-remove" title="Remove from the list">
-                        <Icon name="close" />
-                    </button>
-                )}
-            </div>
-        </li>
+                {isActive(upload)
+                    ? (
+                        <Button size="sm" variant="danger" onClick={() => uploads.cancel(upload.id)} data-action="upload-cancel">
+                            Cancel
+                        </Button>
+                    )
+                    : <IconButton icon="close" size="sm" onClick={() => uploads.cancel(upload.id)} data-action="upload-remove" label="Remove from the list" />}
+            </Row>
+        </Card>
     )
 }
 
@@ -118,64 +111,68 @@ export function UploadsPanel({ uploads }: { uploads: Uploads }) {
     const { list, account } = uploads
     const finished = list.filter((u) => !isActive(u)).length
     return (
-        <div className="dim-panel glass uploads-panel" data-uploads-panel>
-            <div className="tool-panel-head">
-                <span>
-                    <Icon name="upload" /> Uploads to Dimensional cloud
-                </span>
-                <button type="button" className="dim-btn sm icon" onClick={() => uploads.setPanelOpen(false)} title="Close">
-                    <Icon name="close" />
-                </button>
-            </div>
-            <div className="upload-account">
-                {account?.loggedIn ? (
-                    <>
-                        <span className="dim">
-                            Logged in as <strong>{account.email ?? "(unknown account)"}</strong>
-                            {account.source === "env" ? " (DIMOS_API_KEY)" : ""}
-                        </span>
-                        {account.source !== "env" && (
-                            <button type="button" className="dim-btn sm ghost" onClick={uploads.logout} data-action="cloud-logout">
-                                Log out
-                            </button>
-                        )}
-                    </>
-                ) : account ? (
-                    <>
-                        <span className="dim">Not logged in</span>
-                        <button type="button" className="dim-btn sm" onClick={() => uploads.openLogin()} data-action="cloud-login">
-                            Log in
-                        </button>
-                    </>
-                ) : (
-                    <span className="dim">Checking your account…</span>
-                )}
-            </div>
-            {account?.error && <div className="hint">{account.error}</div>}
-            {uploads.problem && <div className="dim-alert danger">{uploads.problem}</div>}
+        <FloatingPanel
+            title="Uploads to Dimensional cloud"
+            icon="upload"
+            width="min(420px, calc(100vw - 24px))"
+            defaultPosition={{ x: -12, y: 60 }}
+            onClose={() => uploads.setPanelOpen(false)}
+            data-uploads-panel
+        >
+            <Row>
+                {account?.loggedIn
+                    ? (
+                        <>
+                            <Text small muted style={{ flex: 1 }}>
+                                Logged in as <strong>{account.email ?? "(unknown account)"}</strong>
+                                {account.source === "env" ? " (DIMOS_API_KEY)" : ""}
+                            </Text>
+                            {account.source !== "env" && (
+                                <Button size="sm" variant="ghost" onClick={uploads.logout} data-action="cloud-logout">
+                                    Log out
+                                </Button>
+                            )}
+                        </>
+                    )
+                    : account
+                    ? (
+                        <>
+                            <Text small muted style={{ flex: 1 }}>Not logged in</Text>
+                            <Button size="sm" onClick={() => uploads.openLogin()} data-action="cloud-login">
+                                Log in
+                            </Button>
+                        </>
+                    )
+                    : <Text small muted>Checking your account…</Text>}
+            </Row>
+            {account?.error && <Text small muted>{account.error}</Text>}
+            {uploads.problem && <Alert tone="danger">{uploads.problem}</Alert>}
             {uploads.waitingForLogin && (
-                <div className="dim-alert warn" data-waiting-for-login>
-                    Uploads are waiting for you to log in.
-                    <div className="row">
-                        <button type="button" className="dim-btn sm primary" onClick={() => uploads.openLogin()} data-action="waiting-login">
+                <Alert
+                    tone="warn"
+                    data-waiting-for-login
+                    actions={
+                        <Button size="sm" variant="primary" onClick={() => uploads.openLogin()} data-action="waiting-login">
                             Log in
-                        </button>
-                    </div>
-                </div>
+                        </Button>
+                    }
+                >
+                    Uploads are waiting for you to log in.
+                </Alert>
             )}
-            {!list.length && !uploads.problem && <div className="hint">Nothing uploaded yet. Upload a recording from the Save menu, or with the Upload button.</div>}
-            <ul className="uploads">
+            {!list.length && !uploads.problem && <Text small muted>Nothing uploaded yet. Upload a recording from the Save menu, or with the Upload button.</Text>}
+            <Column gap={6}>
                 {list.map((upload) => (
                     <Item key={upload.id} upload={upload} uploads={uploads} />
                 ))}
-            </ul>
+            </Column>
             {finished > 0 && (
-                <div className="row end">
-                    <button type="button" className="dim-btn sm ghost" onClick={uploads.clearFinished} data-action="uploads-clear">
+                <Row justify="flex-end">
+                    <Button size="sm" variant="ghost" onClick={uploads.clearFinished} data-action="uploads-clear">
                         Clear finished ({finished})
-                    </button>
-                </div>
+                    </Button>
+                </Row>
             )}
-        </div>
+        </FloatingPanel>
     )
 }

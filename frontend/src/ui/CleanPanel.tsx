@@ -2,11 +2,10 @@
 // previewed (the voxels it would remove turn red) and is undoable.
 import { useState } from "react"
 import { api, type Region } from "../core/api.ts"
-import { GRADIENTS } from "../render/gradients.ts"
-import { DEFAULT_PERIOD, isPalette, PALETTE_NAMES, PALETTES } from "../render/palette.ts"
-import { CUBE_SHADES, type CubeShade } from "../render/pointMaterial.ts"
+import { Button, Card, Checkbox, Column, DEFAULT_PERIOD, Field, GRADIENTS, Heading, isPalette, Kbd, NumberInput, PALETTE_NAMES, PALETTES, Row, Segmented, Select, Slider, Text } from "dimos-react"
+import { CUBE_SHADES } from "dimos-react/three"
+import type { CubeShade } from "../core/scene.ts"
 import type { Context } from "./context.ts"
-import { Icon } from "./Icon.tsx"
 
 interface Tool {
     op: string
@@ -59,207 +58,185 @@ export function CleanPanel({ context }: { context: Context }) {
         scene.select({ kind: "region", id: "region" })
         setUi({ scope: "region", region: scene.region })
     }
+    const look = (patch: Partial<typeof ui.look>) => {
+        scene.applyLook(patch)
+        setUi({ look: { ...ui.look, ...patch } })
+    }
+    const boxAroundView = () => {
+        scene.setRegion(scene.regionFromView())
+        scene.select({ kind: "region", id: "region" })
+        setUi({ region: scene.region })
+    }
     return (
-        <div>
-            <div className="panel-head">
-                <h2 className="dim-h2">Clean the map</h2>
-                <p>{session.voxels.toLocaleString()} voxels. Preview shows what a tool would remove in red; every change can be undone (⌘Z).</p>
-            </div>
+        <Column gap={8}>
+            <Text small muted>{session.voxels.toLocaleString()} voxels. Preview shows what a tool would remove in red; every change can be undone (⌘Z).</Text>
 
-            <h3 className="dim-label">Scope</h3>
-            <div className="row">
-                <div className="dim-tabs seg">
-                    {(["view", "region", "all"] as const).map((scope) => (
-                        <button key={scope} type="button" className={`dim-tab ${ui.scope === scope ? "on" : ""}`} onClick={() => (scope === "region" ? ensureRegion() : setUi({ scope }))}>
-                            {scope === "view" ? "in view" : scope === "region" ? "region box" : "whole map"}
-                        </button>
-                    ))}
-                </div>
-            </div>
+            <Heading level={3}>Scope</Heading>
+            <Segmented
+                size="sm"
+                value={ui.scope}
+                onChange={(scope: "view" | "region" | "all") => (scope === "region" ? ensureRegion() : setUi({ scope }))}
+                items={[["view", "in view"], ["region", "region box"], ["all", "whole map"]]}
+            />
             {ui.scope === "region" && (
-                <div className="hint">
-                    Drag the yellow box's handles: <kbd>G</kbd> move · <kbd>R</kbd> turn · <kbd>S</kbd> resize.{" "}
-                    <button type="button" className="dim-btn sm icon" onClick={() => { scene.setRegion(scene.regionFromView()); scene.select({ kind: "region", id: "region" }); setUi({ region: scene.region }) }}>
-                        box around view
-                    </button>
-                </div>
+                <Row wrap>
+                    <Text small muted>
+                        Drag the yellow box's handles: <Kbd>G</Kbd> move · <Kbd>R</Kbd> turn · <Kbd>S</Kbd> resize.
+                    </Text>
+                    <Button size="sm" onClick={boxAroundView}>box around view</Button>
+                </Row>
             )}
 
-            <h3 className="dim-label">Remove</h3>
+            <Heading level={3}>Remove</Heading>
             {TOOLS.map((tool) => (
-                <div className="dim-panel tool-card" key={tool.op}>
-                    <div className="name">{tool.name}</div>
-                    <div className="about">{tool.about}</div>
+                <Card key={tool.op} title={tool.name} description={tool.about}>
                     {tool.params?.map((param) => (
-                        <div className="field" key={param.key}>
-                            <span>{param.label}</span>
-                            <div className="row" style={{ margin: 0 }}>
-                                <input className="dim-range" type="range" min={param.min} max={param.max} step={param.step} value={params[tool.op][param.key]} onChange={(event) => setParams({ ...params, [tool.op]: { ...params[tool.op], [param.key]: Number(event.target.value) } })} />
-                                <span>
-                                    {params[tool.op][param.key]}
-                                    {param.unit ? ` ${param.unit}` : ""}
-                                </span>
-                            </div>
-                        </div>
+                        <Field inline label={param.label} key={param.key}>
+                            <Slider
+                                min={param.min}
+                                max={param.max}
+                                step={param.step}
+                                value={params[tool.op][param.key]}
+                                format={(value: number) => `${value}${param.unit ? ` ${param.unit}` : ""}`}
+                                onChange={(value: number) => setParams({ ...params, [tool.op]: { ...params[tool.op], [param.key]: value } })}
+                            />
+                        </Field>
                     ))}
-                    <div className="row">
-                        <button type="button" className="dim-btn sm" data-preview={tool.op} onClick={() => preview(tool.op)}>
+                    <Row>
+                        <Button size="sm" data-preview={tool.op} onClick={() => preview(tool.op)}>
                             Preview
-                        </button>
-                        <button type="button" className="dim-btn sm primary" data-op={tool.op} onClick={() => apply(tool.op)}>
+                        </Button>
+                        <Button size="sm" variant="primary" data-op={tool.op} onClick={() => apply(tool.op)}>
                             Remove
-                        </button>
-                    </div>
-                </div>
+                        </Button>
+                    </Row>
+                </Card>
             ))}
             {previewing && (
-                <div className="row">
-                    <span className="hint grow">{previewing}</span>
-                    <button type="button" className="dim-btn sm icon" onClick={() => { scene.setPreview(null); setPreviewing(null) }}>
+                <Row>
+                    <Text small muted style={{ flex: 1 }}>{previewing}</Text>
+                    <Button size="sm" variant="ghost" onClick={() => { scene.setPreview(null); setPreviewing(null) }}>
                         clear
-                    </button>
-                </div>
+                    </Button>
+                </Row>
             )}
 
-            <h3 className="dim-label">Crop</h3>
-            <div className="dim-panel tool-card">
-                <div className="about">With the region box: keep only what's inside it, or delete what's inside.</div>
-                <div className="row">
-                    <button type="button" className="dim-btn sm" onClick={ensureRegion}>
+            <Heading level={3}>Crop</Heading>
+            <Card description="With the region box: keep only what's inside it, or delete what's inside.">
+                <Row wrap>
+                    <Button size="sm" onClick={ensureRegion}>
                         {scene.region ? "Edit region" : "Draw region"}
-                    </button>
-                    <button type="button" className="dim-btn sm" disabled={!scene.region} data-op="cropOutside" onClick={() => apply("cropOutside", {}, { kind: "box", ...scene.region! })}>
+                    </Button>
+                    <Button size="sm" disabled={!scene.region} data-op="cropOutside" onClick={() => apply("cropOutside", {}, { kind: "box", ...scene.region! })}>
                         Keep inside
-                    </button>
-                    <button type="button" className="dim-btn sm danger" disabled={!scene.region} data-op="deleteInside" onClick={() => apply("deleteInside", {}, { kind: "box", ...scene.region! })}>
+                    </Button>
+                    <Button size="sm" variant="danger" disabled={!scene.region} data-op="deleteInside" onClick={() => apply("deleteInside", {}, { kind: "box", ...scene.region! })}>
                         Delete inside
-                    </button>
-                </div>
-                <div className="field">
-                    <span>keep heights</span>
-                    <div className="row" style={{ margin: 0 }}>
-                        <input className="dim-input number" type="number" step={0.1} value={heights[0]} onChange={(event) => setHeights([Number(event.target.value), heights[1]])} />
-                        <span>to</span>
-                        <input className="dim-input number" type="number" step={0.1} value={heights[1]} onChange={(event) => setHeights([heights[0], Number(event.target.value)])} />
-                        <span>m</span>
-                    </div>
-                </div>
-                <div className="row">
-                    <button type="button" className="dim-btn sm" onClick={() => preview("cropHeight", { zMin: heights[0], zMax: heights[1] })}>
+                    </Button>
+                </Row>
+                <Field inline label="keep heights">
+                    <Row gap={4}>
+                        <NumberInput size="sm" step={0.1} value={heights[0]} onChange={(low: number) => setHeights([low, heights[1]])} style={{ width: 70 }} />
+                        <Text small muted>to</Text>
+                        <NumberInput size="sm" step={0.1} unit="m" value={heights[1]} onChange={(high: number) => setHeights([heights[0], high])} style={{ width: 80 }} />
+                    </Row>
+                </Field>
+                <Row>
+                    <Button size="sm" onClick={() => preview("cropHeight", { zMin: heights[0], zMax: heights[1] })}>
                         Preview
-                    </button>
-                    <button type="button" className="dim-btn sm primary" data-op="cropHeight" onClick={() => apply("cropHeight", { zMin: heights[0], zMax: heights[1] }, { kind: "all" })}>
+                    </Button>
+                    <Button size="sm" variant="primary" data-op="cropHeight" onClick={() => apply("cropHeight", { zMin: heights[0], zMax: heights[1] }, { kind: "all" })}>
                         Crop heights
-                    </button>
-                </div>
-            </div>
+                    </Button>
+                </Row>
+            </Card>
 
-            <h3 className="dim-label">Orient</h3>
-            <div className="dim-panel tool-card">
-                <div className="about">Turn the map about its center, or level it so the floor is flat at z = 0. Annotations move with it.</div>
-                <div className="row">
-                    <button type="button" className="dim-btn sm" onClick={() => run(api.rotate(session.id, -90))}><Icon name="rotate-left" /> 90°</button>
-                    <button type="button" className="dim-btn sm" onClick={() => run(api.rotate(session.id, 90))}><Icon name="rotate-right" /> 90°</button>
-                    <input className="dim-input number" type="number" step={0.5} value={yaw} onChange={(event) => setYaw(Number(event.target.value))} />
-                    <button type="button" className="dim-btn sm" onClick={() => run(api.rotate(session.id, -yaw))}><Icon name="rotate-left" /></button>
-                    <button type="button" className="dim-btn sm" onClick={() => run(api.rotate(session.id, yaw))}><Icon name="rotate-right" /></button>
-                </div>
-                <div className="row">
-                    <button type="button" className="dim-btn sm primary" data-action="level" onClick={() => run(api.level(session.id), "Levelled")}>
+            <Heading level={3}>Orient</Heading>
+            <Card description="Turn the map about its center, or level it so the floor is flat at z = 0. Annotations move with it.">
+                <Row wrap gap={4}>
+                    <Button size="sm" icon="rotate-left" onClick={() => run(api.rotate(session.id, -90))}>90°</Button>
+                    <Button size="sm" icon="rotate-right" onClick={() => run(api.rotate(session.id, 90))}>90°</Button>
+                    <NumberInput size="sm" step={0.5} unit="°" value={yaw} onChange={setYaw} style={{ width: 76 }} />
+                    <Button size="sm" icon="rotate-left" aria-label={`turn ${yaw}° clockwise`} onClick={() => run(api.rotate(session.id, -yaw))} />
+                    <Button size="sm" icon="rotate-right" aria-label={`turn ${yaw}° counter-clockwise`} onClick={() => run(api.rotate(session.id, yaw))} />
+                </Row>
+                <Row>
+                    <Button size="sm" variant="primary" data-action="level" onClick={() => run(api.level(session.id), "Levelled")}>
                         Level the floor
-                    </button>
-                </div>
-            </div>
+                    </Button>
+                </Row>
+            </Card>
 
-            <h3 className="dim-label">Look</h3>
-            <div className="field">
-                <span>voxels as</span>
-                <div className="dim-tabs seg">
-                    {(["voxel", "disc", "square", "splat"] as const).map((style) => (
-                        <button key={style} type="button" className={`dim-tab ${ui.look.style === style ? "on" : ""}`} onClick={() => { scene.applyLook({ style }); setUi({ look: { ...ui.look, style } }) }}>
-                            {style === "voxel" ? "cubes" : style === "disc" ? "spheres" : style === "square" ? "squares" : "glow"}
-                        </button>
-                    ))}
-                </div>
-            </div>
+            <Heading level={3}>Look</Heading>
+            <Field inline label="voxels as">
+                <Segmented
+                    size="sm"
+                    value={ui.look.style}
+                    onChange={(style: "voxel" | "disc" | "square" | "splat") => look({ style })}
+                    items={[["voxel", "cubes"], ["disc", "spheres"], ["square", "squares"], ["splat", "glow"]]}
+                />
+            </Field>
             {ui.look.style === "voxel" && (
-                <div className="field">
-                    <span>cube shading</span>
-                    <select className="dim-select" value={ui.look.shade ?? "soft"} onChange={(event) => { const shade = event.target.value as CubeShade; scene.applyLook({ shade }); setUi({ look: { ...ui.look, shade } }) }} data-cube-shade>
-                        {Object.entries(CUBE_SHADES).map(([id, shade]) => (
-                            <option key={id} value={id} title={shade.about}>
-                                {shade.label}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+                <Field inline label="cube shading">
+                    <Select
+                        size="sm"
+                        value={ui.look.shade ?? "soft"}
+                        onChange={(shade: CubeShade) => look({ shade })}
+                        options={Object.entries(CUBE_SHADES as Record<string, { label: string }>).map(([id, shade]) => [id, shade.label])}
+                        data-cube-shade
+                    />
+                </Field>
             )}
-            <div className="field">
-                <span>colors</span>
-                <select className="dim-select" value={ui.look.gradient} onChange={(event) => { scene.applyLook({ gradient: event.target.value }); setUi({ look: { ...ui.look, gradient: event.target.value } }) }} data-look-colors>
-                    <optgroup label="repeating with height">
-                        {PALETTE_NAMES.map((name) => (
-                            <option key={name} value={name}>
-                                {PALETTES[name].label}
-                            </option>
-                        ))}
-                    </optgroup>
-                    <optgroup label="one ramp, bottom to top">
-                        {GRADIENTS.filter((name) => !isPalette(name)).map((name) => (
-                            <option key={name} value={name}>
-                                {name}
-                            </option>
-                        ))}
-                    </optgroup>
-                </select>
-            </div>
+            <Field inline label="colors">
+                <Select
+                    size="sm"
+                    value={ui.look.gradient}
+                    onChange={(gradient: string) => look({ gradient })}
+                    options={[
+                        ...PALETTE_NAMES.map((name: string) => ({ value: name, label: PALETTES[name].label, group: "repeating with height" })),
+                        ...GRADIENTS.filter((name: string) => !isPalette(name)).map((name: string) => ({ value: name, label: name, group: "one ramp, bottom to top" })),
+                    ]}
+                    data-look-colors
+                />
+            </Field>
             {isPalette(ui.look.gradient) && (
-                <div className="field">
-                    <span>repeat every (m)</span>
-                    <input
-                        className="dim-input number"
-                        type="number"
+                <Field inline label="repeat every">
+                    <NumberInput
+                        size="sm"
                         min={0.25}
                         step={0.5}
+                        unit="m"
                         value={ui.look.period ?? DEFAULT_PERIOD}
-                        title="the three colors cycle once per this much height; the raw scans use the next palette"
+                        title="the colors cycle once per this much height; the raw scans use the next palette"
                         data-look-period
-                        onChange={(event) => {
-                            const period = Number(event.target.value)
-                            if (period > 0) {
-                                scene.applyLook({ period })
-                                setUi({ look: { ...ui.look, period } })
-                            }
-                        }}
+                        onChange={(period: number) => period > 0 && look({ period })}
+                        style={{ width: 90 }}
                     />
-                </div>
+                </Field>
             )}
-            <div className="field">
-                <span>paths</span>
-                <div className="row" style={{ margin: 0 }}>
+            <Field inline label="paths">
+                <Row wrap gap={10}>
                     {(["corrected", "raw", "loops"] as const).map((key) => (
-                        <label key={key} className="row" style={{ margin: 0 }}>
-                            <input
-                                type="checkbox"
-                                checked={ui.showPaths[key]}
-                                onChange={(event) => {
-                                    const showPaths = { ...ui.showPaths, [key]: event.target.checked }
-                                    scene.showPaths(showPaths)
-                                    setUi({ showPaths })
-                                }}
-                            />
-                            {key === "corrected" ? "loop-closed" : key === "raw" ? "odometry" : "loop links"}
-                        </label>
+                        <Checkbox
+                            key={key}
+                            value={ui.showPaths[key]}
+                            label={key === "corrected" ? "loop-closed" : key === "raw" ? "odometry" : "loop links"}
+                            onChange={(checked: boolean) => {
+                                const showPaths = { ...ui.showPaths, [key]: checked }
+                                scene.showPaths(showPaths)
+                                setUi({ showPaths })
+                            }}
+                        />
                     ))}
-                </div>
-            </div>
+                </Row>
+            </Field>
 
-            <h3 className="dim-label">History</h3>
-            <div className="history">
+            <Heading level={3}>History</Heading>
+            <Column gap={2} style={{ maxHeight: 180, overflow: "auto" }}>
                 {[...session.history].reverse().map((line, index) => (
-                    <span key={index}>{line}</span>
+                    <Text small muted key={index}>{line}</Text>
                 ))}
-            </div>
-        </div>
+            </Column>
+        </Column>
     )
 }

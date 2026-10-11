@@ -1,9 +1,9 @@
 // Open: pick a recording from Desktop's shared recordings folder (newest first), see its streams, open it.
 import { useEffect, useState } from "react"
+import { Button, Card, Column, EmptyState, IconButton, List, ListRow, Row, SearchInput, Text } from "dimos-react"
 import { recordings, type DesktopRecording, type RecordingMetadata } from "../core/api.ts"
 import type { Context } from "./context.ts"
-import { Icon } from "./Icon.tsx"
-import { EmptyState } from "./EmptyState.tsx"
+import { AppButton } from "./AppButton.tsx"
 import { getZenoh } from "../dim-app/source/zenoh.js"
 
 function size(bytes: number) {
@@ -47,111 +47,103 @@ export function OpenPanel({ context }: { context: Context }) {
     }, [])
 
     const shown = (list ?? []).filter((r) => r.name.toLowerCase().includes(filter.toLowerCase()))
+    const hasLidar = (meta: RecordingMetadata) => meta.streams.some((stream) => /PointCloud2$/.test(stream.type))
     return (
-        <div>
-            <div className="panel-head">
-                <h2 className="dim-h2">Pick a recording</h2>
-                <p>
-                    Maps are built from a robot recording with lidar point clouds. These are Desktop's shared recordings{dir ? ` (${dir})` : ""}; the
-                    Controller app records new ones.
-                </p>
-            </div>
+        <Column gap={10}>
+            <Text muted small>
+                Maps are built from a robot recording with lidar point clouds. These are Desktop's shared recordings{dir ? ` (${dir})` : ""}; the Controller app records new ones.
+            </Text>
             {context.session && (
-                <div className="dim-panel tool-card">
-                    <div className="name">Continue: {context.session.name}</div>
-                    <div className="about">{context.session.stage === "map" ? `${context.session.voxels.toLocaleString()} voxels` : "not built yet"} · your work is kept automatically</div>
-                    <button type="button" className="dim-btn sm primary" onClick={() => context.setModal(context.session?.stage === "map" ? null : "generate")}>
-                        Continue
-                    </button>
-                </div>
+                <Card title={`Continue: ${context.session.name}`} description={`${context.session.stage === "map" ? `${context.session.voxels.toLocaleString()} voxels` : "not built yet"} · your work is kept automatically`}>
+                    <Row>
+                        <Button size="sm" variant="primary" onClick={() => context.setModal(context.session?.stage === "map" ? null : "generate")}>
+                            Continue
+                        </Button>
+                    </Row>
+                </Card>
             )}
-            <div className="row">
-                <input className="dim-input text grow" placeholder="filter…" value={filter} onChange={(event) => setFilter(event.target.value)} />
-                <button type="button" className="dim-btn sm icon" onClick={load} title="Reload the list">
-                    <Icon name="refresh" />
-                </button>
-            </div>
+            <Row>
+                <SearchInput placeholder="filter…" value={filter} onChange={setFilter} style={{ flex: 1 }} />
+                <IconButton icon="refresh" size="sm" variant="default" label="Reload the list" onClick={load} />
+            </Row>
             {problem && (
-                <div className="recordings-empty" data-testid="onboard-recordings-error">
-                    <EmptyState
-                        label="Recordings unavailable"
-                        tone="warn"
-                        title="Couldn't list Desktop's recordings"
-                        body={`${problem}. Desktop may be restarting; try again in a moment.`}
-                        actions={[{ label: "Try again", onClick: load }]}
-                    />
-                </div>
+                <EmptyState
+                    icon="warn"
+                    tone="warn"
+                    title="Couldn't list Desktop's recordings"
+                    message={`${problem}. Desktop may be restarting; try again in a moment.`}
+                    actions={<Button variant="primary" onClick={load}>Try again</Button>}
+                    data-testid="onboard-recordings-error"
+                />
             )}
             {list && !list.length && (
-                <div className="recordings-empty" data-testid="onboard-no-recordings">
-                    <EmptyState
-                        label="No recordings"
-                        title="You don't have any recordings yet"
-                        body="You can record a robot using the Controller app: run a blueprint (or a replay), open the Controller's Record tab, and press Record. New recordings show up here by themselves."
-                        actions={[
-                            { label: "Open the Controller", app: "dim-controller", appTitle: "the Controller" },
-                            { label: "Open Recordings", app: "dim-recordings", appTitle: "the Recordings app", primary: false },
-                        ]}
-                    />
-                </div>
+                <EmptyState
+                    icon="record"
+                    title="You don't have any recordings yet"
+                    message="You can record a robot using the Controller app: run a blueprint (or a replay), open the Controller's Record tab, and press Record. New recordings show up here by themselves."
+                    actions={
+                        <>
+                            <AppButton app="dim-controller" title="the Controller" variant="primary">Open the Controller</AppButton>
+                            <AppButton app="dim-recordings" title="the Recordings app">Open Recordings</AppButton>
+                        </>
+                    }
+                    data-testid="onboard-no-recordings"
+                />
             )}
-            {list && list.length > 0 && !shown.length && <div className="hint">No recordings match “{filter}”.</div>}
-            <ul className="recordings">
+            {list && list.length > 0 && !shown.length && <Text small muted>No recordings match “{filter}”.</Text>}
+            <List>
                 {shown.map((recording) => (
-                    <li key={recording.id}>
-                        <button
-                            type="button"
-                            className={`dim-panel recording ${context.session?.recordingPath === recording.path ? "current" : ""}`}
-                            data-recording={recording.id}
+                    <div key={recording.id}>
+                        <ListRow
+                            icon="file"
+                            title={recording.name}
+                            subtitle={`${recording.format} · ${size(recording.size)} · ${age(recording.modified)}${recording.id.includes("/") ? ` · ${recording.id.split("/")[0]}` : ""}${!recording.writable ? " · read-only (can't be saved into)" : ""}`}
+                            selected={context.session?.recordingPath === recording.path || details?.id === recording.id}
                             onClick={() => recordings.metadata(recording.id).then(setDetails).catch((error) => setProblem(error.message))}
-                        >
-                            <div>{recording.name}</div>
-                            <div className="meta">
-                                {recording.format} · {size(recording.size)} · {age(recording.modified)}
-                                {recording.id.includes("/") ? ` · ${recording.id.split("/")[0]}` : ""}
-                                {!recording.writable ? " · read-only (can't be saved into)" : ""}
-                            </div>
-                        </button>
+                            data-recording={recording.id}
+                        />
                         {details?.id === recording.id && (
-                            <div className="dim-panel tool-card">
-                                <div className="dim-mono streams">
-                                    {details.duration != null && <span>{Math.round(details.duration)} s recorded</span>}
+                            <Card padded style={{ margin: "4px 0 8px" }}>
+                                <Column gap={1}>
+                                    {details.duration != null && <Text small mono muted>{Math.round(details.duration)} s recorded</Text>}
                                     {details.streams.slice(0, 14).map((stream) => (
-                                        <span key={stream.name}>
+                                        <Text small mono muted key={stream.name}>
                                             {stream.name} · {stream.type.split(/[./]/).pop()} · {stream.count.toLocaleString()}
-                                        </span>
+                                        </Text>
                                     ))}
-                                    {details.streams.length > 14 && <span>…and {details.streams.length - 14} more</span>}
-                                </div>
-                                {!details.streams.some((stream) => /PointCloud2$/.test(stream.type)) && (
-                                    <div className="recording-warning" data-testid="onboard-no-pointclouds">
-                                        <EmptyState
-                                            label="No lidar"
-                                            tone="warn"
-                                            title="This recording has no lidar point clouds, so no map can be built from it"
-                                            body="Pick another recording, or record one with the Controller while a blueprint publishes a point cloud (lidar)."
-                                            actions={[{ label: "Open the Controller", app: "dim-controller", appTitle: "the Controller", primary: false }]}
-                                        />
-                                    </div>
+                                    {details.streams.length > 14 && <Text small mono muted>…and {details.streams.length - 14} more</Text>}
+                                </Column>
+                                {!hasLidar(details) && (
+                                    <EmptyState
+                                        icon="warn"
+                                        tone="warn"
+                                        title="This recording has no lidar point clouds, so no map can be built from it"
+                                        message="Pick another recording, or record one with the Controller while a blueprint publishes a point cloud (lidar)."
+                                        actions={<AppButton app="dim-controller" title="the Controller">Open the Controller</AppButton>}
+                                        data-testid="onboard-no-pointclouds"
+                                    />
                                 )}
-                                <button
-                                    type="button"
-                                    className="dim-btn sm primary"
-                                    disabled={opening !== null || !details.streams.some((stream) => /PointCloud2$/.test(stream.type))}
-                                    data-open={recording.id}
-                                    onClick={async () => {
-                                        setOpening(recording.id)
-                                        await context.openRecording({ id: recording.id, path: recording.path, name: recording.name, writable: recording.writable })
-                                        setOpening(null)
-                                    }}
-                                >
-                                    {opening === recording.id ? "Opening…" : "Open"}
-                                </button>
-                            </div>
+                                <Row>
+                                    <Button
+                                        size="sm"
+                                        variant="primary"
+                                        loading={opening === recording.id}
+                                        disabled={opening !== null || !hasLidar(details)}
+                                        data-open={recording.id}
+                                        onClick={async () => {
+                                            setOpening(recording.id)
+                                            await context.openRecording({ id: recording.id, path: recording.path, name: recording.name, writable: recording.writable })
+                                            setOpening(null)
+                                        }}
+                                    >
+                                        {opening === recording.id ? "Opening…" : "Open"}
+                                    </Button>
+                                </Row>
+                            </Card>
                         )}
-                    </li>
+                    </div>
                 ))}
-            </ul>
-        </div>
+            </List>
+        </Column>
     )
 }

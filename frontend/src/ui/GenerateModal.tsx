@@ -3,9 +3,9 @@
 // tunables) under Advanced. Regenerating over a map asks first: it replaces the map and the edits made on it.
 import { useEffect, useState } from "react"
 import { api, recordings, type RecordingMetadata } from "../core/api.ts"
+import { Alert, Button, Checkbox, Column, Field, Heading, Modal, NumberInput, Panel, Row, Select, Slider, Text, TextInput } from "dimos-react"
 import { JobCard, duration } from "./JobCard.tsx"
 import type { Context } from "./context.ts"
-import { Icon } from "./Icon.tsx"
 
 type Options = Record<string, any>
 
@@ -40,17 +40,14 @@ const LABELS: Record<string, [string, string]> = {
     loop_rot_var: ["loop rotation variance", ""],
 }
 
-function Field({ name, value, onChange, disabled }: { name: string; value: unknown; onChange: (value: unknown) => void; disabled: boolean }) {
+function OptionField({ name, value, onChange, disabled }: { name: string; value: unknown; onChange: (value: unknown) => void; disabled: boolean }) {
     const [label, about] = LABELS[name] ?? [name, ""]
     return (
-        <div className="field" title={about}>
-            <span>{label}</span>
-            {typeof value === "number" ? (
-                <input className="dim-input number" type="number" step="any" value={value} disabled={disabled} onChange={(event) => event.target.value !== "" && onChange(Number(event.target.value))} data-option={name} />
-            ) : (
-                <input className="dim-input text" value={String(value ?? "")} disabled={disabled} onChange={(event) => onChange(event.target.value)} data-option={name} />
-            )}
-        </div>
+        <Field inline label={label} title={about}>
+            {typeof value === "number"
+                ? <NumberInput size="sm" step={0.01} value={value} disabled={disabled} onChange={onChange} data-option={name} style={{ width: 110 }} />
+                : <TextInput size="sm" value={String(value ?? "")} disabled={disabled} onChange={onChange} data-option={name} />}
+        </Field>
     )
 }
 
@@ -99,93 +96,94 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const a = session.annotations
     const annotationCount = a.boxes.length + a.planes.length + a.points.length + a.planPoints.length + a.areas.length + (a.prisms?.length ?? 0)
     return (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !building && onClose()}>
-            <div className="dim-panel modal" role="dialog" aria-label="Generate the map" data-modal="generate">
-                <div className="modal-head">
-                    <h2 className="dim-h2">{built ? "Regenerate the map" : "Generate the map"}</h2>
-                    <button type="button" className="dim-btn sm icon" onClick={onClose} title="Close (the build keeps running)">
-                        <Icon name="close" />
-                    </button>
-                </div>
-                <p className="hint">Every scan placed by the recording's tf, loops closed (ICP + pose graph), then ray traced so free space clears what moved. The defaults work for most recordings.</p>
+        <Modal
+            open
+            size="lg"
+            title={built ? "Regenerate the map" : "Generate the map"}
+            onClose={onClose}
+            dismissable={!building}
+            aria-label="Generate the map"
+            data-modal="generate"
+            footer={
+                confirming
+                    ? null
+                    : (
+                        <Row grow justify="space-between" wrap>
+                            <Text small muted>
+                                {built && session.build ? `current: ${session.totalVoxels.toLocaleString()} voxels at ${(session.build.voxelSize * 100).toFixed(0)} cm, built in ${duration(session.build.seconds)}` : ""}
+                            </Text>
+                            <Button variant="primary" disabled={building} data-action="build" onClick={generate}>
+                                {built ? "Regenerate…" : "Generate"}
+                            </Button>
+                        </Row>
+                    )
+            }
+        >
+            <Column gap={10}>
+                <Text small muted>Every scan placed by the recording's tf, loops closed (ICP + pose graph), then ray traced so free space clears what moved. The defaults work for most recordings.</Text>
                 {session.postProcess && (
-                    <div className="dim-alert info" data-post-process>
-                        <div>
-                            <strong>Not post-processed yet.</strong> Generate first runs lite_record's post-processing on it (its Post process button): odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording in place. Then the map is built from the corrected scans.
-                            {!session.writable && " This recording is in a read-only folder, so it can't be: move it into the recordings folder first."}
-                        </div>
-                    </div>
+                    <Alert tone="info" title="Not post-processed yet." data-post-process>
+                        Generate first runs lite_record's post-processing on it (its Post process button): odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording in place. Then the map is built from the corrected scans.
+                        {!session.writable && " This recording is in a read-only folder, so it can't be: move it into the recordings folder first."}
+                    </Alert>
                 )}
-                <div className="field">
-                    <span>voxel size</span>
-                    <span className="row" style={{ margin: 0 }}>
-                        <input className="dim-range" type="range" min={0.02} max={0.2} step={0.01} value={options.voxelSize} disabled={building} onChange={(event) => set({ voxelSize: Number(event.target.value) })} />
-                        <input className="dim-input number" type="number" min={0.01} max={0.5} step={0.01} value={options.voxelSize} disabled={building} onChange={(event) => event.target.value !== "" && set({ voxelSize: Number(event.target.value) })} data-option="voxelSize" />
-                        <span className="dim">m</span>
-                    </span>
-                </div>
-                <div className="field">
-                    <span>lidar stream</span>
-                    <select className="dim-select" value={options.cloudStream ?? ""} onChange={(event) => set({ cloudStream: event.target.value })} disabled={building}>
-                        <option value="">auto (the biggest)</option>
-                        {clouds.map((stream) => (
-                            <option key={stream.name} value={stream.name}>
-                                {stream.name} ({stream.count})
-                            </option>
-                        ))}
-                    </select>
-                </div>
-                <details className="dim-panel advanced" data-advanced>
-                    <summary>Advanced {changed ? <span className="dim">· changed</span> : <span className="dim">· loop closure, ray tracing, tunables</span>}</summary>
-                    <label className="row">
-                        <input type="checkbox" checked={!options.loopClosure} disabled={building} onChange={(event) => set({ loopClosure: !event.target.checked })} data-option="skipLoopClosure" />
-                        skip loop closure <span className="dim">(faster; drift where the robot came back stays)</span>
-                    </label>
-                    <label className="row">
-                        <input type="checkbox" checked={!options.rayTracing} disabled={building} onChange={(event) => set({ rayTracing: !event.target.checked })} data-option="skipRayTracing" />
-                        skip ray tracing <span className="dim">(faster; what moved through the scene stays in the map)</span>
-                    </label>
+                <Field inline label="voxel size">
+                    <Row>
+                        <Slider min={0.02} max={0.2} step={0.01} value={options.voxelSize} disabled={building} showValue={false} onChange={(voxelSize: number) => set({ voxelSize })} style={{ width: 160 }} />
+                        <NumberInput size="sm" min={0.01} max={0.5} step={0.01} unit="m" value={options.voxelSize} disabled={building} onChange={(voxelSize: number) => set({ voxelSize })} data-option="voxelSize" style={{ width: 90 }} />
+                    </Row>
+                </Field>
+                <Field inline label="lidar stream">
+                    <Select
+                        size="sm"
+                        value={options.cloudStream ?? ""}
+                        disabled={building}
+                        onChange={(cloudStream: string) => set({ cloudStream })}
+                        options={[["", "auto (the biggest)"], ...clouds.map((stream) => [stream.name, `${stream.name} (${stream.count})`])]}
+                    />
+                </Field>
+                <Panel collapsible defaultOpen={false} title={`Advanced · ${changed ? "changed" : "loop closure, ray tracing, tunables"}`} data-advanced>
+                    <Checkbox value={!options.loopClosure} disabled={building} onChange={(skip: boolean) => set({ loopClosure: !skip })} data-option="skipLoopClosure" label="skip loop closure (faster; drift where the robot came back stays)" />
+                    <Checkbox value={!options.rayTracing} disabled={building} onChange={(skip: boolean) => set({ rayTracing: !skip })} data-option="skipRayTracing" label="skip ray tracing (faster; what moved through the scene stays in the map)" />
                     {(["every", "maxRange", "tfTolerance", "worldFrame"] as const).map((name) => (
-                        <Field key={name} name={name} value={options[name]} disabled={building} onChange={(value) => set({ [name]: value })} />
+                        <OptionField key={name} name={name} value={options[name]} disabled={building} onChange={(value) => set({ [name]: value })} />
                     ))}
-                    <h3 className="dim-label">Ray tracer</h3>
+                    <Heading level={3}>Ray tracer</Heading>
                     {Object.keys(defaults.ray).map((name) => (
-                        <Field key={name} name={name} value={options.ray[name]} disabled={building || !options.rayTracing} onChange={(value) => group("ray", { [name]: value })} />
+                        <OptionField key={name} name={name} value={options.ray[name]} disabled={building || !options.rayTracing} onChange={(value) => group("ray", { [name]: value })} />
                     ))}
-                    <h3 className="dim-label">Loop closure (pose graph)</h3>
+                    <Heading level={3}>Loop closure (pose graph)</Heading>
                     {Object.keys(defaults.pgo).map((name) => (
-                        <Field key={name} name={name} value={options.pgo[name]} disabled={building || !options.loopClosure} onChange={(value) => group("pgo", { [name]: value })} />
+                        <OptionField key={name} name={name} value={options.pgo[name]} disabled={building || !options.loopClosure} onChange={(value) => group("pgo", { [name]: value })} />
                     ))}
-                    <div className="row">
-                        <button type="button" className="dim-btn sm" disabled={building} onClick={() => setOptions({ ...defaults, cloudStream: options.cloudStream })}>
+                    <Row>
+                        <Button size="sm" disabled={building} onClick={() => setOptions({ ...defaults, cloudStream: options.cloudStream })}>
                             Reset to defaults
-                        </button>
-                    </div>
-                </details>
+                        </Button>
+                    </Row>
+                </Panel>
                 {confirming && (
-                    <div className="dim-alert warn warning" data-regen-warning>
-                        <strong>Regenerate over the current map?</strong> The new map replaces this one: every voxel edit on it (cleanup, erase, draw, straightened walls) and the undo history are gone, and the exported occupancy grids are dropped.
+                    <Alert
+                        tone="warn"
+                        title="Regenerate over the current map?"
+                        data-regen-warning
+                        actions={
+                            <>
+                                <Button size="sm" variant="danger" onClick={generate} data-action="confirm-regenerate">
+                                    Yes, regenerate
+                                </Button>
+                                <Button size="sm" onClick={() => setConfirming(false)}>
+                                    Keep the current map
+                                </Button>
+                            </>
+                        }
+                    >
+                        The new map replaces this one: every voxel edit on it (cleanup, erase, draw, straightened walls) and the undo history are gone, and the exported occupancy grids are dropped.
                         {annotationCount > 0 && ` Your ${annotationCount} annotation${annotationCount === 1 ? "" : "s"} stay where they are, but may no longer line up with a map built differently.`}
-                        <div className="row">
-                            <button type="button" className="dim-btn sm danger" onClick={generate} data-action="confirm-regenerate">
-                                Yes, regenerate
-                            </button>
-                            <button type="button" className="dim-btn sm" onClick={() => setConfirming(false)}>
-                                Keep the current map
-                            </button>
-                        </div>
-                    </div>
-                )}
-                {!confirming && (
-                    <div className="row">
-                        <button type="button" className="dim-btn sm primary" disabled={building} data-action="build" onClick={generate}>
-                            {built ? "Regenerate…" : "Generate"}
-                        </button>
-                        {built && session.build && <span className="hint">current: {session.totalVoxels.toLocaleString()} voxels at {(session.build.voxelSize * 100).toFixed(0)} cm, built in {duration(session.build.seconds)}</span>}
-                    </div>
+                    </Alert>
                 )}
                 {job && <JobCard job={job} onCancel={() => run(api.cancel(session.id), "Cancelling…")} />}
-            </div>
-        </div>
+            </Column>
+        </Modal>
     )
 }

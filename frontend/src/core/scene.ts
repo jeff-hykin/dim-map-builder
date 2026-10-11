@@ -3,14 +3,31 @@
 // agent. No React here; the UI drives it through methods and listens through callbacks.
 import * as THREE from "three"
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js"
-import { Viewer } from "../render/viewer.ts"
-import { applyLook, makePointMaterial, type CubeShade, type PointLook, type PointStyle } from "../render/pointMaterial.ts"
-import { FatLines, pushBox } from "../render/lines.ts"
-import { DEFAULT_GRADIENT } from "../render/gradients.ts"
-import { DEFAULT_PERIOD, otherPalette } from "../render/palette.ts"
-import { LabelPool } from "../render/labels.ts"
+import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
+import { applyLook, FatLines, LabelPool, makePointMaterial, pushBox, setClipBox } from "dimos-react/three"
+import { DEFAULT_PALETTE, DEFAULT_PERIOD, otherPalette } from "dimos-react"
 import type { Annotations, Box3, Slice } from "./api.ts"
+import { ANNOTATION_COLORS } from "./colors.ts"
 import { Store } from "./store.ts"
+
+export type PointStyle = "voxel" | "disc" | "square" | "splat"
+export type CubeShade = "soft" | "sky" | "outline" | "bevel" | "memworld"
+type PointLook = Record<string, unknown>
+
+/** What the Map Editor uses of dimos-react's Viewer (its types are loose: these are its real ones). */
+export interface Viewer {
+    scene: THREE.Scene
+    camera: THREE.PerspectiveCamera
+    controls: OrbitControls
+    renderer: THREE.WebGLRenderer
+    resolution: THREE.Vector2
+    pixelsPerMeter: { value: number }
+    /** a hidden view draws nothing until unpaused */
+    paused: boolean
+    requestRender(): void
+    frame(target: THREE.Vector3, distance: number): void
+    topDown(target: THREE.Vector3, extent: number): void
+}
 
 export type Selectable = { kind: "box" | "plane" | "point" | "prism"; id: string } | { kind: "region"; id: "region" }
 export type GizmoMode = "translate" | "rotate" | "scale"
@@ -26,10 +43,10 @@ export interface MapLook {
     shade?: CubeShade
 }
 
-const ACCENT = new THREE.Color("#7af0a8")
-const AGENT = new THREE.Color("#7fc8f8")
-const SELECTED = new THREE.Color("#ffd166")
-const PREVIEW = new THREE.Color("#ff5f6d")
+const ACCENT = new THREE.Color(ANNOTATION_COLORS.user)
+const AGENT = new THREE.Color(ANNOTATION_COLORS.agent)
+const SELECTED = new THREE.Color(ANNOTATION_COLORS.selected)
+const PREVIEW = new THREE.Color(ANNOTATION_COLORS.removal)
 
 function percentileRange(values: Float32Array, axis: number, low = 0.05, high = 0.95): [number, number] {
     const count = values.length / 3
@@ -100,7 +117,7 @@ export class MapScene {
     readonly raw: PointLayer
     readonly preview: PointLayer
     voxelSize = 0.05
-    look: MapLook = { style: "voxel", gradient: DEFAULT_GRADIENT, period: DEFAULT_PERIOD, scale: 1, shade: "soft" }
+    look: MapLook = { style: "voxel", gradient: DEFAULT_PALETTE, period: DEFAULT_PERIOD, scale: 1, shade: "soft" }
     #paths: FatLines
     #rawPath: FatLines
     #loops: FatLines
@@ -139,11 +156,9 @@ export class MapScene {
     /** the slice shown, for the 2D views */
     readonly sliceStore = new Store<{ slice: Slice | null }>({ slice: null })
 
-    constructor(host: HTMLElement) {
-        this.viewer = new Viewer(host, () => Date.now())
-        // the grid and fog follow the page's light/dark (dim-app theme.js toggles body.dark and fires `dim-theme`)
-        this.viewer.setTheme(document.body.classList.contains("dark"))
-        window.addEventListener("dim-theme", (event) => this.viewer.setTheme((event as CustomEvent<{ dark: boolean }>).detail.dark))
+    /** `viewer`: dimos-react's (Scene3D's onViewer); it follows the Desktop theme itself */
+    constructor(viewer: Viewer) {
+        this.viewer = viewer
         this.map = new PointLayer(this.viewer)
         this.raw = new PointLayer(this.viewer)
         this.preview = new PointLayer(this.viewer)
@@ -242,7 +257,7 @@ export class MapScene {
         this.raw.set(positions ?? new Float32Array(0))
         this.raw.points.visible = !!positions?.length
         // the raw scans are a second cloud: a different palette from the map's, so the two read apart
-        this.raw.look({ style: "disc", size: 0.08, colorMode: "height", gradient: otherPalette(this.look.gradient), period: this.look.period, axis: 2, rangeMin: null, rangeMax: null, solid: "#ffffff", opacity: 1 })
+        this.raw.look({ style: "disc", size: 0.08, colorMode: "height", gradient: otherPalette(this.look.gradient), period: this.look.period, axis: 2, rangeMin: null, rangeMax: null, opacity: 1 })
         this.#rawPath.clear()
         if (path) {
             for (let index = 3; index < path.length; index += 3) {
@@ -286,7 +301,7 @@ export class MapScene {
         points?.forEach((p, index) => flat.set(p, index * 3))
         this.preview.set(flat)
         this.preview.points.visible = flat.length > 0
-        this.preview.look({ style: "square", size: this.voxelSize * 1.15, colorMode: "solid", gradient: "memworld", axis: 2, rangeMin: null, rangeMax: null, solid: `#${PREVIEW.getHexString()}`, opacity: 1 })
+        this.preview.look({ style: "square", size: this.voxelSize * 1.15, colorMode: "solid", axis: 2, rangeMin: null, rangeMax: null, solid: `#${PREVIEW.getHexString()}`, opacity: 1 })
         this.viewer.requestRender()
     }
 
@@ -304,9 +319,8 @@ export class MapScene {
             axis: 2,
             rangeMin: null,
             rangeMax: null,
-            solid: "#ffffff",
             opacity: 1,
-            shade: this.look.shade ?? "soft",
+            cubeShade: this.look.shade ?? "soft",
         })
         this.viewer.requestRender()
     }
@@ -763,9 +777,7 @@ export class MapScene {
         const zMin = Math.max(slice ? slice.zMin : -big, this.#floorBand ? this.#floorBand[0] : -big)
         const zMax = Math.min(slice ? slice.zMax : big, this.#floorBand ? this.#floorBand[1] : big)
         for (const layer of [this.map, this.raw]) {
-            const uniforms = layer.material.uniforms
-            uniforms.uClipMin.value.set(slice && clipXY ? slice.xMin : -big, slice && clipXY ? slice.yMin : -big, zMin)
-            uniforms.uClipMax.value.set(slice && clipXY ? slice.xMax : big, slice && clipXY ? slice.yMax : big, zMax)
+            setClipBox(layer.material, [slice && clipXY ? slice.xMin : -big, slice && clipXY ? slice.yMin : -big, zMin], [slice && clipXY ? slice.xMax : big, slice && clipXY ? slice.yMax : big, zMax])
         }
         this.viewer.requestRender()
     }
@@ -818,7 +830,7 @@ export class MapScene {
         this.#xray = on
         const material = this.map.material
         if (on) {
-            applyLook(material, { style: "square", size: this.voxelSize * 1.1, colorMode: "solid", gradient: "memworld", axis: 2, rangeMin: null, rangeMax: null, solid: "#5fd0ff", opacity: 0.09 }, this.map.range)
+            applyLook(material, { style: "square", size: this.voxelSize * 1.1, colorMode: "solid", axis: 2, rangeMin: null, rangeMax: null, solid: ANNOTATION_COLORS.xray, opacity: 0.09 }, this.map.range)
             material.transparent = true
             material.depthWrite = false
             material.depthTest = false

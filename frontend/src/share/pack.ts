@@ -161,7 +161,7 @@ export interface SharedMap {
     exported: string
     voxelSize: number
     count: number
-    /** `period`: meters of height per color cycle when `gradient` is a repeating palette (render/palette.ts) */
+    /** `period`: meters of height per color cycle when `gradient` is a repeating palette (dimos-react PALETTES) */
     look: { style: "voxel" | "disc" | "square" | "splat"; gradient: string; period?: number; scale: number; shade?: string }
     /** the height color ramp's [low, high] in the editor (of the whole map, so colors match it) */
     range: [number, number]

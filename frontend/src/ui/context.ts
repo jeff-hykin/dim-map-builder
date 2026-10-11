@@ -2,10 +2,12 @@
 import type { MapScene } from "../core/scene.ts"
 import type { Session } from "../core/api.ts"
 import { AUTO_RANGE, type FloorModel, type SliceRange } from "../core/slice.ts"
-import type { CubeShade } from "../render/pointMaterial.ts"
-import { DEFAULT_GRADIENT, GRADIENTS } from "../render/gradients.ts"
-import { DEFAULT_PERIOD } from "../render/palette.ts"
-import type { IconName } from "./Icon.tsx"
+import type { CubeShade } from "../core/scene.ts"
+import { DEFAULT_PALETTE, DEFAULT_PERIOD, GRADIENTS as RAMPS, PALETTE_NAMES } from "dimos-react"
+
+type IconName = string
+/** the repeating palettes first (the default), then the ramps stretched over the map's height range */
+const GRADIENTS: string[] = [...PALETTE_NAMES, ...RAMPS]
 import type { Uploads } from "./useUploads.ts"
 
 export type ViewMode = "3d" | "split" | "2d"
@@ -66,7 +68,7 @@ export const DEFAULT_UI: UiState = {
     view2d: null,
     floorOverlay: false,
     showPaths: { corrected: true, raw: false, loops: true },
-    look: { style: "voxel", gradient: DEFAULT_GRADIENT, period: DEFAULT_PERIOD, scale: 1, shade: "soft" },
+    look: { style: "voxel", gradient: DEFAULT_PALETTE, period: DEFAULT_PERIOD, scale: 1, shade: "soft" },
     region: null,
     selected: null,
     scope: "view",

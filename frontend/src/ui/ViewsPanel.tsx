@@ -4,7 +4,8 @@ import { useState } from "react"
 import { api, type SavedView } from "../core/api.ts"
 import type { Context } from "./context.ts"
 import { APPLY_2D } from "./View2D.tsx"
-import { Icon } from "./Icon.tsx"
+import { Button, Column, Heading, List, Row, Text, TextInput } from "dimos-react"
+import { AnnotationRow } from "./rows.tsx"
 
 /** puts a saved view on the 2D view */
 export function applyView(context: Context, view: SavedView) {
@@ -48,50 +49,34 @@ export function ViewsPanel({ context }: { context: Context }) {
     }
     const views = session.annotations.views ?? []
     return (
-        <div>
-            <div className="hint">A 2D map is a saved view of the 3D map: a storey, a z-start / z-end band and where it looks. They're saved into the recording with the map.</div>
-            <div className="row">
-                <input className="dim-input text grow" placeholder="name, e.g. Floor 2 walls" value={name} onChange={(event) => setName(event.target.value)} data-view-name />
-                <button type="button" className="dim-btn sm primary" onClick={() => saveCurrentView(context, name.trim())?.then(() => setName(""))} data-action="save-view">
+        <Column gap={8}>
+            <Text small muted>A 2D map is a saved view of the 3D map: a storey, a z-start / z-end band and where it looks. They're saved into the recording with the map.</Text>
+            <Row>
+                <TextInput size="sm" placeholder="name, e.g. Floor 2 walls" value={name} onChange={setName} data-view-name style={{ flex: 1 }} />
+                <Button size="sm" variant="primary" onClick={() => saveCurrentView(context, name.trim())?.then(() => setName(""))} data-action="save-view">
                     Save current
-                </button>
-            </div>
-            <ul className="items">
+                </Button>
+            </Row>
+            <List>
                 {views.map((view) => (
-                    <li key={view.id} className="item" onClick={() => applyView(context, view)} data-saved-view={view.id}>
-                        <span className="swatch" />
-                        <input
-                            className="dim-input text"
-                            defaultValue={view.name}
-                            key={view.name}
-                            onClick={(event) => event.stopPropagation()}
-                            onBlur={(event) => event.target.value !== view.name && run(api.patch(session.id, view.id, { name: event.target.value }))}
-                        />
-                        <span className="row" style={{ margin: 0 }}>
-                            <span className="kind">
-                                F{view.floor + 1} · {view.zMin.toFixed(1)}…{view.zMax.toFixed(1)} m{view.follow ? " over floor" : ""}
-                            </span>
-                            <button
-                                type="button"
-                                className="dim-btn sm icon"
-                                onClick={(event) => {
-                                    event.stopPropagation()
-                                    run(api.remove(session.id, view.id), "Deleted (⌘Z to undo)")
-                                }}
-                            >
-                                <Icon name="close" />
-                            </button>
-                        </span>
-                    </li>
+                    <AnnotationRow
+                        key={view.id}
+                        name={view.name}
+                        onRename={(next) => run(api.patch(session.id, view.id, { name: next }))}
+                        detail={`F${view.floor + 1} · ${view.zMin.toFixed(1)}…${view.zMax.toFixed(1)} m${view.follow ? " over floor" : ""}`}
+                        onClick={() => applyView(context, view)}
+                        onDelete={() => run(api.remove(session.id, view.id), "Deleted (⌘Z to undo)")}
+                        data-saved-view={view.id}
+                    />
                 ))}
-            </ul>
-            <h3 className="dim-label">Export for navigation</h3>
-            <div className="hint">Occupancy grids (nav_msgs/OccupancyGrid, one per storey) written with the map on Save. Optional: the views above are the 2D maps.</div>
-            <div className="row">
-                <button type="button" className="dim-btn sm" onClick={() => run(api.plans(session.id, true), (r) => `${r.floors.length} occupancy grid${r.floors.length === 1 ? "" : "s"} ready (written on Save)`)} data-action="export-grids">
+            </List>
+            <Heading level={3}>Export for navigation</Heading>
+            <Text small muted>Occupancy grids (nav_msgs/OccupancyGrid, one per storey) written with the map on Save. Optional: the views above are the 2D maps.</Text>
+            <Row>
+                <Button size="sm" onClick={() => run(api.plans(session.id, true), (r) => `${r.floors.length} occupancy grid${r.floors.length === 1 ? "" : "s"} ready (written on Save)`)} data-action="export-grids">
                     {session.plans.length ? `Re-export ${session.plans.length} grid${session.plans.length === 1 ? "" : "s"}` : "Export occupancy grids"}
-                </button>
-            </div>
-        </div>
+                </Button>
+            </Row>
+        </Column>
     )
 }

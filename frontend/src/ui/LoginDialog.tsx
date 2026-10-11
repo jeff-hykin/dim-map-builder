@@ -4,30 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, type LoginState } from "../core/api.ts"
 import { getZenoh } from "../dim-app/source/zenoh.js"
-import { Icon } from "./Icon.tsx"
-
-function Copy({ text, action, label }: { text: string; action: string; label: string }) {
-    const [copied, setCopied] = useState(false)
-    return (
-        <button
-            type="button"
-            className="dim-btn sm icon"
-            data-action={action}
-            title={label}
-            onClick={() => {
-                navigator.clipboard
-                    ?.writeText(text)
-                    .then(() => {
-                        setCopied(true)
-                        window.setTimeout(() => setCopied(false), 1500)
-                    })
-                    .catch(() => {})
-            }}
-        >
-            <Icon name={copied ? "check" : "copy"} /> {copied ? "Copied" : "Copy"}
-        </button>
-    )
-}
+import { Alert, Button, Column, CopyButton, Icon, Label, Link, Modal, Row, Spinner, Text } from "dimos-react"
 
 const left = (expiresAt: number | null, now: number) => {
     if (!expiresAt) {
@@ -102,73 +79,81 @@ export function LoginDialog({ reason, onApproved, onClose }: { reason: string | 
     const state = login?.state
     const open = login?.urlComplete ?? login?.url ?? null
     return (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && cancel()}>
-            <div className="dim-panel modal login" data-modal="login" data-login-state={state ?? "starting"}>
-                <div className="modal-head">
-                    <h2 className="dim-h2">Log in to Dimensional cloud</h2>
-                    <button type="button" className="dim-btn sm icon" onClick={cancel} title="Cancel">
-                        <Icon name="close" />
-                    </button>
-                </div>
-                <p className="hint">{reason ?? "Uploads go to your Dimensional account."} Approve this machine from any browser where you're signed in: this one, or your phone.</p>
+        <Modal
+            open
+            onClose={cancel}
+            title="Log in to Dimensional cloud"
+            data-modal="login"
+            data-login-state={state ?? "starting"}
+            footer={
+                <Button size="sm" onClick={cancel} data-action="login-cancel">
+                    Cancel
+                </Button>
+            }
+        >
+            <Column gap={12}>
+                <Text small muted>{reason ?? "Uploads go to your Dimensional account."} Approve this machine from any browser where you're signed in: this one, or your phone.</Text>
                 {problem && (
-                    <div className="dim-alert danger">
-                        {problem}
-                        <div className="row">
-                            <button type="button" className="dim-btn sm" onClick={start} data-action="login-retry">
+                    <Alert
+                        tone="danger"
+                        actions={
+                            <Button size="sm" onClick={start} data-action="login-retry">
                                 Try again
-                            </button>
-                        </div>
-                    </div>
+                            </Button>
+                        }
+                    >
+                        {problem}
+                    </Alert>
                 )}
-                {!problem && (!login || state === "starting") && <div className="login-wait"><span className="spinner" /> Asking Dimensional cloud for a code…</div>}
+                {!problem && (!login || state === "starting") && (
+                    <Row>
+                        <Spinner size={14} /> <Text small muted>Asking Dimensional cloud for a code…</Text>
+                    </Row>
+                )}
                 {!problem && login && state === "pending" && (
                     <>
-                        <div className="login-step">
-                            <span className="dim-label">1 · Open</span>
-                            <div className="row">
-                                <a className="dim-mono login-url" href={open ?? "#"} target="_blank" rel="noreferrer" data-action="login-open">
-                                    {login.url} <Icon name="link" />
-                                </a>
-                                {login.url && <Copy text={open ?? login.url} action="login-copy-url" label="Copy the link" />}
-                            </div>
-                        </div>
-                        <div className="login-step">
-                            <span className="dim-label">2 · Enter the code</span>
-                            <div className="row">
-                                <span className="login-code dim-mono" data-login-code>
+                        <Column gap={4}>
+                            <Label>1 · Open</Label>
+                            <Row wrap>
+                                <Link className="dr-mono" href={open ?? "#"} target="_blank" rel="noreferrer" data-action="login-open" style={{ wordBreak: "break-all" }}>
+                                    {login.url} <Icon name="external" size={13} />
+                                </Link>
+                                {login.url && <CopyButton text={open ?? login.url} label="Copy the link" data-action="login-copy-url" />}
+                            </Row>
+                        </Column>
+                        <Column gap={4}>
+                            <Label>2 · Enter the code</Label>
+                            <Row>
+                                <Text mono data-login-code style={{ fontSize: 28, fontWeight: 700, letterSpacing: "0.18em", userSelect: "all" }}>
                                     {login.code}
-                                </span>
-                                {login.code && <Copy text={login.code} action="login-copy-code" label="Copy the code" />}
-                            </div>
-                        </div>
-                        <div className="login-wait">
-                            <span className="spinner" /> Waiting for you to approve…
-                            {login.expiresAt && <span className="dim-mono dim"> code expires in {left(login.expiresAt, now)}</span>}
-                        </div>
+                                </Text>
+                                {login.code && <CopyButton text={login.code} label="Copy the code" data-action="login-copy-code" />}
+                            </Row>
+                        </Column>
+                        <Row wrap>
+                            <Spinner size={14} /> <Text small muted>Waiting for you to approve…</Text>
+                            {login.expiresAt && <Text small mono muted>code expires in {left(login.expiresAt, now)}</Text>}
+                        </Row>
                     </>
                 )}
                 {!problem && state === "approved" && (
-                    <div className="dim-alert info" data-login-approved>
-                        <Icon name="check" /> Logged in{login?.email ? ` as ${login.email}` : ""}.
-                    </div>
+                    <Alert tone="ok" data-login-approved>
+                        Logged in{login?.email ? ` as ${login.email}` : ""}.
+                    </Alert>
                 )}
                 {!problem && (state === "denied" || state === "expired" || state === "failed" || state === "idle") && (
-                    <div className="dim-alert danger">
-                        {state === "denied" ? "The login was denied." : state === "expired" ? "The code expired before it was approved." : state === "idle" ? "The login was cancelled." : `The login failed: ${login?.error ?? "unknown error"}`}
-                        <div className="row">
-                            <button type="button" className="dim-btn sm primary" onClick={start} data-action="login-retry">
+                    <Alert
+                        tone="danger"
+                        actions={
+                            <Button size="sm" variant="primary" onClick={start} data-action="login-retry">
                                 Try again
-                            </button>
-                        </div>
-                    </div>
+                            </Button>
+                        }
+                    >
+                        {state === "denied" ? "The login was denied." : state === "expired" ? "The code expired before it was approved." : state === "idle" ? "The login was cancelled." : `The login failed: ${login?.error ?? "unknown error"}`}
+                    </Alert>
                 )}
-                <div className="row end">
-                    <button type="button" className="dim-btn sm" onClick={cancel} data-action="login-cancel">
-                        Cancel
-                    </button>
-                </div>
-            </div>
-        </div>
+            </Column>
+        </Modal>
     )
 }

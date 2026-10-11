@@ -4,8 +4,9 @@ import { useEffect, useState } from "react"
 import * as THREE from "three"
 import { api } from "../core/api.ts"
 import type { GizmoMode } from "../core/scene.ts"
+import { Button, Card, Column, Field, Heading, Kbd, List, NumberInput, Row, Segmented, Text, TextInput } from "dimos-react"
 import type { Context } from "./context.ts"
-import { Icon } from "./Icon.tsx"
+import { AnnotationRow } from "./rows.tsx"
 
 type Placing = "box" | "plane" | "point" | null
 
@@ -68,76 +69,61 @@ export function AnnotatePanel({ context }: { context: Context }) {
         }
     }
     const row = (kind: "box" | "plane" | "point", id: string, name: string, source: string, detail: string) => (
-        <li key={id} className={`item ${selected?.id === id ? "on" : ""}`} onClick={() => scene.select({ kind, id })} data-annotation={id}>
-            <span className={`swatch ${source === "agent" ? "agent" : ""}`} title={source === "agent" ? "added by the agent" : "added by you"} />
-            <input
-                className="dim-input text"
-                defaultValue={name}
-                key={name}
-                onClick={(event) => event.stopPropagation()}
-                onBlur={(event) => event.target.value !== name && run(api.patch(session.id, id, { label: event.target.value }))}
-                onKeyDown={(event) => event.key === "Enter" && (event.target as HTMLInputElement).blur()}
-            />
-            <span className="row" style={{ margin: 0 }}>
-                <span className="kind">{detail}</span>
-                <button
-                    type="button"
-                    className="dim-btn sm icon"
-                    title="Delete (undoable)"
-                    onClick={(event) => {
-                        event.stopPropagation()
-                        if (selected?.id === id) {
-                            scene.select(null)
-                        }
-                        run(api.remove(session.id, id), "Deleted (⌘Z to undo)")
-                    }}
-                >
-                    <Icon name="close" />
-                </button>
-            </span>
-        </li>
+        <AnnotationRow
+            key={id}
+            name={name}
+            onRename={(label) => run(api.patch(session.id, id, { label }))}
+            tone={source === "agent" ? "info" : "ok"}
+            toneLabel={source === "agent" ? "added by the agent" : "added by you"}
+            detail={detail}
+            selected={selected?.id === id}
+            onClick={() => scene.select({ kind, id })}
+            onDelete={() => {
+                if (selected?.id === id) {
+                    scene.select(null)
+                }
+                run(api.remove(session.id, id), "Deleted (⌘Z to undo)")
+            }}
+            data-annotation={id}
+        />
     )
     const fmt = (v: number) => v.toFixed(2)
     return (
-        <div>
-            <div className="panel-head">
-                <h2 className="dim-h2">Annotate</h2>
-                <p>Mark things in 3D. Click a tool, then click the map. Select one to move <kbd>G</kbd>, turn <kbd>R</kbd> or resize <kbd>S</kbd> it; <kbd>Del</kbd> removes it.</p>
-            </div>
-            <div className="field">
-                <span>label</span>
-                <input className="dim-input text" placeholder="e.g. chair, door, charger" value={label} onChange={(event) => setLabel(event.target.value)} />
-            </div>
-            <div className="row">
+        <Column gap={8}>
+            <Text small muted>
+                Mark things in 3D. Click a tool, then click the map. Select one to move <Kbd>G</Kbd>, turn <Kbd>R</Kbd> or resize <Kbd>S</Kbd> it; <Kbd>Del</Kbd> removes it.
+            </Text>
+            <Field inline label="label">
+                <TextInput size="sm" placeholder="e.g. chair, door, charger" value={label} onChange={setLabel} />
+            </Field>
+            <Row wrap>
                 {(["box", "plane", "point"] as const).map((kind) => (
-                    <button key={kind} type="button" className={`dim-btn sm ${placing === kind ? "on" : ""}`} data-place={kind} onClick={() => setPlacing(placing === kind ? null : kind)}>
-                        + {kind}
-                    </button>
+                    <Button key={kind} size="sm" icon="plus" pressed={placing === kind} data-place={kind} onClick={() => setPlacing(placing === kind ? null : kind)}>
+                        {kind}
+                    </Button>
                 ))}
-                <button type="button" className="dim-btn sm" title="A box hugging what's in the region box (or the view)" onClick={fitRegion}>
+                <Button size="sm" title="A box hugging what's in the region box (or the view)" onClick={fitRegion}>
                     fit box
-                </button>
-            </div>
-            {placing && <div className="hint">Click the map where the {placing} goes (Esc cancels).</div>}
-            <div className="row">
-                <span className="hint">gizmo</span>
-                <div className="dim-tabs seg">
-                    {(["translate", "rotate", "scale"] as const).map((next) => (
-                        <button key={next} type="button" className={`dim-tab ${mode === next ? "on" : ""}`} onClick={() => gizmo(next)}>
-                            {next === "translate" ? "move G" : next === "rotate" ? "turn R" : "size S"}
-                        </button>
-                    ))}
-                </div>
-            </div>
+                </Button>
+            </Row>
+            {placing && <Text small muted>Click the map where the {placing} goes (Esc cancels).</Text>}
+            <Field inline label="gizmo">
+                <Segmented
+                    size="sm"
+                    value={mode}
+                    onChange={gizmo}
+                    items={[["translate", "move G"], ["rotate", "turn R"], ["scale", "size S"]]}
+                />
+            </Field>
 
-            <h3 className="dim-label">Boxes ({a.boxes.length})</h3>
-            <ul className="items">{a.boxes.map((b) => row("box", b.id, b.label, b.source, `${fmt(b.box.size[0])}×${fmt(b.box.size[1])}×${fmt(b.box.size[2])} m`))}</ul>
-            <h3 className="dim-label">Planes ({a.planes.length})</h3>
-            <ul className="items">{a.planes.map((p) => row("plane", p.id, p.label, p.source, `${fmt(p.size[0])}×${fmt(p.size[1])} m`))}</ul>
-            <h3 className="dim-label">Points ({a.points.length})</h3>
-            <ul className="items">{a.points.map((p) => row("point", p.id, p.label, p.source, p.position.map(fmt).join(", ")))}</ul>
+            <Heading level={3}>Boxes ({a.boxes.length})</Heading>
+            <List>{a.boxes.map((b) => row("box", b.id, b.label, b.source, `${fmt(b.box.size[0])}×${fmt(b.box.size[1])}×${fmt(b.box.size[2])} m`))}</List>
+            <Heading level={3}>Planes ({a.planes.length})</Heading>
+            <List>{a.planes.map((p) => row("plane", p.id, p.label, p.source, `${fmt(p.size[0])}×${fmt(p.size[1])} m`))}</List>
+            <Heading level={3}>Points ({a.points.length})</Heading>
+            <List>{a.points.map((p) => row("point", p.id, p.label, p.source, p.position.map(fmt).join(", ")))}</List>
             {selected && selected.kind !== "region" && <SelectedDetails context={context} />}
-        </div>
+        </Column>
     )
 }
 
@@ -153,22 +139,19 @@ function SelectedDetails({ context }: { context: Context }) {
         run(api.patch(session.id, box.id, { box: next }))
     }
     return (
-        <div className="dim-panel tool-card">
-            <div className="name">{box.label}</div>
+        <Card title={box.label}>
             {(["center", "size"] as const).map((key) => (
-                <div className="field" key={key}>
-                    <span>{key}</span>
-                    <div className="row" style={{ margin: 0 }}>
+                <Field inline label={key} key={key}>
+                    <Row gap={4}>
                         {box.box[key].map((value, axis) => (
-                            <input key={`${box.id}${key}${axis}${value}`} className="dim-input number" type="number" step={0.05} defaultValue={value.toFixed(2)} onBlur={(event) => Number(event.target.value) !== value && set(key, axis, Number(event.target.value))} />
+                            <NumberInput key={`${box.id}${key}${axis}`} size="sm" step={0.05} precision={2} value={value} onChange={(next: number) => set(key, axis, next)} style={{ width: 72 }} />
                         ))}
-                    </div>
-                </div>
+                    </Row>
+                </Field>
             ))}
-            <div className="field">
-                <span>yaw</span>
-                <span>{THREE.MathUtils.radToDeg(box.box.yaw).toFixed(1)}°</span>
-            </div>
-        </div>
+            <Field inline label="yaw">
+                <Text mono>{THREE.MathUtils.radToDeg(box.box.yaw).toFixed(1)}°</Text>
+            </Field>
+        </Card>
     )
 }

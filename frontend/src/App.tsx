@@ -7,7 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { api, events, type Job, type LastSession, type Session } from "./core/api.ts"
 import { MapScene } from "./core/scene.ts"
 import type { FloorModel } from "./core/slice.ts"
-import { DEFAULT_UI, restoreUi, TOOLS, type Context, type Modal, type ToolId, type UiState, type ViewMode } from "./ui/context.ts"
+import { DEFAULT_UI, restoreUi, TOOLS, type Context, type Modal as ModalName, type ToolId, type UiState, type ViewMode } from "./ui/context.ts"
 import { OpenPanel } from "./ui/OpenPanel.tsx"
 import { CleanPanel } from "./ui/CleanPanel.tsx"
 import { AnnotatePanel } from "./ui/AnnotatePanel.tsx"
@@ -21,14 +21,14 @@ import { FIT_2D, View2D } from "./ui/View2D.tsx"
 import { SliceBar } from "./ui/SliceBar.tsx"
 import { JobCard } from "./ui/JobCard.tsx"
 import { SlicerWizard } from "./ui/SlicerWizard.tsx"
-import { Icon } from "./ui/Icon.tsx"
 import { useUploads, isActive } from "./ui/useUploads.ts"
 import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
 import { LoginDialog } from "./ui/LoginDialog.tsx"
 import { FloorPicker } from "./ui/FloorPicker.tsx"
 import { ShareMenu, SharePanel } from "./ui/SharePanel.tsx"
-import { EmptyState } from "./ui/EmptyState.tsx"
 import { notify } from "./dim-app/source/notify.js"
+import { Alert, AppShell, Badge, Button, EmptyState, Fab, Hud, Icon, IconButton, Modal, Panel, ProgressRing, Row, Segmented, Spinner, toast, Toolbar, TopBar, useMobile } from "dimos-react"
+import { SceneControls, SceneStats, Scene3D, type Viewer } from "dimos-react/three"
 
 const MODES: { id: ViewMode; label: string }[] = [
     { id: "3d", label: "3D" },
@@ -41,14 +41,13 @@ const keepFocus = (event: { preventDefault: () => void }) => event.preventDefaul
 const SLIDE_MS = 300
 
 export function App() {
-    const host = useRef<HTMLDivElement>(null)
     const viewBox = useRef<HTMLElement>(null)
     const [scene, setScene] = useState<MapScene | null>(null)
     const [session, setSession] = useState<Session | null>(null)
     /** undefined until the server's state is in; then the recording open before the last start, or null */
     const [last, setLast] = useState<LastSession | null | undefined>(undefined)
     const [ui, setUiState] = useState<UiState>(DEFAULT_UI)
-    const [modal, setModal] = useState<Modal>(null)
+    const [modal, setModal] = useState<ModalName>(null)
     const [slicing, setSlicing] = useState(false)
     const slicingRef = useRef(false)
     slicingRef.current = slicing
@@ -57,9 +56,8 @@ export function App() {
     const aligning = slicing && slicerStep === 2
     const aligningRef = useRef(false)
     aligningRef.current = aligning
-    const [toast, setToast] = useState<{ text: string; error: boolean } | null>(null)
     const [connected, setConnected] = useState(true)
-    const [stats, setStats] = useState("")
+    const mobile = useMobile(760)
     const [floor, setFloor] = useState<FloorModel | null>(null)
     const sessionRef = useRef<Session | null>(null)
     const uiRef = useRef(ui)
@@ -71,8 +69,7 @@ export function App() {
     const floorFor = useRef("")
 
     const say = useCallback((text: string, error = false) => {
-        setToast({ text, error })
-        window.setTimeout(() => setToast((current) => (current?.text === text ? null : current)), error ? 7000 : 3200)
+        toast({ message: text, tone: error ? "danger" : "info", durationMs: error ? 7000 : 3200 })
     }, [])
 
     const run = useCallback(
@@ -129,20 +126,12 @@ export function App() {
         [uploads.upload],
     )
 
-    // the scene lives for the page's lifetime
-    useEffect(() => {
-        if (!host.current) {
-            return
-        }
-        const created = new MapScene(host.current)
+    // the scene lives for the page's lifetime, on dimos-react's 3D view
+    const onViewer = useCallback((viewer: Viewer) => {
+        const created = new MapScene(viewer)
         setScene(created)
         // reachable from the console and the end-to-end tests
         ;(window as unknown as { mapBuilderScene: MapScene }).mapBuilderScene = created
-        const unsubscribe = created.viewer.stats.subscribe(() => {
-            const s = created.viewer.stats.get()
-            setStats(`${s.fps} fps · ${(s.points / 1e6).toFixed(2)}M voxels`)
-        })
-        return unsubscribe
     }, [])
 
     /** UI state changes go to the server with the camera (debounced), so a refresh restores them */
@@ -562,76 +551,94 @@ export function App() {
     const twoDKind = mode === "split" ? "minimap" : "main"
     const toolSpec = TOOLS.find((t) => t.id === ui.tool)
 
-    return (
-        <div className={`app mode-${mode} ${sliding ? "sliding" : ""}`}>
-            <header className="topbar">
-                {/* inside Desktop, its window bar already names the app */}
-                {window.parent === window && <span className="dim-title title">Map Editor</span>}
-                <button type="button" className="dim-btn sm icon recording-name" title={session ? `${session.recordingPath} (open another)` : "Pick a recording"} onClick={() => setModal("open")} data-action="open">
-                    {session ? <><Icon name="chevron-down" /> {session.name}</> : "Pick a recording…"}
-                </button>
-                <span className="spacer" />
-                <div className="dim-tabs mode-switch" role="tablist" aria-label="view" data-mode-switch={mode}>
-                    {MODES.map((m) => (
-                        <button key={m.id} type="button" role="tab" aria-selected={mode === m.id} className={`dim-tab ${mode === m.id ? "on" : ""}`} disabled={!hasMap || aligning} onMouseDown={keepFocus} onClick={() => setUi({ mode: m.id })} data-mode={m.id} title={m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)"}>
-                            {m.label}
-                        </button>
-                    ))}
-                </div>
-                <span className="spacer" />
-                {session && (
-                    <>
-                        <button type="button" className="dim-btn sm icon" disabled={!session.undoLabel} title={session.undoLabel ? `Undo: ${session.undoLabel} (⌘Z)` : "Nothing to undo"} onClick={() => run(api.undo(session.id))}>
-                            <Icon name="rotate-left" />
-                        </button>
-                        <button type="button" className="dim-btn sm icon" disabled={!session.redoLabel} title={session.redoLabel ? `Redo: ${session.redoLabel} (⇧⌘Z)` : "Nothing to redo"} onClick={() => run(api.redo(session.id))}>
-                            <Icon name="rotate-right" />
-                        </button>
-                        {hasMap && (
-                            <button type="button" className={`dim-btn sm save ${session.unsaved ? "primary unsaved" : "saved"}`} onClick={() => setModal("save")} title={session.savedAt ? `last saved ${new Date(session.savedAt * 1000).toLocaleString()}` : "not saved into the recording yet"} data-action="save-menu">
-                                {session.unsaved ? "Save" : <><Icon name="check" /> Saved</>}
-                            </button>
-                        )}
-                        <button
-                            type="button"
-                            className="dim-btn sm icon"
-                            onClick={() => (session.unsaved && hasMap ? setModal("save") : uploadRecording(false))}
-                            title={session.unsaved && hasMap ? "Upload to Dimensional cloud (save first, or upload as last saved)" : `Upload ${session.name} to Dimensional cloud`}
-                            data-action="upload"
+    const modeItems = MODES.map((m) => ({
+        value: m.id,
+        label: m.label,
+        disabled: !hasMap || aligning,
+        title: m.id === "2d" ? "2D slice (V)" : m.id === "split" ? "3D with a 2D map beside it (M)" : "3D (V)",
+        props: { "data-mode": m.id, onMouseDown: keepFocus },
+    }))
+
+    const topBar = (
+        <TopBar
+            // inside Desktop, its window bar already names the app
+            title={self === top ? "Map Editor" : undefined}
+            left={
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={session ? "chevron-down" : undefined}
+                    title={session ? `${session.recordingPath} (open another)` : "Pick a recording"}
+                    onClick={() => setModal("open")}
+                    data-action="open"
+                    style={{ maxWidth: "26vw", overflow: "hidden", textOverflow: "ellipsis" }}
+                >
+                    {session ? session.name : "Pick a recording…"}
+                </Button>
+            }
+            right={
+                <>
+                    {session && (
+                        <>
+                            <IconButton icon="rotate-left" size="sm" variant="default" disabled={!session.undoLabel} label={session.undoLabel ? `Undo: ${session.undoLabel} (⌘Z)` : "Nothing to undo"} onClick={() => run(api.undo(session.id))} />
+                            <IconButton icon="rotate-right" size="sm" variant="default" disabled={!session.redoLabel} label={session.redoLabel ? `Redo: ${session.redoLabel} (⇧⌘Z)` : "Nothing to redo"} onClick={() => run(api.redo(session.id))} />
+                            {hasMap && (
+                                <Button
+                                    size="sm"
+                                    variant={session.unsaved ? "primary" : "default"}
+                                    icon={session.unsaved ? undefined : "check"}
+                                    onClick={() => setModal("save")}
+                                    title={session.savedAt ? `last saved ${new Date(session.savedAt * 1000).toLocaleString()}` : "not saved into the recording yet"}
+                                    data-action="save-menu"
+                                >
+                                    {session.unsaved ? "Save" : "Saved"}
+                                </Button>
+                            )}
+                            <Button
+                                size="sm"
+                                icon="upload"
+                                onClick={() => (session.unsaved && hasMap ? setModal("save") : uploadRecording(false))}
+                                title={session.unsaved && hasMap ? "Upload to Dimensional cloud (save first, or upload as last saved)" : `Upload ${session.name} to Dimensional cloud`}
+                                data-action="upload"
+                            >
+                                Upload
+                            </Button>
+                            {hasMap && <ShareMenu disabled={slicing} onHtml={() => setModal("share")} />}
+                        </>
+                    )}
+                    {(uploads.list.length > 0 || uploads.waitingForLogin) && (
+                        <Button
+                            size="sm"
+                            variant={uploadFailed ? "danger" : "default"}
+                            pressed={uploads.panelOpen}
+                            onClick={() => uploads.setPanelOpen(!uploads.panelOpen)}
+                            title={activeUploads ? `${activeUploads} upload${activeUploads > 1 ? "s" : ""} in progress` : "Uploads"}
+                            data-action="uploads-panel"
                         >
-                            <Icon name="upload" /> Upload
-                        </button>
-                        {hasMap && <ShareMenu disabled={slicing} onHtml={() => setModal("share")} />}
-                    </>
-                )}
-                {(uploads.list.length > 0 || uploads.waitingForLogin) && (
-                    <button
-                        type="button"
-                        className={`dim-btn sm icon uploads-button ${uploads.panelOpen ? "on" : ""} ${uploadFailed ? "failed" : ""}`}
-                        onClick={() => uploads.setPanelOpen(!uploads.panelOpen)}
-                        title={activeUploads ? `${activeUploads} upload${activeUploads > 1 ? "s" : ""} in progress` : "Uploads"}
-                        data-action="uploads-panel"
-                    >
-                        <span className="upload-ring" style={{ ["--done" as string]: uploadFraction ?? 0 }} data-busy={activeUploads > 0 ? (uploadFraction == null ? "spin" : "ring") : undefined}>
-                            <Icon name="upload" />
-                        </span>
-                        {activeUploads > 0 ? <span className="count" data-upload-count>{activeUploads}</span> : uploadFailed ? <Icon name="warn" /> : null}
-                    </button>
-                )}
-            </header>
+                            {activeUploads > 0
+                                ? uploadFraction == null
+                                    ? <Spinner size={16} label="uploading" />
+                                    : <ProgressRing value={uploadFraction} size={20} stroke={2.5}><Icon name="upload" size={11} /></ProgressRing>
+                                : <Icon name="upload" size={14} />}
+                            {activeUploads > 0 ? <Badge tone="info" solid data-upload-count>{activeUploads}</Badge> : uploadFailed ? <Icon name="warn" size={14} /> : null}
+                        </Button>
+                    )}
+                </>
+            }
+        >
+            <Segmented items={modeItems} value={mode} onChange={(next: ViewMode) => setUi({ mode: next })} label="view" data-mode-switch={mode} />
+        </TopBar>
+    )
+
+    return (
+        <AppShell topBar={topBar} className={sliding ? "sliding" : undefined} data-mode={mode}>
             <section className="view" ref={viewBox}>
                 <div className="pane pane-3d" style={{ width: target[0] }}>
                     <div className="pane-inner" style={{ width: inner[0] }}>
-                        <div className="scene" ref={host} />
-                        {stats && <div className="dim-panel glass dim-mono view-stats">{stats}</div>}
-                        <div className="view-tools">
-                            <button type="button" className="dim-btn sm icon" title="Frame the map (F)" onClick={() => scene?.frameMap()}>
-                                <Icon name="fullscreen" /> Frame
-                            </button>
-                            <button type="button" className="dim-btn sm icon" title="Top-down view (T)" onClick={() => scene?.topDown()}>
-                                <Icon name="top" /> Top
-                            </button>
-                        </div>
+                        <Scene3D fixedFrame="world" onViewer={onViewer} className="scene3d">
+                            <SceneStats />
+                            <SceneControls position="top-right" onFrameAll={() => scene?.frameMap()} onTopDown={() => scene?.topDown()} />
+                        </Scene3D>
                     </div>
                 </div>
                 <div className="pane pane-2d" style={{ width: target[1] }}>
@@ -639,105 +646,114 @@ export function App() {
                         {hasMap && <View2D key={twoDKind} context={context} kind={twoDKind} aligning={aligning} />}
                         {hasMap && mode === "2d" && !aligning && <SliceBar context={context} />}
                         {hasMap && mode === "2d" && (
-                            <div className="view-tools">
-                                <button type="button" className="dim-btn sm icon" title="Frame the map (F)" onClick={() => window.dispatchEvent(new Event(FIT_2D))}>
-                                    <Icon name="fullscreen" /> Frame
-                                </button>
-                            </div>
+                            <Hud position="top-right">
+                                <IconButton icon="fit" variant="default" label="Frame the map (F)" onClick={() => window.dispatchEvent(new Event(FIT_2D))} />
+                            </Hud>
                         )}
                     </div>
                 </div>
                 {mode === "split" && <SplitDivider context={context} width={width} />}
 
-                <div className="orbs">
-                    <button type="button" className={`orb orb-edit ${ui.paletteOpen ? "open" : ""}`} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ paletteOpen: !ui.paletteOpen })} title={hasMap ? "Edit tools (E)" : "Generate the map first"} data-orb="edit">
-                        <Icon name="edit" />
-                    </button>
-                    <button type="button" className={`orb orb-generate ${session && !hasMap ? "next" : ""} ${running?.kind === "build" ? "busy" : ""}`} disabled={!session} onMouseDown={keepFocus} onClick={() => setModal("generate")} title={hasMap ? "Map generation settings (regenerate)" : "Generate the map"} data-orb="generate">
-                        <Icon name="refresh" />
-                    </button>
-                    <button
-                        type="button"
-                        className={`orb orb-slicer ${slicing ? "open" : ""} ${hasMap && !session?.annotations.slice && !slicing ? "recommend" : ""}`}
-                        disabled={!hasMap}
-                        onMouseDown={keepFocus}
-                        onClick={() => {
-                            if (!slicing) {
-                                setUi({ mode: "3d", paletteOpen: false })
-                            }
-                            setSlicing(!slicing)
-                        }}
-                        title={hasMap ? "Slicer: height band, alignment and crop (a view, not an edit)" : "Generate the map first"}
-                        data-orb="slicer"
-                    >
-                        <Icon name="layers" />
-                    </button>
-                </div>
-                {hasMap && !session?.annotations.slice && !slicing && (
-                    <div className="dim-badge warn orb-hint" data-slicer-hint>
-                        <Icon name="arrow-left" /> Recommended: slice your map
-                    </div>
-                )}
-                {slicing && hasMap && <SlicerWizard context={context} onClose={() => setSlicing(false)} onStep={setSlicerStep} />}
+                <Hud position="top-left">
+                    <Row gap={12}>
+                        <Fab icon="edit" label={hasMap ? "Edit tools (E)" : "Generate the map first"} active={ui.paletteOpen} disabled={!hasMap} onMouseDown={keepFocus} onClick={() => setUi({ paletteOpen: !ui.paletteOpen })} data-orb="edit" />
+                        <Fab
+                            icon="refresh"
+                            tone="info"
+                            label={hasMap ? "Map generation settings (regenerate)" : "Generate the map"}
+                            attention={running?.kind === "build" ? "spin" : session && !hasMap ? "pulse" : undefined}
+                            disabled={!session}
+                            onMouseDown={keepFocus}
+                            onClick={() => setModal("generate")}
+                            data-orb="generate"
+                        />
+                        <Fab
+                            icon="layers"
+                            tone="warn"
+                            label={hasMap ? "Slicer: height band, alignment and crop (a view, not an edit)" : "Generate the map first"}
+                            active={slicing}
+                            attention={hasMap && !session?.annotations.slice && !slicing ? "glow" : undefined}
+                            disabled={!hasMap}
+                            onMouseDown={keepFocus}
+                            onClick={() => {
+                                if (!slicing) {
+                                    setUi({ mode: "3d", paletteOpen: false })
+                                }
+                                setSlicing(!slicing)
+                            }}
+                            data-orb="slicer"
+                        />
+                        {hasMap && !session?.annotations.slice && !slicing && mode === "3d" && !mobile && (
+                            <Badge tone="warn" data-slicer-hint>
+                                <Icon name="arrow-left" size={12} /> Recommended: slice your map
+                            </Badge>
+                        )}
+                    </Row>
+                    {slicing && hasMap && <SlicerWizard context={context} onClose={() => setSlicing(false)} onStep={setSlicerStep} />}
+                    {hasMap && ui.paletteOpen && !slicing && (
+                        <Row align="flex-start" gap={10}>
+                            <Toolbar floating vertical aria-label="edit tools" data-palette>
+                                {TOOLS.map((tool) => (
+                                    <IconButton
+                                        key={tool.id}
+                                        icon={tool.icon}
+                                        pressed={ui.tool === tool.id}
+                                        onMouseDown={keepFocus}
+                                        onClick={() => pickTool(tool.id)}
+                                        label={`${tool.label}${tool.key.length === 1 ? ` (${tool.key.toUpperCase()})` : tool.key ? " (Esc)" : ""}`}
+                                        data-tool={tool.id}
+                                    />
+                                ))}
+                            </Toolbar>
+                            {ui.tool !== "select" && toolSpec && (
+                                <Panel
+                                    glass
+                                    icon={toolSpec.icon}
+                                    title={toolSpec.label}
+                                    actions={<IconButton icon="close" size="sm" label="Close (Esc)" onClick={() => pickTool("select")} />}
+                                    data-tool-panel={ui.tool}
+                                    style={{ width: mobile ? "calc(100vw - 90px)" : 330, maxHeight: "calc(100vh - 190px - var(--dim-inset-bottom, 0px))" }}
+                                >
+                                    {ui.tool === "clean" && <CleanPanel context={context} />}
+                                    {ui.tool === "annotate" && <AnnotatePanel context={context} />}
+                                    {ui.tool === "polygon" && <PolygonPanel context={context} />}
+                                    {ui.tool === "places" && <PlacesPanel context={context} />}
+                                    {["erase", "brush", "line", "straighten"].includes(ui.tool) && <ModifyPanel context={context} />}
+                                    {ui.tool === "views" && <ViewsPanel context={context} />}
+                                </Panel>
+                            )}
+                        </Row>
+                    )}
+                </Hud>
                 {hasMap && !slicing && <FloorPicker context={context} mode={mode} />}
-                {hasMap && ui.paletteOpen && !slicing && (
-                    <div className="dim-panel glass palette" role="toolbar" aria-label="edit tools" data-palette>
-                        {TOOLS.map((tool) => (
-                            <button key={tool.id} type="button" className={`dim-btn ghost icon ${ui.tool === tool.id ? "on" : ""}`} onMouseDown={keepFocus} onClick={() => pickTool(tool.id)} title={`${tool.label}${tool.key.length === 1 ? ` (${tool.key.toUpperCase()})` : tool.key ? " (Esc)" : ""}`} data-tool={tool.id}>
-                                <Icon name={tool.icon} />
-                            </button>
-                        ))}
-                    </div>
-                )}
-                {hasMap && ui.paletteOpen && ui.tool !== "select" && toolSpec && (
-                    <div className="dim-panel glass tool-panel" data-tool-panel={ui.tool}>
-                        <div className="tool-panel-head">
-                            <span>
-                                <Icon name={toolSpec.icon} /> {toolSpec.label}
-                            </span>
-                            <button type="button" className="dim-btn sm icon" onClick={() => pickTool("select")} title="Close (Esc)">
-                                <Icon name="close" />
-                            </button>
-                        </div>
-                        {ui.tool === "clean" && <CleanPanel context={context} />}
-                        {ui.tool === "annotate" && <AnnotatePanel context={context} />}
-                        {ui.tool === "polygon" && <PolygonPanel context={context} />}
-                        {ui.tool === "places" && <PlacesPanel context={context} />}
-                        {["erase", "brush", "line", "straighten"].includes(ui.tool) && <ModifyPanel context={context} />}
-                        {ui.tool === "views" && <ViewsPanel context={context} />}
-                    </div>
-                )}
                 {!session && last !== undefined && modal !== "open" && (
                     <EmptyState
                         layer
-                        label="No recording open"
+                        icon="map"
                         title="Please pick a recording"
-                        body="Maps are built from a robot recording with lidar point clouds, from Desktop's shared recordings folder."
-                        testId="pick-a-recording"
-                        actions={[
-                            { label: "Pick a recording", onClick: () => setModal("open") },
-                            ...(last
-                                ? [{
-                                    label: `Continue ${last.name}`,
-                                    primary: false,
-                                    onClick: () => openRecording({ id: last.recordingId, path: last.path, name: last.name, writable: last.writable }),
-                                }]
-                                : []),
-                        ]}
+                        message="Maps are built from a robot recording with lidar point clouds, from Desktop's shared recordings folder."
+                        data-testid="pick-a-recording"
+                        actions={
+                            <>
+                                <Button variant="primary" onClick={() => setModal("open")}>Pick a recording</Button>
+                                {last && <Button onClick={() => openRecording({ id: last.recordingId, path: last.path, name: last.name, writable: last.writable })}>Continue {last.name}</Button>}
+                            </>
+                        }
                     />
                 )}
-                {running && modal !== "generate" && (
-                    <div className="floating-job">
-                        <JobCard job={running} onCancel={() => session && run(api.cancel(session.id), "Cancelling…")} />
-                    </div>
-                )}
+                {(running && modal !== "generate") || !connected
+                    ? (
+                        <Hud position="top">
+                            {!connected && (
+                                <Alert tone="danger" data-testid="onboard-backend-down">
+                                    The Map Editor server isn't answering; reconnecting… If this stays, close the app (✕) and open it again.
+                                </Alert>
+                            )}
+                            {running && modal !== "generate" && <JobCard job={running} onCancel={() => session && run(api.cancel(session.id), "Cancelling…")} style={{ width: "min(520px, 90vw)" }} />}
+                        </Hud>
+                    )
+                    : null}
                 {uploads.panelOpen && <UploadsPanel uploads={uploads} />}
-                <div className="dim-toasts">{toast && <div className={`dim-toast ${toast.error ? "danger" : ""}`}>{toast.text}</div>}</div>
-                {!connected && (
-                    <div className="dim-alert danger connection" data-testid="onboard-backend-down">
-                        The Map Editor server isn't answering; reconnecting… If this stays, close the app (✕) and open it again.
-                    </div>
-                )}
             </section>
             {uploads.loginOpen && (
                 <LoginDialog
@@ -747,46 +763,16 @@ export function App() {
                 />
             )}
             {modal === "generate" && session && <GenerateModal context={context} onClose={() => setModal(null)} />}
-            {modal === "open" && (
-                <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModal(null)}>
-                    <div className="dim-panel modal" data-modal="open">
-                        <div className="modal-head">
-                            <span />
-                            <button type="button" className="dim-btn sm icon" onClick={() => setModal(null)}>
-                                <Icon name="close" />
-                            </button>
-                        </div>
-                        <OpenPanel context={context} />
-                    </div>
-                </div>
-            )}
-            {modal === "share" && session && hasMap && (
-                <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModal(null)}>
-                    <div className="dim-panel modal" data-modal="share">
-                        <div className="modal-head">
-                            <span />
-                            <button type="button" className="dim-btn sm icon" onClick={() => setModal(null)}>
-                                <Icon name="close" />
-                            </button>
-                        </div>
-                        <SharePanel context={context} />
-                    </div>
-                </div>
-            )}
-            {modal === "save" && session && (
-                <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setModal(null)}>
-                    <div className="dim-panel modal" data-modal="save">
-                        <div className="modal-head">
-                            <span />
-                            <button type="button" className="dim-btn sm icon" onClick={() => setModal(null)}>
-                                <Icon name="close" />
-                            </button>
-                        </div>
-                        <SavePanel context={context} />
-                    </div>
-                </div>
-            )}
-        </div>
+            <Modal open={modal === "open"} onClose={() => setModal(null)} title="Pick a recording" data-modal="open">
+                <OpenPanel context={context} />
+            </Modal>
+            <Modal open={modal === "share" && !!session && hasMap} onClose={() => setModal(null)} title="Share as HTML" data-modal="share">
+                <SharePanel context={context} />
+            </Modal>
+            <Modal open={modal === "save" && !!session} onClose={() => setModal(null)} title="Save into the recording" data-modal="save">
+                <SavePanel context={context} />
+            </Modal>
+        </AppShell>
     )
 }
 

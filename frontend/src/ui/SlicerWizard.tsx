@@ -5,34 +5,14 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
 import * as THREE from "three"
 import { api, type Slice } from "../core/api.ts"
+import { AngleDial, Button, Card, Column, Heading, NumberInput, RangeSlider, Row, Slider, Spacer, Stepper, Text } from "dimos-react"
 import type { Context } from "./context.ts"
-import { Icon } from "./Icon.tsx"
 
 const BIG = 1e9
 const STEPS = ["Height", "Align", "Crop", "Done"]
 
-function NumberField({ value, onChange, step, data, unit }: { value: number; onChange: (value: number) => void; step: number; data: string; unit: string }) {
-    const [text, setText] = useState(value.toFixed(2))
-    useEffect(() => setText(unit === "°" ? value.toFixed(1) : value.toFixed(2)), [value, unit])
-    return (
-        <span className="row" style={{ margin: 0 }}>
-            <input className="dim-input number" type="number" step={step} value={text} data-slicer={data} onChange={(event) => setText(event.target.value)} onBlur={() => text !== "" && onChange(Number(text))} onKeyDown={(event) => event.key === "Enter" && text !== "" && onChange(Number(text))} />
-            <span className="dim">{unit}</span>
-        </span>
-    )
-}
-
-/** two handles on one track */
-function DualRange({ low, high, min, max, onChange }: { low: number; high: number; min: number; max: number; onChange: (low: number, high: number) => void }) {
-    const percent = (value: number) => `${((value - min) / (max - min)) * 100}%`
-    return (
-        <div className="dual-range wide">
-            <div className="track" />
-            <div className="fill" style={{ left: percent(Math.max(min, low)), right: `calc(100% - ${percent(Math.min(max, high))})` }} />
-            <input type="range" min={min} max={max} step={0.05} value={low} onChange={(event) => onChange(Math.min(Number(event.target.value), high), high)} data-slicer-handle="zMin" />
-            <input type="range" min={min} max={max} step={0.05} value={high} onChange={(event) => onChange(low, Math.max(Number(event.target.value), low))} data-slicer-handle="zMax" />
-        </div>
-    )
+function Meters({ value, onChange, step, data, unit }: { value: number; onChange: (value: number) => void; step: number; data: string; unit: string }) {
+    return <NumberInput size="sm" step={step} precision={unit === "°" ? 1 : 2} unit={unit} value={value} onChange={onChange} data-slicer={data} style={{ width: 92 }} />
 }
 
 /** `onStep` hears each step (App shows the 2D view for the align step) */
@@ -158,27 +138,6 @@ export function SlicerWizard({ context, onClose, onStep }: { context: Context; o
         }
     }
 
-    // the dial: drag around its centre to turn the map
-    const dial = (event: ReactPointerEvent<HTMLDivElement>) => {
-        const rect = event.currentTarget.getBoundingClientRect()
-        const centre = [rect.left + rect.width / 2, rect.top + rect.height / 2]
-        const start = Math.atan2(event.clientY - centre[1], event.clientX - centre[0])
-        const yaw0 = draftRef.current.yaw
-        const move = (e: PointerEvent) => {
-            const angle = Math.atan2(e.clientY - centre[1], e.clientX - centre[0])
-            // screen y points down: turning clockwise on screen is a negative yaw
-            let yaw = yaw0 - (angle - start)
-            yaw = Math.atan2(Math.sin(yaw), Math.cos(yaw))
-            setDraft({ yaw })
-        }
-        const up = () => {
-            window.removeEventListener("pointermove", move)
-            window.removeEventListener("pointerup", up)
-        }
-        window.addEventListener("pointermove", move)
-        window.addEventListener("pointerup", up)
-    }
-
     // redraw the crop overlay as the camera moves
     useEffect(() => {
         if (!scene) {
@@ -200,81 +159,72 @@ export function SlicerWizard({ context, onClose, onStep }: { context: Context; o
         <>
             {(step === 2 || step === 3) && <AlignGrid />}
             {step === 3 && cropped && <CropOverlay context={context} draft={draft} z={zMid} onChange={setDraft} />}
-            <div className="dim-panel glass slicer-panel" data-slicer-step={step}>
-                <div className="stepper">
-                    {STEPS.map((name, index) => (
-                        <span key={name} className={`dot ${step === index + 1 ? "on" : step > index + 1 ? "done" : ""}`}>
-                            <b>{index + 1}</b> {name}
-                        </span>
-                    ))}
-                    <span className="dim">{step === 0 ? "…" : `${Math.min(step, 4)}/4`}</span>
-                </div>
-                {step === 0 && <div className="hint">Flying out to the whole map…</div>}
+            <Card glass data-slicer-step={step} style={{ width: "min(380px, calc(100vw - 40px))", borderColor: "color-mix(in srgb, var(--warn) 45%, transparent)" }}>
+                <Stepper steps={STEPS.map((label) => ({ label }))} current={Math.max(0, Math.min(step, 4) - 1)} />
+                {step === 0 && <Text small muted>Flying out to the whole map…</Text>}
                 {step === 1 && (
-                    <>
-                        <h3 className="dim-label">1/4 · Height</h3>
-                        <div className="hint">Cut the map to the heights you care about (the ceiling and what's under the floor go). It's live; nothing is deleted.</div>
-                        <DualRange low={draft.zMin} high={draft.zMax} min={zRange[0]} max={zRange[1]} onChange={(zMin, zMax) => setDraft({ zMin, zMax })} />
-                        <div className="row">
-                            <span className="dim">z from</span>
-                            <NumberField value={draft.zMin} step={0.05} unit="m" data="zMin" onChange={(zMin) => setDraft({ zMin: Math.min(zMin, draft.zMax) })} />
-                            <span className="dim">to</span>
-                            <NumberField value={draft.zMax} step={0.05} unit="m" data="zMax" onChange={(zMax) => setDraft({ zMax: Math.max(zMax, draft.zMin) })} />
-                        </div>
-                    </>
+                    <Column gap={6}>
+                        <Heading level={3}>1/4 · Height</Heading>
+                        <Text small muted>Cut the map to the heights you care about (the ceiling and what's under the floor go). It's live; nothing is deleted.</Text>
+                        <RangeSlider min={zRange[0]} max={zRange[1]} step={0.05} value={[draft.zMin, draft.zMax]} showValue={false} onChange={([zMin, zMax]: [number, number]) => setDraft({ zMin, zMax })} />
+                        <Row wrap gap={6}>
+                            <Text small muted>z from</Text>
+                            <Meters value={draft.zMin} step={0.05} unit="m" data="zMin" onChange={(zMin) => setDraft({ zMin: Math.min(zMin, draft.zMax) })} />
+                            <Text small muted>to</Text>
+                            <Meters value={draft.zMax} step={0.05} unit="m" data="zMax" onChange={(zMax) => setDraft({ zMax: Math.max(zMax, draft.zMin) })} />
+                        </Row>
+                    </Column>
                 )}
                 {step === 2 && (
-                    <>
-                        <h3 className="dim-label">2/4 · Align</h3>
-                        <div className="hint">Turn the map until its walls run along the grid. Drag to pan, scroll to zoom.</div>
-                        <div className="row">
-                            <div className="dial" onPointerDown={dial} title="drag around to turn" data-slicer-dial>
-                                <div className="dial-hand" style={{ transform: `rotate(${-degrees}deg)` }} />
-                            </div>
-                            <input className="dim-range" type="range" min={-45} max={45} step={0.1} value={Math.max(-45, Math.min(45, degrees))} onChange={(event) => setDraft({ yaw: (Number(event.target.value) * Math.PI) / 180 })} data-slicer="yawSlider" />
-                        </div>
-                        <div className="row">
-                            <span className="dim">turn</span>
-                            <NumberField value={degrees} step={0.5} unit="°" data="yaw" onChange={(value) => setDraft({ yaw: (value * Math.PI) / 180 })} />
-                            <button type="button" className="dim-btn sm" onClick={auto} title="from the walls' main direction" data-action="slicer-auto">
+                    <Column gap={6}>
+                        <Heading level={3}>2/4 · Align</Heading>
+                        <Text small muted>Turn the map until its walls run along the grid. Drag to pan, scroll to zoom.</Text>
+                        <Row>
+                            <AngleDial value={draft.yaw} onChange={(yaw: number) => setDraft({ yaw })} tone="warn" title="drag around to turn" data-slicer-dial />
+                            <Slider min={-45} max={45} step={0.1} value={Math.max(-45, Math.min(45, degrees))} showValue={false} onChange={(value: number) => setDraft({ yaw: (value * Math.PI) / 180 })} data-slicer="yawSlider" />
+                        </Row>
+                        <Row gap={6}>
+                            <Text small muted>turn</Text>
+                            <Meters value={degrees} step={0.5} unit="°" data="yaw" onChange={(value) => setDraft({ yaw: (value * Math.PI) / 180 })} />
+                            <Button size="sm" onClick={auto} title="from the walls' main direction" data-action="slicer-auto">
                                 Auto
-                            </button>
-                        </div>
-                    </>
+                            </Button>
+                        </Row>
+                    </Column>
                 )}
                 {step === 3 && (
-                    <>
-                        <h3 className="dim-label">3/4 · Crop</h3>
-                        <div className="hint">Drag the rectangle's edges, corners or middle (in the turned frame), or type the numbers.</div>
+                    <Column gap={6}>
+                        <Heading level={3}>3/4 · Crop</Heading>
+                        <Text small muted>Drag the rectangle's edges, corners or middle (in the turned frame), or type the numbers.</Text>
                         {(["x", "y"] as const).map((axis) => (
-                            <div className="row" key={axis}>
-                                <span className="dim">{axis}</span>
-                                <NumberField value={draft[`${axis}Min`]} step={0.1} unit="m" data={`${axis}Min`} onChange={(value) => setDraft({ [`${axis}Min`]: Math.min(value, draft[`${axis}Max`] - 0.1) })} />
-                                <span className="dim">to</span>
-                                <NumberField value={draft[`${axis}Max`]} step={0.1} unit="m" data={`${axis}Max`} onChange={(value) => setDraft({ [`${axis}Max`]: Math.max(value, draft[`${axis}Min`] + 0.1) })} />
-                            </div>
+                            <Row key={axis} gap={6}>
+                                <Text small muted>{axis}</Text>
+                                <Meters value={draft[`${axis}Min`]} step={0.1} unit="m" data={`${axis}Min`} onChange={(value) => setDraft({ [`${axis}Min`]: Math.min(value, draft[`${axis}Max`] - 0.1) })} />
+                                <Text small muted>to</Text>
+                                <Meters value={draft[`${axis}Max`]} step={0.1} unit="m" data={`${axis}Max`} onChange={(value) => setDraft({ [`${axis}Max`]: Math.max(value, draft[`${axis}Min`] + 0.1) })} />
+                            </Row>
                         ))}
-                    </>
+                    </Column>
                 )}
-                {step === 4 && <div className="hint">Saved. Back to the map…</div>}
-                <div className="row slicer-buttons">
-                    <button type="button" className="dim-btn sm" onClick={cancel} data-action="slicer-cancel">
+                {step === 4 && <Text small muted>Saved. Back to the map…</Text>}
+                <Row wrap>
+                    <Button size="sm" onClick={cancel} data-action="slicer-cancel">
                         Cancel
-                    </button>
+                    </Button>
                     {previous.current && step === 1 && (
-                        <button type="button" className="dim-btn sm danger" onClick={reset} data-action="slicer-reset">
+                        <Button size="sm" variant="danger" onClick={reset} data-action="slicer-reset">
                             Show everything
-                        </button>
+                        </Button>
                     )}
-                    <span className="spacer" />
-                    <button type="button" className="dim-btn sm" disabled={step <= 1 || step >= 4} onClick={() => go(step - 1)} data-action="slicer-back">
-                        <Icon name="arrow-left" /> Back
-                    </button>
-                    <button type="button" className="dim-btn sm primary" disabled={step === 0 || step >= 4} onClick={() => go(step + 1)} data-action="slicer-next">
-                        {step === 3 ? <>Done <Icon name="check" /></> : <>Next <Icon name="arrow-right" /></>}
-                    </button>
-                </div>
-            </div>
+                    <Spacer />
+                    <Button size="sm" icon="arrow-left" disabled={step <= 1 || step >= 4} onClick={() => go(step - 1)} data-action="slicer-back">
+                        Back
+                    </Button>
+                    <Button size="sm" variant="primary" iconRight={step === 3 ? "check" : "arrow-right"} disabled={step === 0 || step >= 4} onClick={() => go(step + 1)} data-action="slicer-next">
+                        {step === 3 ? "Done" : "Next"}
+                    </Button>
+                </Row>
+            </Card>
         </>
     )
 }
@@ -282,7 +232,7 @@ export function SlicerWizard({ context, onClose, onStep }: { context: Context; o
 /** a screen-aligned grid over the top-down view (the camera looks straight down with +y up), to line walls up against */
 function AlignGrid() {
     return (
-        <svg className="align-grid" data-align-grid>
+        <svg data-align-grid style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 4, pointerEvents: "none" }}>
             <defs>
                 <pattern id="align-grid-small" width="40" height="40" patternUnits="userSpaceOnUse">
                     <path d="M 40 0 L 0 0 0 40" fill="none" style={{ stroke: "color-mix(in srgb, var(--ok) 18%, transparent)" }} strokeWidth="1" />
@@ -354,11 +304,11 @@ function CropOverlay({ context, draft, z, onChange }: { context: Context; draft:
     const mid = (a: number[], b: number[]) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
     const handles: [string, number[]][] = [["sw", sw], ["se", se], ["ne", ne], ["nw", nw], ["s", mid(sw, se)], ["e", mid(se, ne)], ["n", mid(ne, nw)], ["w", mid(nw, sw)]]
     return (
-        <svg className="crop-overlay" ref={svg} data-crop-overlay>
+        <svg ref={svg} data-crop-overlay style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 4, pointerEvents: "none" }}>
             <path d={`M 0 0 H 10000 V 10000 H 0 Z ${path}`} style={{ fill: "color-mix(in srgb, var(--bg) 55%, transparent)" }} fillRule="evenodd" />
-            <path d={path} strokeWidth="2" style={{ cursor: "move", fill: "color-mix(in srgb, var(--warn) 4%, transparent)", stroke: "var(--warn)" }} onPointerDown={drag("move")} />
+            <path d={path} strokeWidth="2" style={{ cursor: "move", fill: "color-mix(in srgb, var(--warn) 4%, transparent)", stroke: "var(--warn)", pointerEvents: "all" }} onPointerDown={drag("move")} />
             {handles.map(([name, [x, y]]) => (
-                <rect key={name} x={x - 7} y={y - 7} width={14} height={14} rx={3} className="crop-handle" onPointerDown={drag(name)} data-crop-handle={name} style={{ cursor: name.length === 2 ? "nwse-resize" : name === "e" || name === "w" ? "ew-resize" : "ns-resize" }} />
+                <rect key={name} x={x - 7} y={y - 7} width={14} height={14} rx={3} onPointerDown={drag(name)} data-crop-handle={name} style={{ fill: "var(--warn)", stroke: "var(--bg)", strokeWidth: 1.5, pointerEvents: "all", cursor: name.length === 2 ? "nwse-resize" : name === "e" || name === "w" ? "ew-resize" : "ns-resize" }} />
             ))}
         </svg>
     )
