@@ -4,30 +4,16 @@
 import * as THREE from "three"
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js"
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js"
-import { applyLook, FatLines, LabelPool, makePointMaterial, pushBox, setClipBox } from "dimos-react/three"
+import { applyLook, CUBE_SHADES, FatLines, LabelPool, makePointMaterial, POINT_STYLES, pushBox, setClipBox, type Viewer } from "dimos-react/three"
 import { DEFAULT_PALETTE, DEFAULT_PERIOD, otherPalette } from "dimos-react"
 import type { Annotations, Box3, Slice } from "./api.ts"
 import { ANNOTATION_COLORS } from "./colors.ts"
 import { Store } from "./store.ts"
 
-export type PointStyle = "voxel" | "disc" | "square" | "splat"
-export type CubeShade = "soft" | "sky" | "outline" | "bevel" | "memworld"
-type PointLook = Record<string, unknown>
-
-/** What the Map Editor uses of dimos-react's Viewer (its types are loose: these are its real ones). */
-export interface Viewer {
-    scene: THREE.Scene
-    camera: THREE.PerspectiveCamera
-    controls: OrbitControls
-    renderer: THREE.WebGLRenderer
-    resolution: THREE.Vector2
-    pixelsPerMeter: { value: number }
-    /** a hidden view draws nothing until unpaused */
-    paused: boolean
-    requestRender(): void
-    frame(target: THREE.Vector3, distance: number): void
-    topDown(target: THREE.Vector3, extent: number): void
-}
+// the library's own types, read off what it exports (its three.ts exports these values, not their type names)
+export type PointStyle = keyof typeof POINT_STYLES
+export type CubeShade = keyof typeof CUBE_SHADES
+type PointLook = Parameters<typeof applyLook>[1]
 
 export type Selectable = { kind: "box" | "plane" | "point" | "prism"; id: string } | { kind: "region"; id: "region" }
 export type GizmoMode = "translate" | "rotate" | "scale"
@@ -172,10 +158,6 @@ export class MapScene {
         this.#loops = new FatLines(resolution, { width: 2, color: 0xffb454 })
         this.#boxes = new FatLines(resolution, { width: 2.5, vertexColors: true })
         this.#regionLines = new FatLines(resolution, { width: 2, color: 0xffd166, dashed: false })
-        for (const lines of [this.#paths, this.#rawPath, this.#loops]) {
-            lines.material.depthTest = false
-            lines.object.renderOrder = 5
-        }
         this.root.add(this.#paths.object, this.#rawPath.object, this.#loops.object, this.#boxes.object, this.#regionLines.object, this.#labels.group, this.#annotationGroup)
 
         this.#gizmo = new TransformControls(this.viewer.camera, this.viewer.renderer.domElement)
@@ -287,6 +269,13 @@ export class MapScene {
             line(this.#rawPath, paths.raw)
         }
         this.viewer.requestRender()
+    }
+
+    /** the paths over the voxels (the library's on-top pass), or hidden by what's in front of them (the default) */
+    pathsOnTop(on: boolean) {
+        for (const lines of [this.#paths, this.#rawPath, this.#loops]) {
+            this.viewer.setOnTop(lines.object, on)
+        }
     }
 
     showPaths(show: { corrected: boolean; raw: boolean; loops: boolean }) {

@@ -50,6 +50,8 @@ export interface UiState {
     view2d: View2d | null
     floorOverlay: boolean
     showPaths: { corrected: boolean; raw: boolean; loops: boolean }
+    /** the paths drawn over the voxels; off = the voxels in front hide them */
+    pathsOnTop: boolean
     /** `period`: meters of height per color cycle when `gradient` is a repeating palette */
     look: { style: "voxel" | "disc" | "square" | "splat"; gradient: string; period?: number; scale: number; shade?: CubeShade }
     region: { center: [number, number, number]; size: [number, number, number]; yaw: number } | null
@@ -68,6 +70,7 @@ export const DEFAULT_UI: UiState = {
     view2d: null,
     floorOverlay: false,
     showPaths: { corrected: true, raw: false, loops: true },
+    pathsOnTop: false,
     look: { style: "voxel", gradient: DEFAULT_PALETTE, period: DEFAULT_PERIOD, scale: 1, shade: "soft" },
     region: null,
     selected: null,

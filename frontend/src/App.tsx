@@ -247,6 +247,7 @@ export function App() {
             setUiState(restoredUi)
             scene.applyLook(restoredUi.look)
             scene.showPaths(restoredUi.showPaths)
+            scene.pathsOnTop(restoredUi.pathsOnTop)
             scene.setRegion(restoredUi.region)
             await refresh()
             if (fresh.stage !== "map") {

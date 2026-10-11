@@ -228,6 +228,15 @@ export function CleanPanel({ context }: { context: Context }) {
                             }}
                         />
                     ))}
+                    <Checkbox
+                        value={ui.pathsOnTop}
+                        label="on top"
+                        title="draw the paths over the voxels (off: the voxels in front hide them)"
+                        onChange={(checked: boolean) => {
+                            scene.pathsOnTop(checked)
+                            setUi({ pathsOnTop: checked })
+                        }}
+                    />
                 </Row>
             </Field>
 
