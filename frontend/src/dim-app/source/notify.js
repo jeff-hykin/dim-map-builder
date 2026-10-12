@@ -11,8 +11,11 @@
 //   kind                 "ok" | "warn" | "agent" | "events"            (default "ok")
 //   sound                "default" | "urgent" | "battery"              (default "default")
 //   icon                 URL of an image; default: this app's icon (/api/apps/<app>/icon)
-//   actions              [[label, action], ...]  e.g. [["Open", "open_app:controller"]]
+//   actions              [[label, action], ...]  e.g. [["Open", "open_app:controller"]]; also post:<path>[ <json>],
+//                        modal:<key> (opens modals[key]), dismiss
 //   details              anything JSON (shown expanded in the panel)
+//   modals               { key: { title?, body (markdown), pre? (a log), copy? (true | text), actions? } }: what a
+//                        modal:<key> button opens, kept with the notification (Desktop 0.2.137+; older ones ignore it)
 //   app                  default: this app's name (from /apps/<name>/ or <meta name="dim-app">)
 
 function appName() {
@@ -40,7 +43,9 @@ export function underDesktop() {
 /**
  * Posts a notification to Desktop. Resolves to the new notification's id, or null when not under Desktop or it failed.
  * @param {{ title: string, body?: string, kind?: "ok"|"warn"|"agent"|"events", sound?: "default"|"urgent"|"battery",
- *           icon?: string, actions?: Array<[string, string]>, details?: unknown, app?: string }} notification
+ *           icon?: string, actions?: Array<[string, string]>, details?: unknown, app?: string,
+ *           modals?: Record<string, { title?: string, body?: string, pre?: string, copy?: boolean | string,
+ *                                     actions?: Array<[string, string]> }> }} notification
  * @param {{ origin?: string }} [options] origin: Desktop's base URL (default: this page's origin)
  * @returns {Promise<string | number | null>}
  */
@@ -60,6 +65,7 @@ export async function notify(notification, options = {}) {
             icon: notification.icon ?? (app ? `/api/apps/${encodeURIComponent(app)}/icon` : undefined),
             actions: notification.actions,
             details: notification.details,
+            modals: notification.modals,
         }
         const url = new URL("/api/notifications", options.origin ?? location.origin)
         const response = await fetch(url, {
