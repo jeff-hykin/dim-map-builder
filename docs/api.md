@@ -72,15 +72,11 @@ Served by dimOS Desktop's dimos server (dimos-desktop `docs/api.md`, branch `jef
 relative to the app (`../../dimos/...`); the agent reaches them as Desktop's own endpoints. Queueing this app's recording
 goes through `POST api/sessions/{id}/upload` (the backend posts to `/dimos/uploads`, after a save when asked). Declared in `dimos.yaml` `dimos-api:`, so an older Desktop refuses to install
 this version. The page code is `frontend/src/core/api.ts` (`cloud`, `uploads`), `ui/useUploads.ts`, `ui/UploadsPanel.tsx`
-and `ui/LoginDialog.tsx`. The upload itself runs in Desktop (dimos's `CloudData().upload`), so it outlives the page.
+(logging in is Desktop's Settings → Dimensional account, one login for every app). The upload itself runs in Desktop (dimos's `CloudData().upload`), so it outlives the page.
 
 | Method + path | Body | Response |
 | --- | --- | --- |
 | `GET /dimos/cloud/account` | | `CloudAccount` |
-| `POST /dimos/cloud/login` | | `LoginState`: starts dimos's device login (`dimos login`'s flow) |
-| `GET /dimos/cloud/login` | | `LoginState` |
-| `DELETE /dimos/cloud/login` | | `LoginState`: cancels a pending login |
-| `POST /dimos/cloud/logout` | | `CloudAccount` |
 | `GET /dimos/uploads` | | `{ uploads: Upload[], waitingForLogin: boolean }`, oldest first |
 | `POST /dimos/uploads` | `{ path, robotId?, kind? }` | `Upload`. The same path already queued or uploading → that item. 400 `{ error }` for a missing file or one that isn't `.mcap` / `.db` |
 | `DELETE /dimos/uploads/{id}` | | `{ ok: true }`: cancels a queued / uploading one (→ `cancelled`), removes a finished one |
@@ -89,15 +85,6 @@ and `ui/LoginDialog.tsx`. The upload itself runs in Desktop (dimos's `CloudData(
 
 ```ts
 type CloudAccount = { loggedIn: boolean; email: string | null; scopes: string[] | null; source: "env" | "stored" | null; cloudUrl: string; error: string | null }
-type LoginState = {
-    state: "idle" | "starting" | "pending" | "approved" | "denied" | "expired" | "failed"
-    url: string | null // the page to open
-    urlComplete: string | null // the same with the code filled in, when the cloud gives one
-    code: string | null // what the user enters there
-    expiresAt: number | null // ms since the epoch
-    email: string | null // once approved
-    error: string | null
-}
 type Upload = {
     id: string; path: string; name: string; size: number; robotId: string | null; kind: string | null
     state: "queued" | "uploading" | "done" | "failed" | "cancelled"
@@ -115,8 +102,10 @@ type Upload = {
   `waitingForLogin` turns true: nothing is lost, the page shows "Uploads are waiting for you to log in", and a completed
   login resumes the queue by itself. `errorCode: "not_logged_in"` on a failed item (e.g. a key revoked mid-upload) gets
   a Log in button beside Retry.
-- Upload button: checks `GET /dimos/cloud/account` first; not logged in → the login dialog (open the URL, enter the
-  code; approval arrives as the dimos server's `cloud-login` zenoh event), then `POST api/sessions/{id}/upload`. Unsaved edits → "Save, then upload" (the backend
+- Upload button: checks `GET /dimos/cloud/account` first; not logged in → Desktop's Settings → Dimensional account
+  opens (dim-app `openApp("settings", { path: "settings-cloud-account" })`, which returns here once logged in) and the
+  upload waits for the login (the dimos server's `cloud-login` zenoh event, or a look every 3 s), then
+  `POST api/sessions/{id}/upload`. Unsaved edits → "Save, then upload" (the backend
   waits for the save job, then queues it) or "Upload as last saved".
 - The page reads `GET /dimos/uploads` once, then follows the dimos server's zenoh events (`<ns>/dimos/events/upload`
   carries the whole upload, progress included; `uploads` and `upload-removed` make it re-read), and re-reads after its

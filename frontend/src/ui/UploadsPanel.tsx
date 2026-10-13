@@ -128,8 +128,8 @@ export function UploadsPanel({ uploads }: { uploads: Uploads }) {
                                 {account.source === "env" ? " (DIMOS_API_KEY)" : ""}
                             </Text>
                             {account.source !== "env" && (
-                                <Button size="sm" variant="ghost" onClick={uploads.logout} data-action="cloud-logout">
-                                    Log out
+                                <Button size="sm" variant="ghost" onClick={() => uploads.openLogin()} data-action="cloud-account">
+                                    Account
                                 </Button>
                             )}
                         </>

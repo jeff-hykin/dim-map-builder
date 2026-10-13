@@ -258,16 +258,6 @@ export interface CloudAccount {
     error: string | null
 }
 
-export interface LoginState {
-    state: "idle" | "starting" | "pending" | "approved" | "denied" | "expired" | "failed"
-    url: string | null
-    urlComplete: string | null
-    code: string | null
-    expiresAt: number | null
-    email: string | null
-    error: string | null
-}
-
 export type UploadState = "queued" | "uploading" | "done" | "failed" | "cancelled"
 
 export interface Upload {
@@ -311,10 +301,6 @@ async function desktop<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const cloud = {
     account: () => desktop<CloudAccount>("../../dimos/cloud/account"),
-    login: () => desktop<LoginState>("../../dimos/cloud/login", { method: "POST" }),
-    loginState: () => desktop<LoginState>("../../dimos/cloud/login"),
-    cancelLogin: () => desktop<LoginState>("../../dimos/cloud/login", { method: "DELETE" }),
-    logout: () => desktop<CloudAccount>("../../dimos/cloud/logout", { method: "POST" }),
 }
 
 export const uploads = {

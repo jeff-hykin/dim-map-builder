@@ -23,7 +23,6 @@ import { JobCard } from "./ui/JobCard.tsx"
 import { SlicerWizard } from "./ui/SlicerWizard.tsx"
 import { useUploads, isActive } from "./ui/useUploads.ts"
 import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
-import { LoginDialog } from "./ui/LoginDialog.tsx"
 import { FloorPicker } from "./ui/FloorPicker.tsx"
 import { ShareMenu, SharePanel } from "./ui/SharePanel.tsx"
 import { notify } from "./dim-app/source/notify.js"
@@ -756,13 +755,6 @@ export function App() {
                     : null}
                 {uploads.panelOpen && <UploadsPanel uploads={uploads} />}
             </section>
-            {uploads.loginOpen && (
-                <LoginDialog
-                    reason={uploads.waitingForLogin ? "Log in to Dimensional cloud to upload: your uploads wait here until you do." : null}
-                    onApproved={uploads.loggedIn}
-                    onClose={uploads.closeLogin}
-                />
-            )}
             {modal === "generate" && session && <GenerateModal context={context} onClose={() => setModal(null)} />}
             <Modal open={modal === "open"} onClose={() => setModal(null)} title="Pick a recording" data-modal="open">
                 <OpenPanel context={context} />

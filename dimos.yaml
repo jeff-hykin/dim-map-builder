@@ -1,14 +1,11 @@
 title: Map Editor
 spec-version: v1.0 # the dimos.yaml spec version this file follows
 uses:
-    # Dimensional cloud: log in and queue uploads of the recording (these need a Desktop with cloud uploads; an older
-    # Desktop doesn't serve them, so it won't install this version).
+    # Dimensional cloud: who is logged in (logging in is Desktop's Settings → Dimensional account) and queue uploads of
+    # the recording (these need a Desktop with cloud uploads; an older Desktop doesn't serve them, so it won't install
+    # this version).
     "@dimos-gateway":
         - GET /cloud/account
-        - POST /cloud/login
-        - GET /cloud/login
-        - DELETE /cloud/login
-        - POST /cloud/logout
         - GET /uploads
         - POST /uploads
         - DELETE /uploads

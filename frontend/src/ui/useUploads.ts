@@ -1,8 +1,10 @@
 // Uploads to Dimensional cloud: Desktop's queue (../../dimos/uploads), read once and again whenever the dimos server says
 // it changed (its zenoh events <ns>/dimos/events/upload, uploads, upload-removed, on the page's one zenoh-gateway
-// connection; also after that connection comes back), so uploads the agent starts show up too; plus the login flow.
+// connection; also after that connection comes back), so uploads the agent starts show up too. Logging in isn't this
+// app's: it is Desktop's Settings → Dimensional account (one login for every app), which comes back here once done.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, uploads as uploadsApi, type CloudAccount, type Upload } from "../core/api.ts"
+import { openApp } from "../dim-app/source/desktop.js"
 import { getZenoh } from "../dim-app/source/zenoh.js"
 
 export interface Uploads {
@@ -13,24 +15,24 @@ export interface Uploads {
     account: CloudAccount | null
     panelOpen: boolean
     setPanelOpen: (open: boolean) => void
-    loginOpen: boolean
-    /** opens the login dialog; `then` = what to queue once logged in */
+    /** opens Desktop's Settings → Dimensional account; `then` = what to queue once logged in */
     openLogin: (then?: Queue) => void
-    closeLogin: () => void
-    /** the login was approved: queue what was waiting and show the panel */
-    loggedIn: () => Promise<void>
     /** checks the login, then queues the upload (or asks to log in first) */
     upload: (queue: Queue) => Promise<void>
     refresh: () => Promise<void>
     cancel: (id: string) => Promise<void>
     retry: (id: string) => Promise<void>
     clearFinished: () => Promise<void>
-    logout: () => Promise<void>
     refreshAccount: () => Promise<void>
 }
 
 /** queues an upload through the backend (POST api/sessions/{id}/upload); says what it did */
 export type Queue = () => Promise<string>
+
+/** Desktop's Settings → Dimensional account: every app's one cloud login; signed in, the shell comes back here. */
+export function openCloudLogin() {
+    openApp("settings", { path: "settings-cloud-account" })
+}
 
 export const isActive = (upload: Upload) => upload.state === "queued" || upload.state === "uploading"
 
@@ -40,7 +42,6 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
     const [problem, setProblem] = useState<string | null>(null)
     const [account, setAccount] = useState<CloudAccount | null>(null)
     const [panelOpen, setPanelOpen] = useState(false)
-    const [loginOpen, setLoginOpen] = useState(false)
     const afterLogin = useRef<Queue | null>(null)
 
     const refresh = useCallback(async () => {
@@ -119,7 +120,8 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
             setAccount(current)
             if (!current.loggedIn) {
                 afterLogin.current = queue
-                setLoginOpen(true)
+                setWaitingToQueue(true)
+                openCloudLogin()
                 return
             }
             await enqueue(queue)
@@ -127,18 +129,30 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
         [say, enqueue],
     )
 
-    const loggedIn = useCallback(async () => {
-        setLoginOpen(false)
-        await refreshAccount()
-        const queue = afterLogin.current
-        afterLogin.current = null
-        if (queue) {
-            await enqueue(queue)
-        } else {
-            setPanelOpen(true)
-            await refresh()
+    // an upload held for the login: queue it once Desktop says it's done (the dimos server's cloud-login event), or a
+    // look every 3 s finds it logged in
+    const [waitingToQueue, setWaitingToQueue] = useState(false)
+    useEffect(() => {
+        if (!waitingToQueue) {
+            return
         }
-    }, [refreshAccount, enqueue, refresh])
+        const check = async () => {
+            const current = await cloud.account().catch(() => null)
+            const queue = afterLogin.current
+            if (current?.loggedIn && queue) {
+                afterLogin.current = null
+                setAccount(current)
+                setWaitingToQueue(false)
+                await enqueue(queue)
+            }
+        }
+        const off = getZenoh().subscribeDimos("cloud-login", check)
+        const timer = window.setInterval(check, 3000)
+        return () => {
+            off()
+            window.clearInterval(timer)
+        }
+    }, [waitingToQueue, enqueue])
 
     const act = useCallback(
         async (action: Promise<unknown>) => {
@@ -159,24 +173,16 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
         account,
         panelOpen,
         setPanelOpen,
-        loginOpen,
         openLogin: (then?: Queue) => {
             afterLogin.current = then ?? null
-            setLoginOpen(true)
+            setWaitingToQueue(!!then)
+            openCloudLogin()
         },
-        closeLogin: () => {
-            afterLogin.current = null
-            setLoginOpen(false)
-        },
-        loggedIn,
         upload,
         refresh,
         cancel: (id) => act(uploadsApi.remove(id)),
         retry: (id) => act(uploadsApi.retry(id)),
         clearFinished: () => act(uploadsApi.clearFinished()),
-        logout: async () => {
-            await act(cloud.logout().then(setAccount))
-        },
         refreshAccount,
     }
 }

@@ -1,6 +1,7 @@
-// DEV ONLY: a tiny in-memory stand-in for Desktop's cloud login + upload queue (/dimos/cloud/*, /dimos/uploads*) and
+// DEV ONLY: a tiny in-memory stand-in for Desktop's cloud account + upload queue (/dimos/cloud/account, /dimos/uploads*) and
 // error feed (/api/errors), so the upload UI can be worked on without Desktop or a Dimensional account. On with
-// `MOCK_UPLOADS=1 npm run dev`; never part of the build. Login: approved 6 s after it starts. Uploads: one at a time,
+// `MOCK_UPLOADS=1 npm run dev`; never part of the build. Login (Desktop's Settings, not here): logged in 6 s after the
+// page first finds it logged out. Uploads: one at a time,
 // 4 MB/s; a path containing "fail" fails with a network error. The real endpoints: dimos-desktop docs/api.md.
 import type { Plugin } from "vite"
 
@@ -8,15 +9,13 @@ type Upload = Record<string, any>
 
 export function mockUploads(): Plugin {
     let loggedIn = false
-    let login: Record<string, any> = { state: "idle", url: null, urlComplete: null, code: null, expiresAt: null, email: null, error: null }
     let loginStarted = 0
     let waitingForLogin = false
     let list: Upload[] = []
     let next = 1
     const account = () => ({ loggedIn, email: loggedIn ? "dev@example.com" : null, scopes: loggedIn ? ["data"] : null, source: loggedIn ? "stored" : null, cloudUrl: "https://mock.invalid", error: null })
     const tick = () => {
-        if (login.state === "pending" && Date.now() - loginStarted > 6000) {
-            login = { ...login, state: "approved", email: "dev@example.com" }
+        if (!loggedIn && loginStarted && Date.now() - loginStarted > 6000) {
             loggedIn = true
             waitingForLogin = false
         }
@@ -75,18 +74,8 @@ export function mockUploads(): Plugin {
                     console.log("[mock] error reported:", body)
                     return send(200, { id: 1, count: 1 })
                 } else if (route === "GET /dimos/cloud/account") {
-                    return send(200, account())
-                } else if (route === "POST /dimos/cloud/login") {
-                    loginStarted = Date.now()
-                    login = { state: "pending", url: "https://mock.invalid/device", urlComplete: "https://mock.invalid/device?code=WDJB-MJHT", code: "WDJB-MJHT", expiresAt: Date.now() + 600_000, email: null, error: null }
-                    return send(200, login)
-                } else if (route === "GET /dimos/cloud/login") {
-                    return send(200, login)
-                } else if (route === "DELETE /dimos/cloud/login") {
-                    login = { ...login, state: "idle" }
-                    return send(200, login)
-                } else if (route === "POST /dimos/cloud/logout") {
-                    loggedIn = false
+                    loginStarted ||= Date.now()
+                    tick()
                     return send(200, account())
                 } else if (route === "GET /dimos/uploads") {
                     return send(200, { uploads: list, waitingForLogin })
