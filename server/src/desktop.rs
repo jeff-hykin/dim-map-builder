@@ -143,7 +143,7 @@ mod tests {
             let _ = socket.read(&mut buffer).await;
             socket.write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 25\r\n\r\n{\"error\":\"not an .mcap\"}").await.unwrap();
         });
-        let error = post(&format!("http://{address}"), "/dimos/uploads", &serde_json::json!({ "path": "x" })).await.unwrap_err();
+        let error = post(&format!("http://{address}"), "/dimos-gateway/uploads", &serde_json::json!({ "path": "x" })).await.unwrap_err();
         assert_eq!(error.to_string(), "not an .mcap");
     }
 }

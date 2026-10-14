@@ -56,7 +56,7 @@ button for the last one), and picking that recording again brings its session ba
 
 ## Install
 
-This version needs a dimOS Desktop with cloud uploads (the `/dimos/cloud/*` and `/dimos/uploads` endpoints, branch
+This version needs a dimOS Desktop with cloud uploads (the `/dimos-gateway/cloud/*` and `/dimos-gateway/uploads` endpoints, branch
 `jeff/desktop_uploads` or later): it declares them in `dimos.yaml`, and an older Desktop rejects unknown `dimos-api:`
 entries, so it won't install there. Page errors also go to Desktop's error feed (`POST /api/errors`, dim-app
 `errors.js`) so its agent sees them; an older Desktop just drops those.

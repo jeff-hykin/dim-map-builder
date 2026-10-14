@@ -1,4 +1,4 @@
-// DEV ONLY: a tiny in-memory stand-in for Desktop's cloud account + upload queue (/dimos/cloud/account, /dimos/uploads*) and
+// DEV ONLY: a tiny in-memory stand-in for Desktop's cloud account + upload queue (/dimos-gateway/cloud/account, /dimos-gateway/uploads*) and
 // error feed (/api/errors), so the upload UI can be worked on without Desktop or a Dimensional account. On with
 // `MOCK_UPLOADS=1 npm run dev`; never part of the build. Login (Desktop's Settings, not here): logged in 6 s after the
 // page first finds it logged out. Uploads: one at a time,
@@ -52,7 +52,7 @@ export function mockUploads(): Plugin {
             server.middlewares.use(async (req, res, nextMiddleware) => {
                 const url = new URL(req.url ?? "/", "http://x")
                 const path = url.pathname
-                if (!path.startsWith("/dimos/") && path !== "/api/errors") {
+                if (!path.startsWith("/dimos-gateway/") && path !== "/api/errors") {
                     return nextMiddleware()
                 }
                 let body: any = {}
@@ -69,17 +69,17 @@ export function mockUploads(): Plugin {
                     res.end(JSON.stringify(value))
                 }
                 const route = `${req.method} ${path}`
-                const item = list.find((u) => path.startsWith(`/dimos/uploads/${u.id}`))
+                const item = list.find((u) => path.startsWith(`/dimos-gateway/uploads/${u.id}`))
                 if (route === "POST /api/errors") {
                     console.log("[mock] error reported:", body)
                     return send(200, { id: 1, count: 1 })
-                } else if (route === "GET /dimos/cloud/account") {
+                } else if (route === "GET /dimos-gateway/cloud/account") {
                     loginStarted ||= Date.now()
                     tick()
                     return send(200, account())
-                } else if (route === "GET /dimos/uploads") {
+                } else if (route === "GET /dimos-gateway/uploads") {
                     return send(200, { uploads: list, waitingForLogin })
-                } else if (route === "POST /dimos/uploads") {
+                } else if (route === "POST /dimos-gateway/uploads") {
                     if (!/\.(mcap|db)$/.test(body.path ?? "")) {
                         return send(400, { error: `not a recording (.mcap or .db): ${body.path}` })
                     }
@@ -90,7 +90,7 @@ export function mockUploads(): Plugin {
                     const upload = { id: String(next++), path: body.path, name: body.path.split("/").pop(), size: 48 * 2 ** 20, robotId: null, kind: null, state: "queued", phase: null, bytesDone: 0, bytesTotal: 0, rateBps: null, etaSeconds: null, uploadId: null, skipped: false, notice: null, error: null, errorCode: null, log: null, createdAt: Date.now(), startedAt: null, finishedAt: null }
                     list.push(upload)
                     return send(200, upload)
-                } else if (route === "DELETE /dimos/uploads") {
+                } else if (route === "DELETE /dimos-gateway/uploads") {
                     list = list.filter((u) => u.state === "queued" || u.state === "uploading")
                     return send(200, { uploads: list })
                 } else if (item && req.method === "DELETE") {

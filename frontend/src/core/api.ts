@@ -1,5 +1,5 @@
 // Client for this app's backend (server/src/api.rs, at ./api: the same endpoints Desktop's agent calls), Desktop's shared recordings (../../recordings) and
-// Desktop's Dimensional cloud uploads (../../dimos/cloud, ../../dimos/uploads).
+// Desktop's Dimensional cloud uploads (../../dimos-gateway/cloud, ../../dimos-gateway/uploads).
 import type { FloorModel } from "./slice.ts"
 import { appEvents } from "../dim-app/source/events.js"
 
@@ -300,15 +300,15 @@ async function desktop<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const cloud = {
-    account: () => desktop<CloudAccount>("../../dimos/cloud/account"),
+    account: () => desktop<CloudAccount>("../../dimos-gateway/cloud/account"),
 }
 
 export const uploads = {
-    list: () => desktop<{ uploads: Upload[]; waitingForLogin: boolean }>("../../dimos/uploads"),
+    list: () => desktop<{ uploads: Upload[]; waitingForLogin: boolean }>("../../dimos-gateway/uploads"),
     /** cancels a queued / running one, removes a finished one */
-    remove: (id: string) => desktop<{ ok: true }>(`../../dimos/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    retry: (id: string) => desktop<Upload>(`../../dimos/uploads/${encodeURIComponent(id)}/retry`, { method: "POST" }),
-    clearFinished: () => desktop<{ uploads: Upload[] }>("../../dimos/uploads", { method: "DELETE" }),
+    remove: (id: string) => desktop<{ ok: true }>(`../../dimos-gateway/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    retry: (id: string) => desktop<Upload>(`../../dimos-gateway/uploads/${encodeURIComponent(id)}/retry`, { method: "POST" }),
+    clearFinished: () => desktop<{ uploads: Upload[] }>("../../dimos-gateway/uploads", { method: "DELETE" }),
 }
 
 export const api = {
