@@ -1,5 +1,5 @@
 // Client for this app's backend (server/src/api.rs, at ./api: the same endpoints Desktop's agent calls), Desktop's shared recordings (../../recordings) and
-// Desktop's Dimensional cloud uploads (../../dimos-gateway/cloud, ../../dimos-gateway/uploads).
+// Desktop's Dimensional cloud uploads (../../dimos-gateway/cloud/account, ../../dimos-gateway/cloud/uploads).
 import type { FloorModel } from "./slice.ts"
 import { appEvents } from "../dim-app/source/events.js"
 
@@ -303,12 +303,15 @@ export const cloud = {
     account: () => desktop<CloudAccount>("../../dimos-gateway/cloud/account"),
 }
 
+/** Desktop's upload queue (GET, and what DELETE answers); its byPath (every file uploaded before) isn't used here */
+export type UploadQueue = { uploads: Upload[]; waitingForLogin: boolean }
+
 export const uploads = {
-    list: () => desktop<{ uploads: Upload[]; waitingForLogin: boolean }>("../../dimos-gateway/uploads"),
+    list: () => desktop<UploadQueue>("../../dimos-gateway/cloud/uploads"),
     /** cancels a queued / running one, removes a finished one */
-    remove: (id: string) => desktop<{ ok: true }>(`../../dimos-gateway/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    retry: (id: string) => desktop<Upload>(`../../dimos-gateway/uploads/${encodeURIComponent(id)}/retry`, { method: "POST" }),
-    clearFinished: () => desktop<{ uploads: Upload[] }>("../../dimos-gateway/uploads", { method: "DELETE" }),
+    remove: (id: string) => desktop<UploadQueue>(`../../dimos-gateway/cloud/uploads?id=${encodeURIComponent(id)}`, { method: "DELETE" }),
+    retry: (id: string) => desktop<Upload>("../../dimos-gateway/cloud/uploads", { method: "POST", body: JSON.stringify({ retry: id }) }),
+    clearFinished: () => desktop<UploadQueue>("../../dimos-gateway/cloud/uploads", { method: "DELETE" }),
 }
 
 export const api = {

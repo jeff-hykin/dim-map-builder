@@ -5,7 +5,7 @@ import { mockUploads } from "./dev/mockUploads.ts"
 
 // served at /apps/<name>/, so every asset URL is relative; the dev server forwards this app's API to its server
 // through a running Desktop (DESKTOP_URL, default 7077) and Desktop's /recordings and /dimos-gateway to Desktop.
-// MOCK_UPLOADS=1 answers /dimos-gateway/cloud/*, /dimos-gateway/uploads* and /api/errors from a dev-only mock (dev/mockUploads.ts)
+// MOCK_UPLOADS=1 answers /dimos-gateway/cloud/* and /api/errors from a dev-only mock (dev/mockUploads.ts)
 const desktop = process.env.DESKTOP_URL ?? "http://127.0.0.1:7077"
 const app = process.env.APP_NAME ?? "dim-map-builder"
 

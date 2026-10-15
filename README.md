@@ -56,9 +56,9 @@ button for the last one), and picking that recording again brings its session ba
 
 ## Install
 
-This version needs a dimOS Desktop with cloud uploads (the `/dimos-gateway/cloud/*` and `/dimos-gateway/uploads` endpoints, branch
-`jeff/desktop_uploads` or later): it declares them in `dimos.yaml`, and an older Desktop rejects unknown `dimos-api:`
-entries, so it won't install there. Page errors also go to Desktop's error feed (`POST /api/errors`, dim-app
+This version needs a dimOS Desktop whose dimos gateway is API 4.0 (the `/dimos-gateway/cloud/account` and
+`/dimos-gateway/cloud/uploads` endpoints): it declares them in `dimos.yaml` `uses:`, and a Desktop whose gateway doesn't
+provide them won't install it. Page errors also go to Desktop's error feed (`POST /api/errors`, dim-app
 `errors.js`) so its agent sees them; an older Desktop just drops those.
 
 In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (branch `dimos-desktop2`), or

@@ -178,7 +178,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .endpoint("POST", "api/sessions/{id}/undo", "Undo the last edit (anyone's).", with_id(json!({})), undo)
         .endpoint("POST", "api/sessions/{id}/redo", "Redo the last undone edit.", with_id(json!({})), redo)
         .endpoint("POST", "api/sessions/{id}/save", "Write the map and every annotation into the recording file (a background job, in place: an .mcap gets the new messages appended, nothing is copied; a recording in a read-only folder is refused).", with_id(json!({})), save)
-        .endpoint("POST", "api/sessions/{id}/upload", "Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /dimos-gateway/uploads shows progress; it waits for a login if there is none). saveFirst (default true) saves unsaved edits into it first.", with_id(json!({ "saveFirst": b("default true") })), upload)
+        .endpoint("POST", "api/sessions/{id}/upload", "Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /dimos-gateway/cloud/uploads shows progress; it waits for a login if there is none). saveFirst (default true) saves unsaved edits into it first.", with_id(json!({ "saveFirst": b("default true") })), upload)
         // the page's plumbing: binary map data, its reports (events reach it over zenoh: desktop::spawn_relay)
         .plumbing("GET", "api/sessions/{id}/points.bin", points)
         .plumbing("GET", "api/sessions/{id}/preview.bin", preview)
@@ -718,7 +718,7 @@ async fn upload(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body):
             }
             let Ok((_, workspace)) = session(&app, &id) else { return };
             let path = workspace.lock().unwrap().session.recording_path.clone();
-            match crate::desktop::post(&desktop, "/dimos-gateway/uploads", &json!({ "path": path })).await {
+            match crate::desktop::post(&desktop, "/dimos-gateway/cloud/uploads", &json!({ "path": path })).await {
                 Ok(upload) => app.emit(json!({ "type": "upload", "upload": upload })),
                 Err(error) => app.emit(json!({ "type": "upload", "error": format!("{error:#}") })),
             }
@@ -726,7 +726,7 @@ async fn upload(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body):
         return Ok(Json(json!({ "job": job, "note": "saving into the recording first; it is queued for upload when the save finishes" })));
     }
     let path = workspace.lock().unwrap().session.recording_path.clone();
-    let upload = crate::desktop::post(&desktop, "/dimos-gateway/uploads", &json!({ "path": path })).await?;
+    let upload = crate::desktop::post(&desktop, "/dimos-gateway/cloud/uploads", &json!({ "path": path })).await?;
     app.emit(json!({ "type": "upload", "upload": upload }));
     Ok(Json(json!({ "upload": upload })))
 }

@@ -6,11 +6,9 @@ uses:
     # this version).
     "@dimos-gateway":
         - GET /cloud/account
-        - GET /uploads
-        - POST /uploads
-        - DELETE /uploads
-        - DELETE /uploads/{id}
-        - POST /uploads/{id}/retry
+        - GET /cloud/uploads
+        - POST /cloud/uploads
+        - DELETE /cloud/uploads
     # Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams.
     "@desktop-gateway":
         - GET /recordings
@@ -753,7 +751,7 @@ provides:
             method: POST
             path: 'api/sessions/{id}/upload'
             description: >-
-                Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /dimos/uploads shows
+                Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /dimos-gateway/cloud/uploads shows
                 progress; it waits for a login if there is none). saveFirst (default true) saves unsaved edits into it
                 first.
             params:
