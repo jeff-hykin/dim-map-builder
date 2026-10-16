@@ -17,6 +17,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 
 | Method + path | What |
 | --- | --- |
+| `PUT api/import?path=` (plumbing) | a dropped recording's bytes, streamed into a free path Desktop's `POST /recordings/new` handed out |
 | `GET api/status` (context) | the open map briefly: recording, stage, voxels, bounds, floors, annotation counts, job, unsaved, recent history |
 | `GET api/state` | what the page loads: `{ active, session, last, recordingsDir }` (only a recording opened since the server started is open; `last` is the one before, offered on the empty page) |
 | `POST api/open` | `{ path, name?, id?, writable? }`: open a recording; every page follows (`opened` event) |
@@ -28,6 +29,10 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | `GET api/sessions/{id}/paths` | `{ raw, corrected, loops }` |
 | `POST api/sessions/{id}/build` | build options (all optional): `{ job }` |
 | `DELETE api/sessions/{id}/job` | cancel the running job |
+| `GET api/sessions/{id}/generate` | the generation steps: what the recording has (tags, the tf tree analyzed, the default cloud and the edge the correction would write, the global map), each step's defaults, what each ran with last |
+| `POST api/sessions/{id}/generate/tags` | step 1, AprilTags from images (a job): `{ raw, grouped, cameraStream, markerLength, exclude, gates, grouping, ... }` |
+| `POST api/sessions/{id}/generate/tf` | step 2, the corrected tf (a job; runs step 1 first when it needs tags the recording lacks): `{ cloudStream, sensorFrame, grandparent, useTags, excludeTags, quality: "fast" \| "high", stitch, tags }` |
+| `POST api/sessions/{id}/generate/global-map` | step 3, the global map (a job; runs step 2 first when the recording has no correction): `{ useCorrectedTf, build, decimation, rrd, tf, tags }` |
 | `POST api/sessions/{id}/op` | `{ op, region, params, preview }`: floating, outliers, floor, walls, keepWalls, cropOutside, deleteInside, cropHeight |
 | `POST api/sessions/{id}/transform` | `{ kind: "rotate", degrees }` / `{ kind: "level" }` / `{ kind: "set", transform }` |
 | `GET api/sessions/{id}/floor` | the local floor per storey |
@@ -53,7 +58,7 @@ to Desktop's relay (`/desktop/frontend/<name>/events`), which publishes it on `<
 the page hears it on its one zenoh-gateway connection (dim-app's appEvents), in order: `job`, `session`, `preview`,
 `opened`, `discarded`, `ui`, `setView`, `capture`, `upload`. After that connection comes back the page re-reads.
 
-Jobs: `{ id, kind: "build" | "preview" | "save", state: "running" | "done" | "failed" | "cancelled", progress: { stage,
+Jobs: `{ id, kind: "build" | "preview" | "save" | "tags" | "tf" | "globalMap", state: "running" | "done" | "failed" | "cancelled", progress: { stage,
 stageIndex, stageCount, done, total, note }, fraction, elapsed, etaSeconds, error }`.
 
 Sessions are autosaved under `<dataDir>/sessions/<id>/` (the app data dir in Desktop's `DIMOS_APP`) (`session.json`, `map.bin`, `removed.bin`) on every change.
