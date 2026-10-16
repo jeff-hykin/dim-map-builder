@@ -2,13 +2,16 @@
 //! tf2_msgs/msg/TFMessage, nav_msgs/msg/Odometry, geometry_msgs/msg/PoseStamped), into the same structs the LCM
 //! decoders produce. A 4-byte encapsulation header (byte 1: 0 = big, 1 = little endian) precedes the body; every
 //! primitive is aligned to its own size, counted from the end of that header. ROS 2 headers carry no `seq`.
-use crate::lcm::{Header, Odometry, PointCloud2, PointField, Pose, PoseStamped, TfEdge};
+use crate::lcm::{CameraInfo, Header, Image, Odometry, PointCloud2, PointField, Pose, PoseStamped, TfEdge};
 use anyhow::{bail, Result};
 
 pub const POINT_CLOUD2_SCHEMA: &str = "sensor_msgs/msg/PointCloud2";
 pub const TF_SCHEMA: &str = "tf2_msgs/msg/TFMessage";
 pub const ODOMETRY_SCHEMA: &str = "nav_msgs/msg/Odometry";
 pub const POSE_STAMPED_SCHEMA: &str = "geometry_msgs/msg/PoseStamped";
+pub const IMAGE_SCHEMA: &str = "sensor_msgs/msg/Image";
+pub const COMPRESSED_IMAGE_SCHEMA: &str = "sensor_msgs/msg/CompressedImage";
+pub const CAMERA_INFO_SCHEMA: &str = "sensor_msgs/msg/CameraInfo";
 
 struct Cdr<'a> {
     data: &'a [u8],
@@ -127,56 +130,108 @@ pub fn decode_pose_stamped(payload: &[u8]) -> Result<PoseStamped> {
     Ok(PoseStamped { header: cdr.header()?, pose: cdr.pose()? })
 }
 
+/// A little-endian CDR writer: fixtures the way the Live Viewer's recorder writes them, and what the Map Editor appends
+/// to a recording whose tf is CDR.
+#[derive(Default)]
+pub struct CdrWriter {
+    body: Vec<u8>,
+}
+
+impl CdrWriter {
+    fn align(&mut self, size: usize) {
+        while self.body.len() % size != 0 {
+            self.body.push(0);
+        }
+    }
+    pub fn u8(&mut self, value: u8) -> &mut Self {
+        self.body.push(value);
+        self
+    }
+    pub fn u32(&mut self, value: u32) -> &mut Self {
+        self.align(4);
+        self.body.extend_from_slice(&value.to_le_bytes());
+        self
+    }
+    pub fn f64(&mut self, value: f64) -> &mut Self {
+        self.align(8);
+        self.body.extend_from_slice(&value.to_le_bytes());
+        self
+    }
+    pub fn string(&mut self, value: &str) -> &mut Self {
+        self.u32(value.len() as u32 + 1);
+        self.body.extend_from_slice(value.as_bytes());
+        self.body.push(0);
+        self
+    }
+    pub fn header(&mut self, sec: u32, nsec: u32, frame: &str) -> &mut Self {
+        self.u32(sec).u32(nsec).string(frame)
+    }
+    pub fn bytes(&mut self, data: &[u8]) -> &mut Self {
+        self.u32(data.len() as u32);
+        self.body.extend_from_slice(data);
+        self
+    }
+    pub fn finish(&self) -> Vec<u8> {
+        let mut out = vec![0, 1, 0, 0];
+        out.extend_from_slice(&self.body);
+        out
+    }
+}
+
+
+pub fn decode_image(payload: &[u8]) -> Result<Image> {
+    let mut cdr = Cdr::new(payload)?;
+    let header = cdr.header()?;
+    let height = cdr.u32()?;
+    let width = cdr.u32()?;
+    let encoding = cdr.string()?;
+    cdr.u8()?;
+    let step = cdr.u32()?;
+    let length = cdr.u32()? as usize;
+    Ok(Image { header, height, width, encoding, step, data: cdr.take(length)?.to_vec() })
+}
+
+/// A CompressedImage as an Image of unknown size whose encoding is the codec (`jpeg`, `png`), from `format` ("jpeg",
+/// "rgb8; jpeg compressed bgr8", ...).
+pub fn decode_compressed_image(payload: &[u8]) -> Result<Image> {
+    let mut cdr = Cdr::new(payload)?;
+    let header = cdr.header()?;
+    let format = cdr.string()?.to_lowercase();
+    let length = cdr.u32()? as usize;
+    let encoding = if format.contains("png") { "png" } else { "jpeg" };
+    Ok(Image { header, height: 0, width: 0, encoding: encoding.into(), step: 0, data: cdr.take(length)?.to_vec() })
+}
+
+pub fn decode_camera_info(payload: &[u8]) -> Result<CameraInfo> {
+    let mut cdr = Cdr::new(payload)?;
+    let header = cdr.header()?;
+    let height = cdr.u32()?;
+    let width = cdr.u32()?;
+    let distortion_model = cdr.string()?;
+    let count = cdr.u32()? as usize;
+    if count > 64 {
+        bail!("nonsense distortion length");
+    }
+    let d = (0..count).map(|_| cdr.f64()).collect::<Result<Vec<_>>>()?;
+    Ok(CameraInfo { header, height, width, distortion_model, d, k: cdr.f64s()? })
+}
+
+pub fn encode_tf(edges: &[TfEdge]) -> Vec<u8> {
+    let mut writer = CdrWriter::default();
+    writer.u32(edges.len() as u32);
+    for edge in edges {
+        writer.header(edge.header.stamp_sec as u32, edge.header.stamp_nsec as u32, &edge.header.frame_id).string(&edge.child);
+        for value in edge.translation.iter().chain(edge.rotation.iter()) {
+            writer.f64(*value);
+        }
+    }
+    writer.finish()
+}
+
 #[cfg(test)]
 pub mod tests {
+    pub use super::CdrWriter;
     use super::*;
-
-    /// A little-endian CDR writer, enough to build fixtures the way the Live Viewer's recorder does.
-    #[derive(Default)]
-    pub struct CdrWriter {
-        body: Vec<u8>,
-    }
-
-    impl CdrWriter {
-        fn align(&mut self, size: usize) {
-            while self.body.len() % size != 0 {
-                self.body.push(0);
-            }
-        }
-        pub fn u8(&mut self, value: u8) -> &mut Self {
-            self.body.push(value);
-            self
-        }
-        pub fn u32(&mut self, value: u32) -> &mut Self {
-            self.align(4);
-            self.body.extend_from_slice(&value.to_le_bytes());
-            self
-        }
-        pub fn f64(&mut self, value: f64) -> &mut Self {
-            self.align(8);
-            self.body.extend_from_slice(&value.to_le_bytes());
-            self
-        }
-        pub fn string(&mut self, value: &str) -> &mut Self {
-            self.u32(value.len() as u32 + 1);
-            self.body.extend_from_slice(value.as_bytes());
-            self.body.push(0);
-            self
-        }
-        pub fn header(&mut self, sec: u32, nsec: u32, frame: &str) -> &mut Self {
-            self.u32(sec).u32(nsec).string(frame)
-        }
-        pub fn bytes(&mut self, data: &[u8]) -> &mut Self {
-            self.u32(data.len() as u32);
-            self.body.extend_from_slice(data);
-            self
-        }
-        pub fn finish(&self) -> Vec<u8> {
-            let mut out = vec![0, 1, 0, 0];
-            out.extend_from_slice(&self.body);
-            out
-        }
-    }
 
     pub fn cloud_cdr(sec: u32, frame: &str, points: &[[f32; 3]]) -> Vec<u8> {
         let mut writer = CdrWriter::default();
@@ -209,5 +264,18 @@ pub mod tests {
         assert_eq!(tf[0].child, "base_link");
         assert_eq!(tf[0].translation, [1.0, 2.0, 0.5]);
         assert_eq!(tf[0].rotation, [0.0, 0.0, 0.0, 1.0]);
+        let edges = vec![TfEdge { header: Header::at(4.5, "world"), child: "odom".into(), translation: [1.0, 2.0, 3.0], rotation: [0.0, 0.0, 0.6, 0.8] }];
+        assert_eq!(decode_tf(&encode_tf(&edges)).unwrap(), edges);
+        let mut writer = CdrWriter::default();
+        writer.header(5, 0, "camera").string("rgb8; jpeg compressed bgr8").bytes(&[0xff, 0xd8]);
+        let compressed = decode_compressed_image(&writer.finish()).unwrap();
+        assert_eq!((compressed.encoding.as_str(), compressed.data.len()), ("jpeg", 2));
+        let mut writer = CdrWriter::default();
+        writer.header(5, 0, "camera_optical").u32(720).u32(1280).string("plumb_bob").u32(2).f64(0.1).f64(0.2);
+        for value in [800.0, 0.0, 640.0, 0.0, 800.0, 360.0, 0.0, 0.0, 1.0] {
+            writer.f64(value);
+        }
+        let info = decode_camera_info(&writer.finish()).unwrap();
+        assert_eq!((info.width, info.d.len(), info.k[2]), (1280, 2, 640.0));
     }
 }

@@ -1,6 +1,7 @@
 //! dimos memory2 SQLite recordings (`.db`): `_streams(name, config)` lists the streams; each stream is a table
 //! `(id, ts, value, pose_x..pose_qw, tags)` plus `<name>_blob(id, data)` holding the encoded payload, `<name>_rtree`
-//! a spatial index. Payload codecs: `lcm` (the raw LCM message) and `lz4+lcm` (an LZ4 frame around it).
+//! a spatial index. Payload codecs: `lcm` (the raw LCM message), `lz4+lcm` (an LZ4 frame around it) and `jpeg` (an LCM
+//! Image whose pixels are a JPEG: the message is stored as is).
 //! Writing creates new streams the way dimos's SqliteStore does, so dimos reads them back.
 use anyhow::{bail, Context, Result};
 pub use rusqlite::Connection;
@@ -19,11 +20,18 @@ pub struct DbStream {
 
 #[derive(Debug, Clone)]
 pub struct DbRow {
+    pub id: i64,
     pub ts: f64,
     /// the stored observation pose (x, y, z, qx, qy, qz, qw), when the recorder set one
     pub pose: Option<[f64; 7]>,
     /// the decoded (decompressed) LCM payload
     pub payload: Vec<u8>,
+    /// the row's tags, as JSON text
+    pub tags: Option<String>,
+}
+
+fn has_tags(db: &Connection, name: &str) -> bool {
+    db.prepare(&format!("SELECT * FROM {} LIMIT 0", quote(name))).is_ok_and(|statement| statement.column_names().contains(&"tags"))
 }
 
 pub fn open_read(path: &Path) -> Result<Connection> {
@@ -60,7 +68,7 @@ pub fn streams(db: &Connection) -> Result<Vec<DbStream>> {
 
 pub fn decode_blob(codec: &str, data: &[u8]) -> Result<Vec<u8>> {
     match codec {
-        "lcm" => Ok(data.to_vec()),
+        "lcm" | "jpeg" => Ok(data.to_vec()),
         "lz4+lcm" => {
             let mut out = Vec::new();
             lz4_flex::frame::FrameDecoder::new(data).read_to_end(&mut out).context("lz4 frame")?;
@@ -75,8 +83,9 @@ pub fn for_each(db: &Connection, stream: &DbStream, mut each: impl FnMut(DbRow) 
     let table = quote(&stream.name);
     let blob = quote(&format!("{}_blob", stream.name));
     let mut statement = db.prepare(&format!(
-        "SELECT m.ts, m.pose_x, m.pose_y, m.pose_z, m.pose_qx, m.pose_qy, m.pose_qz, m.pose_qw, b.data \
-         FROM {table} AS m JOIN {blob} AS b ON b.id = m.id ORDER BY m.ts"
+        "SELECT m.ts, m.pose_x, m.pose_y, m.pose_z, m.pose_qx, m.pose_qy, m.pose_qz, m.pose_qw, b.data, m.id{} \
+         FROM {table} AS m JOIN {blob} AS b ON b.id = m.id ORDER BY m.ts",
+        if has_tags(db, &stream.name) { ", json(m.tags)" } else { ", NULL" }
     ))?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
@@ -84,8 +93,10 @@ pub fn for_each(db: &Connection, stream: &DbStream, mut each: impl FnMut(DbRow) 
         let pose: Vec<Option<f64>> = (1..8).map(|i| row.get(i)).collect::<rusqlite::Result<_>>()?;
         let pose = if pose.iter().all(Option::is_some) { Some(std::array::from_fn(|i| pose[i].unwrap())) } else { None };
         let data: Vec<u8> = row.get(8)?;
+        let id: i64 = row.get(9)?;
+        let tags: Option<String> = row.get(10).unwrap_or(None);
         let payload = decode_blob(&stream.codec, &data)?;
-        if !each(DbRow { ts, pose, payload })? {
+        if !each(DbRow { id, ts, pose, payload, tags })? {
             break;
         }
     }
@@ -98,11 +109,76 @@ pub fn payload_module(kind: &str) -> String {
     format!("dimos.msgs.{package}.{class}.{class}")
 }
 
+/// One row to write: its time, the observation pose dimos indexes (x, y, z, qx, qy, qz, qw), its tags (a JSON object)
+/// and the LCM payload.
+#[derive(Debug, Clone, Default)]
+pub struct NewRow {
+    pub ts: f64,
+    pub pose: Option<[f64; 7]>,
+    pub tags: Option<serde_json::Value>,
+    pub payload: Vec<u8>,
+}
+
+impl NewRow {
+    pub fn new(ts: f64, payload: Vec<u8>) -> NewRow {
+        NewRow { ts, payload, ..Default::default() }
+    }
+}
+
 /// Replaces stream `name` (dropping any previous one of that name) with `rows` (ts, LCM payload) of `kind`.
 pub fn write_stream(db: &mut Connection, name: &str, kind: &str, rows: &[(f64, Vec<u8>)]) -> Result<()> {
+    let rows: Vec<NewRow> = rows.iter().map(|(ts, payload)| NewRow::new(*ts, payload.clone())).collect();
+    write_rows(db, name, kind, &rows)
+}
+
+/// Drops stream `name` (its tables and its `_streams` row), if it's there.
+pub fn delete_stream(db: &Connection, name: &str) -> Result<()> {
+    for suffix in ["", "_blob", "_rtree", "_vec"] {
+        db.execute_batch(&format!("DROP TABLE IF EXISTS {}", quote(&format!("{name}{suffix}"))))?;
+    }
+    if db.query_row("SELECT count(*) FROM sqlite_master WHERE name = '_streams'", [], |row| row.get::<_, i64>(0))? > 0 {
+        db.execute("DELETE FROM _streams WHERE name = ?1", [name])?;
+    }
+    Ok(())
+}
+
+/// Appends rows to an existing stream (its codec must be plain `lcm`).
+pub fn append_rows(db: &Connection, name: &str, rows: &[NewRow]) -> Result<()> {
+    let table = quote(name);
+    let has_tags = db.prepare(&format!("SELECT * FROM {table} LIMIT 0"))?.column_names().contains(&"tags");
+    let mut meta = db.prepare(&format!(
+        "INSERT INTO {table} (ts, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw{}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8{})",
+        if has_tags { ", tags" } else { "" },
+        if has_tags { ", jsonb(?9)" } else { "" }
+    ))?;
+    let mut blob = db.prepare(&format!("INSERT INTO {} (id, data) VALUES (?1, ?2)", quote(&format!("{name}_blob"))))?;
+    let rtree_exists = db.query_row("SELECT count(*) FROM sqlite_master WHERE name = ?1", [format!("{name}_rtree")], |row| row.get::<_, i64>(0))? > 0;
+    let mut rtree = if rtree_exists { Some(db.prepare(&format!("INSERT INTO {} VALUES (?1, ?2, ?2, ?3, ?3, ?4, ?4)", quote(&format!("{name}_rtree"))))?) } else { None };
+    for row in rows {
+        let p: [Option<f64>; 7] = match row.pose {
+            Some(pose) => pose.map(Some),
+            None => [None; 7],
+        };
+        let tags = row.tags.as_ref().map_or_else(|| "{}".to_string(), |t| t.to_string());
+        if has_tags {
+            meta.execute(rusqlite::params![row.ts, p[0], p[1], p[2], p[3], p[4], p[5], p[6], tags])?;
+        } else {
+            meta.execute(rusqlite::params![row.ts, p[0], p[1], p[2], p[3], p[4], p[5], p[6]])?;
+        }
+        let id = db.last_insert_rowid();
+        blob.execute((id, &row.payload))?;
+        if let (Some(rtree), Some(pose)) = (rtree.as_mut(), row.pose) {
+            rtree.execute((id, pose[0], pose[1], pose[2]))?;
+        }
+    }
+    Ok(())
+}
+
+/// Replaces stream `name` (dropping any previous one of that name) with `rows` of `kind`, poses and tags kept.
+pub fn write_rows(db: &mut Connection, name: &str, kind: &str, rows: &[NewRow]) -> Result<()> {
     let tx = db.transaction()?;
     tx.execute_batch("CREATE TABLE IF NOT EXISTS _streams (name TEXT PRIMARY KEY, config TEXT NOT NULL)")?;
-    for suffix in ["", "_blob", "_rtree"] {
+    for suffix in ["", "_blob", "_rtree", "_vec"] {
         tx.execute_batch(&format!("DROP TABLE IF EXISTS {}", quote(&format!("{name}{suffix}"))))?;
     }
     let config = serde_json::json!({
@@ -125,14 +201,7 @@ pub fn write_stream(db: &mut Connection, name: &str, kind: &str, rows: &[(f64, V
         quote(&format!("{name}_blob")),
         quote(&format!("{name}_rtree")),
     ))?;
-    {
-        let mut meta = tx.prepare(&format!("INSERT INTO {table} (ts) VALUES (?1)"))?;
-        let mut blob = tx.prepare(&format!("INSERT INTO {} (id, data) VALUES (?1, ?2)", quote(&format!("{name}_blob"))))?;
-        for (ts, payload) in rows {
-            meta.execute([ts])?;
-            blob.execute((tx.last_insert_rowid(), payload))?;
-        }
-    }
+    append_rows(&tx, name, rows)?;
     tx.commit()?;
     Ok(())
 }
@@ -175,6 +244,23 @@ mod tests {
         })
         .unwrap();
         assert_eq!(seen, vec![(3.0, b"c".to_vec(), None)]);
+        // poses and tags survive, and appending adds to the stream
+        let row = NewRow { ts: 4.0, pose: Some([1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0]), tags: Some(serde_json::json!({ "marker_id": 7 })), payload: b"d".to_vec() };
+        write_rows(&mut db, "tags", "geometry_msgs.PoseStamped", &[row.clone()]).unwrap();
+        append_rows(&db, "tags", &[NewRow { ts: 5.0, ..row }]).unwrap();
+        let listed = streams(&db).unwrap();
+        let tags = listed.iter().find(|s| s.name == "tags").unwrap();
+        let mut rows = Vec::new();
+        for_each(&db, tags, |row| {
+            rows.push(row);
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].pose.unwrap()[1], 2.0);
+        assert_eq!(serde_json::from_str::<serde_json::Value>(rows[0].tags.as_deref().unwrap()).unwrap()["marker_id"], 7);
+        delete_stream(&db, "tags").unwrap();
+        assert!(streams(&db).unwrap().iter().all(|s| s.name != "tags"));
     }
 
     #[test]

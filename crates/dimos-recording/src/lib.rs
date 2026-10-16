@@ -7,6 +7,7 @@ pub mod lcm;
 pub mod mcap_append;
 pub mod mcap_io;
 pub mod points;
+pub mod tf_edit;
 
 use anyhow::{bail, Context, Result};
 use lcm::{Odometry, PoseStamped, TfEdge};
@@ -23,6 +24,8 @@ pub enum Kind {
     Path,
     OccupancyGrid,
     Text,
+    Image,
+    CameraInfo,
     Other,
 }
 
@@ -38,6 +41,8 @@ impl Kind {
             "nav_msgs.Path" => Kind::Path,
             "nav_msgs.OccupancyGrid" => Kind::OccupancyGrid,
             "std_msgs.String" => Kind::Text,
+            "sensor_msgs.Image" | "sensor_msgs.CompressedImage" => Kind::Image,
+            "sensor_msgs.CameraInfo" => Kind::CameraInfo,
             _ => Kind::Other,
         }
     }
@@ -63,6 +68,8 @@ pub enum Message {
     Tf(Vec<TfEdge>),
     Odometry(Odometry),
     PoseStamped(PoseStamped),
+    Image(lcm::Image),
+    CameraInfo(lcm::CameraInfo),
 }
 
 enum Backend {
@@ -89,9 +96,13 @@ pub fn format_of(path: &Path) -> Result<Format> {
     }
 }
 
-fn decode(encoding: &str, kind: Kind, payload: &[u8]) -> Result<Option<Message>> {
+fn decode(encoding: &str, type_name: &str, payload: &[u8]) -> Result<Option<Message>> {
     let cdr = encoding == "cdr";
+    let kind = Kind::of(type_name);
     Ok(Some(match kind {
+        Kind::Image if cdr && type_name.ends_with("CompressedImage") => Message::Image(cdr::decode_compressed_image(payload)?),
+        Kind::Image => Message::Image(if cdr { cdr::decode_image(payload)? } else { lcm::decode_image(payload)? }),
+        Kind::CameraInfo => Message::CameraInfo(if cdr { cdr::decode_camera_info(payload)? } else { lcm::decode_camera_info(payload)? }),
         Kind::Cloud => Message::Cloud(points::extract(&if cdr { cdr::decode_point_cloud2(payload)? } else { lcm::decode_point_cloud2(payload)? })?),
         Kind::Tf => Message::Tf(if cdr { cdr::decode_tf(payload)? } else { lcm::decode_tf(payload)? }),
         Kind::Odometry => Message::Odometry(if cdr { cdr::decode_odometry(payload)? } else { lcm::decode_odometry(payload)? }),
@@ -139,14 +150,13 @@ impl Recording {
         match &self.backend {
             Backend::Db(connection, streams) => {
                 let info = streams.iter().find(|s| s.name == stream).with_context(|| format!("no stream {stream}"))?;
-                let kind = Kind::of(&info.kind);
-                db::for_each(connection, info, |row| match decode("lcm", kind, &row.payload) {
+                db::for_each(connection, info, |row| match decode("lcm", &info.kind, &row.payload) {
                     Ok(Some(message)) => each(row.ts, message, row.pose),
                     Ok(None) => Ok(true),
                     Err(_) => Ok(true), // one bad row doesn't end a recording
                 })
             }
-            Backend::Mcap(file) => file.for_each(stream, |ts, encoding, kind, payload| match decode(encoding, Kind::of(kind), payload) {
+            Backend::Mcap(file) => file.for_each(stream, |ts, encoding, kind, payload| match decode(encoding, kind, payload) {
                 Ok(Some(message)) => each(ts, message, None),
                 _ => Ok(true),
             }),
@@ -158,8 +168,40 @@ impl Recording {
         Ok(self.tf_edges_logged()?.into_iter().map(|(_, edge)| edge).collect())
     }
 
-    /// Every transform with the log time of the message that carried it (to tell a header stamp's clock).
+    /// Every transform with the log time of the message that carried it (to tell a header stamp's clock). In an .mcap
+    /// an edge the Map Editor wrote (a channel naming it in `EDGE_KEY`) comes from the newest such channel only.
     pub fn tf_edges_logged(&self) -> Result<Vec<(f64, TfEdge)>> {
+        if let Backend::Mcap(file) = &self.backend {
+            let infos = file.channel_infos()?;
+            let mut overrides: std::collections::HashMap<String, (f64, u16)> = std::collections::HashMap::new();
+            for info in &infos {
+                if let (Some(edge), Some(generation)) = (info.metadata.get(mcap_io::EDGE_KEY), info.generation()) {
+                    let entry = overrides.entry(edge.clone()).or_insert((generation, info.id));
+                    if generation > entry.0 {
+                        *entry = (generation, info.id);
+                    }
+                }
+            }
+            let mut edges = Vec::new();
+            let mut topics: Vec<&str> = infos.iter().filter(|c| Kind::of(&c.kind) == Kind::Tf).map(|c| c.topic.as_str()).collect();
+            topics.dedup();
+            topics.sort();
+            topics.dedup();
+            for topic in topics {
+                file.for_each_channel(topic, |ts, channel, payload| {
+                    let decoded = if channel.message_encoding == "cdr" { cdr::decode_tf(payload) } else { lcm::decode_tf(payload) };
+                    let Ok(list) = decoded else { return Ok(true) };
+                    for edge in list {
+                        let key = tf_edit::edge_key(edge.header.frame_id.trim_start_matches('/'), edge.child.trim_start_matches('/'));
+                        if overrides.get(&key).is_none_or(|(_, id)| *id == channel.id) {
+                            edges.push((ts, edge));
+                        }
+                    }
+                    Ok(true)
+                })?;
+            }
+            return Ok(edges);
+        }
         let mut edges = Vec::new();
         for stream in self.streams()?.into_iter().filter(|s| s.kind == Kind::Tf) {
             self.for_each(&stream.name, |ts, message, _| {

@@ -9,6 +9,35 @@ use std::path::Path;
 pub const LCM_TYPE_KEY: &str = "lcm_type";
 /// channel metadata naming the topic a channel was made from (a corrected copy of a lidar names the raw one)
 pub const DERIVED_FROM_KEY: &str = "derived_from";
+/// channel metadata on what the Map Editor's generation steps append: when it was written (unix seconds). An mcap is
+/// only ever appended to, so a re-run adds a newer channel on the same topic; readers here take the newest one.
+pub const GENERATION_KEY: &str = "map_builder_generation";
+/// channel metadata on a tf channel the Map Editor appended: the edge it holds ("parent>child"), which replaces that
+/// edge everywhere else in the recording for readers here
+pub const EDGE_KEY: &str = "map_builder_edge";
+
+/// One channel of the file, from its summary.
+#[derive(Debug, Clone)]
+pub struct ChannelInfo {
+    pub id: u16,
+    pub topic: String,
+    pub encoding: String,
+    pub kind: String,
+    pub metadata: BTreeMap<String, String>,
+}
+
+impl ChannelInfo {
+    pub fn generation(&self) -> Option<f64> {
+        self.metadata.get(GENERATION_KEY).and_then(|value| value.parse().ok())
+    }
+}
+
+fn kind_of(channel: &mcap::Channel) -> String {
+    match channel.message_encoding.as_str() {
+        "lcm" => channel.metadata.get(LCM_TYPE_KEY).cloned().unwrap_or_default(),
+        _ => channel.schema.as_ref().map(|schema| schema.name.clone()).unwrap_or_default(),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct McapChannel {
@@ -45,14 +74,59 @@ impl McapFile {
         &self.map
     }
 
+    /// Every channel (several may share a topic), from the summary, else by reading the file.
+    pub fn channel_infos(&self) -> Result<Vec<ChannelInfo>> {
+        let mut found: BTreeMap<u16, ChannelInfo> = BTreeMap::new();
+        let mut add = |channel: &mcap::Channel| {
+            found.entry(channel.id).or_insert_with(|| ChannelInfo { id: channel.id, topic: channel.topic.clone(), encoding: channel.message_encoding.clone(), kind: kind_of(channel), metadata: channel.metadata.clone() });
+        };
+        match mcap::Summary::read(&self.map).ok().flatten() {
+            Some(summary) if !summary.channels.is_empty() => summary.channels.values().for_each(|channel| add(channel)),
+            _ => {
+                for message in mcap::MessageStream::new(&self.map)? {
+                    let Ok(message) = message else { break };
+                    add(&message.channel);
+                }
+            }
+        }
+        Ok(found.into_values().collect())
+    }
+
+    /// The channels of `topic` a reader should use: the newest Map Editor generation when it appended any (an edge
+    /// override channel on a tf topic doesn't count: tf readers sort those out per edge), else all of them.
+    pub fn current_channels(&self, topic: &str) -> Result<Vec<u16>> {
+        let channels: Vec<ChannelInfo> = self.channel_infos()?.into_iter().filter(|c| c.topic == topic).collect();
+        let generated = channels.iter().filter(|c| c.generation().is_some() && !c.metadata.contains_key(EDGE_KEY)).max_by(|a, b| a.generation().unwrap().total_cmp(&b.generation().unwrap()));
+        Ok(match generated {
+            Some(newest) => vec![newest.id],
+            None => channels.iter().map(|c| c.id).collect(),
+        })
+    }
+
+    /// Older generations of a topic the Map Editor appended to again: what readers skip.
+    fn superseded(&self) -> Result<std::collections::HashSet<u16>> {
+        let infos = self.channel_infos()?;
+        let mut newest: HashMap<&str, (f64, u16)> = HashMap::new();
+        for info in infos.iter().filter(|c| !c.metadata.contains_key(EDGE_KEY)) {
+            if let Some(generation) = info.generation() {
+                let entry = newest.entry(&info.topic).or_insert((generation, info.id));
+                if generation > entry.0 {
+                    *entry = (generation, info.id);
+                }
+            }
+        }
+        Ok(infos.iter().filter(|c| newest.get(c.topic.as_str()).is_some_and(|(_, id)| *id != c.id) && !c.metadata.contains_key(EDGE_KEY)).map(|c| c.id).collect())
+    }
+
     pub fn channels(&self) -> Result<Vec<McapChannel>> {
         let mut by_topic: BTreeMap<String, McapChannel> = BTreeMap::new();
         let summary = mcap::Summary::read(&self.map).ok().flatten();
+        let superseded = self.superseded()?;
         let mut add = |channel: &mcap::Channel, count: u64| {
-            let kind = match channel.message_encoding.as_str() {
-                "lcm" => channel.metadata.get(LCM_TYPE_KEY).cloned().unwrap_or_default(),
-                _ => channel.schema.as_ref().map(|schema| schema.name.clone()).unwrap_or_default(),
-            };
+            if superseded.contains(&channel.id) {
+                return;
+            }
+            let kind = kind_of(channel);
             let entry = by_topic.entry(channel.topic.clone()).or_insert(McapChannel {
                 topic: channel.topic.clone(),
                 encoding: channel.message_encoding.clone(),
@@ -82,6 +156,17 @@ impl McapFile {
     /// Calls `each(log_time_seconds, encoding, kind, payload)` for every message on `topic`, in file order (log time
     /// for the Live Viewer's recordings). `each` returns false to stop.
     pub fn for_each(&self, topic: &str, mut each: impl FnMut(f64, &str, &str, &[u8]) -> Result<bool>) -> Result<()> {
+        let current = self.current_channels(topic)?;
+        self.for_each_channel(topic, |ts, channel, payload| {
+            if !current.contains(&channel.id) {
+                return Ok(true);
+            }
+            each(ts, &channel.message_encoding, &kind_of(channel), payload)
+        })
+    }
+
+    /// Every message on `topic` (all its channels), with the channel it came on.
+    pub fn for_each_channel(&self, topic: &str, mut each: impl FnMut(f64, &mcap::Channel, &[u8]) -> Result<bool>) -> Result<()> {
         for message in mcap::MessageStream::new(&self.map)? {
             let message = match message {
                 Ok(message) => message,
@@ -91,11 +176,7 @@ impl McapFile {
             if message.channel.topic != topic {
                 continue;
             }
-            let kind = match message.channel.message_encoding.as_str() {
-                "lcm" => message.channel.metadata.get(LCM_TYPE_KEY).cloned().unwrap_or_default(),
-                _ => message.channel.schema.as_ref().map(|schema| schema.name.clone()).unwrap_or_default(),
-            };
-            if !each(message.log_time as f64 / 1e9, &message.channel.message_encoding, &kind, &message.data)? {
+            if !each(message.log_time as f64 / 1e9, &message.channel, &message.data)? {
                 break;
             }
         }
@@ -134,6 +215,44 @@ pub fn append(path: &Path, channels: &[NewChannel]) -> Result<()> {
         for (ts, payload) in &channel.messages {
             appender.write(id, (ts.max(0.0) * 1e9) as u64, payload.clone())?;
         }
+    }
+    appender.finish()?;
+    Ok(())
+}
+
+/// A channel to add as a new one even when its topic exists (a generation step's output): message encoding, the schema
+/// (name, encoding, data) for cdr, its metadata, and (log time, payload) messages.
+pub struct GeneratedChannel {
+    pub topic: String,
+    pub encoding: String,
+    pub schema: Option<(String, String, Vec<u8>)>,
+    pub metadata: BTreeMap<String, String>,
+    pub messages: Vec<(f64, Vec<u8>)>,
+}
+
+impl GeneratedChannel {
+    /// An LCM channel of dimos type `kind`, stamped with generation `generation`.
+    pub fn lcm(topic: &str, kind: &str, generation: f64, messages: Vec<(f64, Vec<u8>)>) -> GeneratedChannel {
+        let metadata = BTreeMap::from([(LCM_TYPE_KEY.to_string(), kind.to_string()), (GENERATION_KEY.to_string(), format!("{generation:.6}"))]);
+        GeneratedChannel { topic: topic.into(), encoding: "lcm".into(), schema: None, metadata, messages }
+    }
+}
+
+/// Appends `channels` in place, each as a new channel (see GENERATION_KEY). Big payloads are streamed in time order.
+pub fn append_generated(path: &Path, channels: &[GeneratedChannel]) -> Result<()> {
+    let mut appender = crate::mcap_append::Appender::open(path)?;
+    let mut all: Vec<(f64, u16, &Vec<u8>)> = Vec::new();
+    for channel in channels {
+        let schema = match &channel.schema {
+            Some((name, encoding, data)) => appender.schema(name, encoding, data),
+            None => 0,
+        };
+        let id = appender.new_channel(&channel.topic, schema, &channel.encoding, &channel.metadata);
+        all.extend(channel.messages.iter().map(|(ts, payload)| (*ts, id, payload)));
+    }
+    all.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (ts, id, payload) in all {
+        appender.write_stream(id, (ts.max(0.0) * 1e9) as u64, payload.clone())?;
     }
     appender.finish()?;
     Ok(())
@@ -190,6 +309,24 @@ mod tests {
         // grew by the saves, not by a copy; nothing left beside it
         assert!(std::fs::metadata(&path).unwrap().len() < before + 4096);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_newer_generation_replaces_an_older_one_for_readers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.mcap");
+        write_fixture(&path, &[("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1.0, vec![1, 2])]);
+        append_generated(&path, &[GeneratedChannel::lcm("raw_april_tags", "geometry_msgs.PoseStamped", 10.0, vec![(1.0, vec![1]), (2.0, vec![2])])]).unwrap();
+        append_generated(&path, &[GeneratedChannel::lcm("raw_april_tags", "geometry_msgs.PoseStamped", 20.0, vec![(1.5, vec![3])])]).unwrap();
+        let file = McapFile::open(&path).unwrap();
+        let mut seen = Vec::new();
+        file.for_each("raw_april_tags", |ts, _, _, payload| {
+            seen.push((ts, payload.to_vec()));
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(seen, vec![(1.5, vec![3])]);
+        assert_eq!(file.channel_infos().unwrap().iter().filter(|c| c.topic == "raw_april_tags").count(), 2);
     }
 
     #[test]

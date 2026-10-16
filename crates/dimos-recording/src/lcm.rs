@@ -11,6 +11,8 @@ pub const POSE_STAMPED_TYPE: &str = "geometry_msgs.PoseStamped";
 pub const PATH_TYPE: &str = "nav_msgs.Path";
 pub const OCCUPANCY_GRID_TYPE: &str = "nav_msgs.OccupancyGrid";
 pub const STRING_TYPE: &str = "std_msgs.String";
+pub const IMAGE_TYPE: &str = "sensor_msgs.Image";
+pub const CAMERA_INFO_TYPE: &str = "sensor_msgs.CameraInfo";
 
 // From the generated dimos-lcm python types (`Type._get_packed_fingerprint()`).
 pub const TF_FINGERPRINT: [u8; 8] = [0xc2, 0xb8, 0xa1, 0xc3, 0x3a, 0x89, 0x23, 0xec];
@@ -20,6 +22,9 @@ pub const POSE_STAMPED_FINGERPRINT: [u8; 8] = [0x6a, 0x82, 0x69, 0x64, 0x58, 0xc
 pub const PATH_FINGERPRINT: [u8; 8] = [0xc3, 0xae, 0x62, 0xac, 0xb3, 0x57, 0x93, 0xe2];
 pub const OCCUPANCY_GRID_FINGERPRINT: [u8; 8] = [0xe7, 0xdf, 0xd1, 0x79, 0xcd, 0xfc, 0x3b, 0x65];
 pub const STRING_FINGERPRINT: [u8; 8] = [0x21, 0xbf, 0x37, 0x09, 0x9b, 0x9d, 0x5e, 0x15];
+// read off recorded messages (a go2 / mid360 recording's color_image and camera_info)
+pub const IMAGE_FINGERPRINT: [u8; 8] = [0x53, 0x5c, 0xfa, 0xce, 0x1f, 0x4f, 0x57, 0x17];
+pub const CAMERA_INFO_FINGERPRINT: [u8; 8] = [0xaf, 0xb5, 0x01, 0xb0, 0x07, 0x07, 0xa0, 0x2a];
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Header {
@@ -102,6 +107,29 @@ pub struct OccupancyGrid {
     pub origin: Pose,
     /// row-major from the origin, -1 unknown, 0 free, 100 occupied
     pub data: Vec<i8>,
+}
+
+/// A camera frame: raw pixels (`rgb8`, `bgr8`, `mono8`, ...) or a compressed one (`jpeg`, `png`: width/height may be 0
+/// until it's decoded).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Image {
+    pub header: Header,
+    pub height: u32,
+    pub width: u32,
+    pub encoding: String,
+    pub step: u32,
+    pub data: Vec<u8>,
+}
+
+/// The intrinsics a camera publishes: K (row-major 3x3), the distortion model and its coefficients.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CameraInfo {
+    pub header: Header,
+    pub height: u32,
+    pub width: u32,
+    pub distortion_model: String,
+    pub d: Vec<f64>,
+    pub k: [f64; 9],
 }
 
 pub struct Reader<'a> {
@@ -205,6 +233,8 @@ pub fn type_of(payload: &[u8]) -> Option<&'static str> {
         (PATH_FINGERPRINT, PATH_TYPE),
         (OCCUPANCY_GRID_FINGERPRINT, OCCUPANCY_GRID_TYPE),
         (STRING_FINGERPRINT, STRING_TYPE),
+        (IMAGE_FINGERPRINT, IMAGE_TYPE),
+        (CAMERA_INFO_FINGERPRINT, CAMERA_INFO_TYPE),
     ]
     .into_iter()
     .find(|(print, _)| *print == fingerprint)
@@ -289,6 +319,84 @@ pub fn decode_path(payload: &[u8]) -> Result<Vec<PoseStamped>> {
     let count = reader.length()?;
     read_header(&mut reader)?;
     (0..count).map(|_| Ok(PoseStamped { header: read_header(&mut reader)?, pose: read_pose(&mut reader)? })).collect()
+}
+
+pub fn decode_image(payload: &[u8]) -> Result<Image> {
+    let mut reader = Reader::new(payload);
+    reader.expect_fingerprint(&IMAGE_FINGERPRINT)?;
+    let length = reader.length()?;
+    let header = read_header(&mut reader)?;
+    let height = reader.i32()? as u32;
+    let width = reader.i32()? as u32;
+    let encoding = reader.string()?;
+    reader.u8()?; // is_bigendian
+    let step = reader.i32()? as u32;
+    let data = reader.take(length)?.to_vec();
+    Ok(Image { header, height, width, encoding, step, data })
+}
+
+pub fn decode_camera_info(payload: &[u8]) -> Result<CameraInfo> {
+    let mut reader = Reader::new(payload);
+    reader.expect_fingerprint(&CAMERA_INFO_FINGERPRINT)?;
+    let d_length = reader.length()?;
+    if d_length > 64 {
+        bail!("nonsense distortion length");
+    }
+    let header = read_header(&mut reader)?;
+    let height = reader.i32()? as u32;
+    let width = reader.i32()? as u32;
+    let distortion_model = reader.string()?;
+    let d = (0..d_length).map(|_| reader.f64()).collect::<Result<Vec<_>>>()?;
+    let k = reader.f64_array()?;
+    Ok(CameraInfo { header, height, width, distortion_model, d, k })
+}
+
+pub fn encode_image(image: &Image) -> Vec<u8> {
+    let mut writer = Writer::new(&IMAGE_FINGERPRINT);
+    writer.i32(image.data.len() as i32).header(&image.header).i32(image.height as i32).i32(image.width as i32).string(&image.encoding).u8(0).i32(image.step as i32);
+    writer.bytes.extend_from_slice(&image.data);
+    writer.bytes
+}
+
+/// R = identity, P = [K | 0], no binning, an empty region of interest.
+pub fn encode_camera_info(info: &CameraInfo) -> Vec<u8> {
+    let mut writer = Writer::new(&CAMERA_INFO_FINGERPRINT);
+    writer.i32(info.d.len() as i32).header(&info.header).i32(info.height as i32).i32(info.width as i32).string(&info.distortion_model);
+    for value in &info.d {
+        writer.f64(*value);
+    }
+    for value in info.k {
+        writer.f64(value);
+    }
+    for value in [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] {
+        writer.f64(value);
+    }
+    let k = info.k;
+    for value in [k[0], k[1], k[2], 0.0, k[3], k[4], k[5], 0.0, k[6], k[7], k[8], 0.0] {
+        writer.f64(value);
+    }
+    writer.i32(0).i32(0);
+    writer.i32(0).i32(0).i32(0).i32(0).u8(0); // roi: x_offset, y_offset, height, width, do_rectify
+    writer.bytes
+}
+
+pub fn encode_pose_stamped(value: &PoseStamped) -> Vec<u8> {
+    let mut writer = Writer::new(&POSE_STAMPED_FINGERPRINT);
+    writer.header(&value.header).pose(&value.pose);
+    writer.bytes
+}
+
+/// nav_msgs.Odometry with zero covariances and twist.
+pub fn encode_odometry(value: &Odometry) -> Vec<u8> {
+    let mut writer = Writer::new(&ODOMETRY_FINGERPRINT);
+    writer.header(&value.header).string(&value.child_frame_id).pose(&value.pose);
+    for _ in 0..36 {
+        writer.f64(0.0);
+    }
+    for _ in 0..(6 + 36) {
+        writer.f64(0.0);
+    }
+    writer.bytes
 }
 
 /// Builds an LCM message.
@@ -430,5 +538,13 @@ mod tests {
         let edges = vec![TfEdge { header, child: "base_link".into(), translation: [1.0, 0.0, 0.0], rotation: [0.0, 0.0, 0.0, 1.0] }];
         assert_eq!(decode_tf(&encode_tf(&edges)).unwrap(), edges);
         assert_eq!(type_of(&encode_tf(&edges)), Some(TF_TYPE));
+        let image = Image { header: Header::at(3.5, "camera_optical"), height: 2, width: 3, encoding: "rgb8".into(), step: 9, data: (0..18).collect() };
+        assert_eq!(decode_image(&encode_image(&image)).unwrap(), image);
+        let info = CameraInfo { header: Header::at(1.0, "camera_optical"), height: 720, width: 1280, distortion_model: "plumb_bob".into(), d: vec![0.1, -0.2, 0.0, 0.0, 0.01], k: [800.0, 0.0, 640.0, 0.0, 801.0, 360.0, 0.0, 0.0, 1.0] };
+        assert_eq!(decode_camera_info(&encode_camera_info(&info)).unwrap(), info);
+        let pose = PoseStamped { header: Header::at(2.0, "camera_optical"), pose: Pose { position: [0.1, 0.2, 0.9], orientation: [0.0, 0.0, 0.0, 1.0] } };
+        assert_eq!(decode_pose_stamped(&encode_pose_stamped(&pose)).unwrap(), pose);
+        let odometry = Odometry { header: Header::at(2.0, "odom"), child_frame_id: "lidar".into(), pose: pose.pose };
+        assert_eq!(decode_odometry(&encode_odometry(&odometry)).unwrap(), odometry);
     }
 }

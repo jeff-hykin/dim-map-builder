@@ -261,6 +261,13 @@ impl Appender {
         id
     }
 
+    /// A new channel on `topic` whether or not the file has one already (a newer generation of a derived stream).
+    pub fn new_channel(&mut self, topic: &str, schema_id: u16, message_encoding: &str, metadata: &BTreeMap<String, String>) -> u16 {
+        let id = self.channels.keys().next_back().map_or(1, |last| last + 1);
+        self.channels.insert(id, Channel { schema_id, topic: topic.into(), message_encoding: message_encoding.into(), metadata: metadata.clone() });
+        id
+    }
+
     /// Queues one small message -- odometry, a transform -- to be held in
     /// memory and written in log-time order among everything else. Holding
     /// is what lets the appended chunks be ordered among themselves; keep it
