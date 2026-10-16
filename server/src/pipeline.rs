@@ -192,6 +192,11 @@ pub fn run_global(data_dir: &Path, path: &Path, options: &GlobalOptions, share: 
         build.cloud_stream = tf.plan.cloud_stream.clone();
         build.sensor_frame = if tf.plan.compensate { tf.plan.sensor_frame.clone() } else { String::new() };
         build.loop_closure = false;
+    } else if build.world_frame.is_empty() {
+        // without the correction: placed in the frame it hangs off (odom), not through the corrected edge above it
+        if let Some(tf) = state.tf.as_ref().filter(|_| has_correction(&state, &mapping::frames::tf_tree(&recording).unwrap_or_default())) {
+            build.world_frame = tf.plan.parent.clone();
+        }
     }
     let rrd = options.rrd.enabled;
     let build_share = share.part(0.0, if rrd { 0.75 } else { 0.95 }, if build.loop_closure { &BUILD_WEIGHTS } else { &BUILD_WEIGHTS_NO_LOOPS });
@@ -360,8 +365,15 @@ impl App {
         self.pipeline_job(id, "globalMap", move |app, path, share, cancel| {
             let started = now_seconds();
             let (result, record, notes) = run_global(&app.store.dir, path, &options, share, cancel)?;
+            let chained = notes.iter().any(|n| n.starts_with("no corrected tf"));
             app.install_map(&session_id, result, options.build.clone(), notes, started)?;
-            Ok(format!("Global map: {} points in {}, written as global_map_aggregated and {}", record.points, record.world_frame, record.lcm_path))
+            Ok(format!(
+                "Global map{}: {} points in {}, written as global_map_aggregated and {}",
+                if chained { " (the tf was corrected first)" } else { "" },
+                record.points,
+                record.world_frame,
+                record.lcm_path
+            ))
         })
     }
 
