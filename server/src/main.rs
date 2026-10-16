@@ -5,8 +5,10 @@ mod api;
 mod app;
 mod desktop;
 mod dimos_app;
+mod icp_stitch;
 mod lite_record;
 mod persist;
+mod pipeline;
 mod probe;
 mod routes;
 mod session;
@@ -59,6 +61,8 @@ async fn main() -> Result<()> {
         .router
         .with_state(state.clone())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(64 << 20))
+        // a recording dropped on the page streams in whole: no body limit there
+        .merge(api::import_router().with_state(state.clone()))
         .fallback_service(tower_http::services::ServeDir::new(&frontend).fallback(tower_http::services::ServeFile::new(frontend.join("index.html"))));
     let shutdown = async {
         let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");

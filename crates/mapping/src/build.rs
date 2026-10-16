@@ -84,6 +84,10 @@ impl Default for BuildOptions {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
+    /// 0..1 over a whole job made of several steps (a later step running the earlier ones it needs first); None = the
+    /// job's own stage weights decide
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overall: Option<f64>,
     pub stage: String,
     pub stage_index: usize,
     pub stage_count: usize,
@@ -312,7 +316,7 @@ pub fn preview(recording: &Recording, options: &BuildOptions, max_scans: usize, 
     recording.for_each(&prepared.stream, |ts, message, pose| {
         index += 1;
         if index % 32 == 0 {
-            progress(Progress { stage: "Reading scans".into(), stage_index: 0, stage_count: 1, done: index, total: prepared.total, note: String::new() });
+            progress(Progress { overall: None, stage: "Reading scans".into(), stage_index: 0, stage_count: 1, done: index, total: prepared.total, note: String::new() });
             if cancel.load(Ordering::Relaxed) {
                 return Err(anyhow::anyhow!(Cancelled));
             }
@@ -347,7 +351,7 @@ pub fn preview(recording: &Recording, options: &BuildOptions, max_scans: usize, 
 pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<BuildResult> {
     let stage_count = if options.loop_closure { 4 } else { 3 };
     let mut report = |stage: &str, index: usize, done: u64, total: u64, note: String| {
-        progress(Progress { stage: stage.into(), stage_index: index, stage_count, done, total, note });
+        progress(Progress { overall: None, stage: stage.into(), stage_index: index, stage_count, done, total, note });
     };
     let check = || if cancel.load(Ordering::Relaxed) { Err(anyhow::anyhow!(Cancelled)) } else { Ok(()) };
     let mut result = BuildResult { voxel_size: options.voxel_size, ..Default::default() };

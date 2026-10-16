@@ -172,8 +172,16 @@ pub fn routes() -> Routes<Arc<App>> {
         .when("you need the path the robot drove, raw or loop-closure corrected")
         .endpoint("POST", "api/sessions/{id}/build", "Start (re)building the global map from the recording (loop closure + ray tracing). A recording with a lidar + IMU and no odometry (status postProcess set) gets lite_record's post_process first, in place: odometry, corrected scans, its voxel map. Runs in the background: returns { job }; poll GET api/status (job) or watch the page. Every option is optional (GET api/build-defaults; nested ray / pgo / tfTolerance pass through too).", with_id(json!({ "voxelSize": n("voxel edge, meters"), "loopClosure": b("correct drift with loop closure (pose graph optimization)"), "rayTracing": b("ray trace the scans so free space clears what moved; false keeps every return, just voxelized"), "every": int("use every n-th scan (1 = all)"), "maxRange": n("ignore lidar returns farther than this, meters"), "cloudStream": s("the point cloud stream (default: the cloud stream with the most messages)"), "worldFrame": s("the fixed frame (default: world, map or odom, whichever places the clouds)") })), build)
         .when("you need to build or rebuild the 3D map from the recording")
-        .endpoint("DELETE", "api/sessions/{id}/job", "Cancel the running job (build, preview or save). Returns { cancelled } (false when nothing was running).", with_id(json!({})), cancel)
-        .when("you want to stop a running build or save")
+        .endpoint("DELETE", "api/sessions/{id}/job", "Cancel the running job (build, preview, save, or a generation step). Returns { cancelled } (false when nothing was running).", with_id(json!({})), cancel)
+        .when("you want to stop a running build, save or generation step")
+        .endpoint("GET", "api/sessions/{id}/generate", "The generation steps for the open recording: what it has (image / CameraInfo streams, raw_april_tags and april_tags counts and marker ids, the tf tree analyzed: frames, which edges move, cloud streams and the default one to correct, the edge the correction would write, whether a corrected tf is in it and is stale, global_map_aggregated / .pc2.lcm / .rrd), each step's defaults and what each ran with last.", with_id(json!({})), generate_status)
+        .when("you need to see which generation steps a recording has done and what each would run with")
+        .endpoint("POST", "api/sessions/{id}/generate/tags", "Step 1, AprilTags from images, in the background: every image of the camera stream through the AprilTag detector (tag36h11, 10 cm, posed with the recording's CameraInfo), written into the recording: raw_april_tags (every glimpse with its quality diagnostics) and/or april_tags (gated, grouped per marker visit). Options (all optional): raw, grouped, cameraStream, cameraInfoStream, markerLength, dictionary, exclude (marker ids left out of the grouped stream), every, gates {...}, grouping {...}.", with_id(json!({ "raw": b("write raw_april_tags (default true)"), "grouped": b("write april_tags (default true)"), "cameraStream": s(""), "cameraInfoStream": s(""), "markerLength": n("m"), "exclude": numbers("marker ids on moving things") })), generate_tags)
+        .when("you need AprilTag sightings (raw or grouped per marker) written into a recording")
+        .endpoint("POST", "api/sessions/{id}/generate/tf", "Step 2, a corrected tf tree, in the background: loop closure over the trajectory of a point cloud's sensor, written into the recording's tf as the edge above the odometry (grandparent → parent, e.g. world → odom; replaced if it's there). quality fast = the app's loop closure, high = icp_stitch (ICP stitching). useTags adds AprilTag landmarks (runs step 1 first when the recording has no raw_april_tags). Options: cloudStream, sensorFrame (for a cloud in its tree's root frame), grandparent (name when there's none, default world), useTags, excludeTags, quality, stitch {closureSpacing, icpRadiusM, icpMinDtS, ...}, rateHz.", with_id(json!({ "cloudStream": s("default: the scans whose frame moves, nearest the root of the biggest tree"), "sensorFrame": s(""), "grandparent": s(""), "useTags": b(""), "excludeTags": numbers(""), "quality": s("fast | high"), "stitch": json!({ "type": "object" }) })), generate_tf)
+        .when("you need a loop-closure-corrected tf tree written into a recording")
+        .endpoint("POST", "api/sessions/{id}/generate/global-map", "Step 3, the global map, in the background: built through the corrected tf (useCorrectedTf, default true: runs step 2 first when the recording has none) with ray tracing, decimated, written into the recording as global_map_aggregated (one cloud at its start) and beside it as <name>_global_map_aggregated.pc2.lcm; it becomes the map in the editor. Options: useCorrectedTf, build {voxelSize, rayTracing, ray {...}, ...}, decimation {voxel, removeOutliers, neighbors, stdRatio}, rrd {enabled, streams [{name, enabled, hz}], map, tags, trajectory} (an .rrd beside the recording).", with_id(json!({ "useCorrectedTf": b("default true"), "build": json!({ "type": "object" }), "decimation": json!({ "type": "object" }), "rrd": json!({ "type": "object" }) })), generate_global)
+        .when("you need the corrected global map built and written into a recording")
         .endpoint("POST", "api/sessions/{id}/op", "Clean up or crop (undoable). op: floating (small disconnected clusters; params.minVoxels, default 30), outliers (statistical; params.neighbors default 20, params.stdRatio default 2), floor (the floor surface; params.thickness), walls (vertical surfaces; params.minHeight, default 0.3), keepWalls (everything but walls), cropOutside (keep only a box region), deleteInside (remove a box region), cropHeight (keep params.zMin..params.zMax). Returns { label, changed (voxels removed), remaining }; preview=true only counts (and adds preview: the points it would remove).", with_id(json!({ "op": required(s("floating | outliers | floor | walls | keepWalls | cropOutside | deleteInside | cropHeight")), "region": region.clone(), "params": json!({ "type": "object", "description": "the op's tunables: minVoxels, neighbors, stdRatio, thickness, minHeight, zMin, zMax (see above)" }), "preview": b("only count what it would remove, change nothing") })), op)
         .when("you need to remove noise, floor, walls or a region from the map")
         .endpoint("POST", "api/sessions/{id}/transform", "Orient the map (undoable; annotations move with it): kind=rotate spins it about +z through its center by degrees; kind=level tilts it so the main floor is flat at z = 0; kind=set sets the transform {translation, rotation (x,y,z,w)}. Returns { ok: true }.", with_id(json!({ "kind": required(s("rotate | level | set")), "degrees": n("for rotate: degrees about +z"), "transform": json!({ "type": "object", "description": "for set: {translation [x, y, z], rotation [x, y, z, w]}" }) })), transform)
@@ -218,6 +226,50 @@ pub fn routes() -> Routes<Arc<App>> {
         .plumbing("PUT", "api/sessions/{id}/view", report_view)
         .plumbing("POST", "api/captures/{request}", capture)
         .plumbing("GET", "agent.json", || async { Json(routes().manifest(WHEN, DESCRIPTION)) })
+}
+
+/// `PUT api/import?path=<abs path>`: a recording dropped on the page that Desktop doesn't have, streamed into the
+/// path Desktop's `POST /recordings/new` handed out (inside the recordings folder, not there yet), through a partial
+/// file. Not an action: the page's plumbing for drag and drop.
+pub fn import_router() -> axum::Router<Arc<App>> {
+    axum::Router::new().route("/api/import", axum::routing::put(import))
+}
+
+async fn import(State(app): State<Arc<App>>, Query(args): Args, body: axum::body::Body) -> Result<Json<Value>> {
+    use http_body_util::BodyExt;
+    use tokio::io::AsyncWriteExt;
+    let path = std::path::PathBuf::from(args.get("path").context("path is required")?);
+    dimos_recording::format_of(&path)?;
+    let folder = std::fs::canonicalize(&app.recordings_dir).context("the recordings folder")?;
+    let parent = path.parent().and_then(|p| std::fs::canonicalize(p).ok()).context("no such folder")?;
+    if !path.is_absolute() || !parent.starts_with(&folder) {
+        return Err(ApiError(StatusCode::BAD_REQUEST, format!("{} isn't in the recordings folder", path.display())));
+    }
+    if path.exists() && std::fs::metadata(&path).map_or(true, |m| m.len() > 0) {
+        return Err(ApiError(StatusCode::CONFLICT, format!("{} is already there", path.display())));
+    }
+    let partial = path.with_extension(format!("{}.partial", path.extension().and_then(|e| e.to_str()).unwrap_or("")));
+    let mut file = tokio::fs::File::create(&partial).await.context("creating the file")?;
+    let mut body = body;
+    let mut size = 0u64;
+    let outcome: anyhow::Result<()> = async {
+        while let Some(frame) = body.frame().await {
+            if let Ok(data) = frame.map_err(|e| anyhow::anyhow!("{e}"))?.into_data() {
+                size += data.len() as u64;
+                file.write_all(&data).await?;
+            }
+        }
+        file.flush().await?;
+        Ok(())
+    }
+    .await;
+    drop(file);
+    if let Err(error) = outcome {
+        let _ = std::fs::remove_file(&partial);
+        return Err(error.into());
+    }
+    std::fs::rename(&partial, &path).context("finishing the file")?;
+    Ok(Json(json!({ "path": path, "size": size })))
 }
 
 fn bool_arg(args: &HashMap<String, String>, name: &str, default: bool) -> bool {
@@ -407,6 +459,66 @@ async fn build(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): 
     }
     let options: mapping::build::BuildOptions = serde_json::from_value(options).context("build options")?;
     Ok(Json(json!({ "job": app.build(&id, options)? })))
+}
+
+/// `defaults` with `given` merged in, objects key by key (so a partial `{"stitch": {"closureSpacing": 4}}` keeps the
+/// rest of stitch).
+fn merged<T: serde::Serialize + serde::de::DeserializeOwned>(defaults: T, given: &Value) -> anyhow::Result<T> {
+    fn merge(into: &mut Value, from: &Value) {
+        match (into, from) {
+            (Value::Object(into), Value::Object(from)) => {
+                for (key, value) in from {
+                    if key == "id" {
+                        continue;
+                    }
+                    match into.get_mut(key) {
+                        Some(existing) if existing.is_object() && value.is_object() => merge(existing, value),
+                        _ => {
+                            into.insert(key.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+            (into, from) => *into = from.clone(),
+        }
+    }
+    let mut value = serde_json::to_value(defaults)?;
+    if given.is_object() {
+        merge(&mut value, given);
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
+async fn generate_status(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
+    let (_, workspace) = session(&app, &id)?;
+    let path = std::path::PathBuf::from(workspace.lock().unwrap().session.recording_path.clone());
+    let data = app.store.dir.clone();
+    Ok(Json(blocking(move || crate::pipeline::status(&data, &path)).await?))
+}
+
+async fn generate_tags(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): Body) -> Result<Json<Value>> {
+    let (id, _) = session(&app, &id)?;
+    let options = merged(mapping::tags::TagOptions::default(), &body).context("tag options")?;
+    Ok(Json(json!({ "job": app.generate_tags(&id, options)? })))
+}
+
+async fn generate_tf(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): Body) -> Result<Json<Value>> {
+    let (id, workspace) = session(&app, &id)?;
+    let path = std::path::PathBuf::from(workspace.lock().unwrap().session.recording_path.clone());
+    let defaults = blocking(move || Ok(crate::pipeline::default_correction(&path))).await?;
+    let options = merged(defaults, &body).context("tf correction options")?;
+    // the tags step's options, for when it has to run first
+    let tag_options = match body.get("tags").filter(|v| v.is_object()) {
+        Some(given) => Some(merged(mapping::tags::TagOptions::default(), given).context("tag options")?),
+        None => None,
+    };
+    Ok(Json(json!({ "job": app.generate_tf(&id, options, tag_options)? })))
+}
+
+async fn generate_global(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): Body) -> Result<Json<Value>> {
+    let (id, _) = session(&app, &id)?;
+    let options = merged(mapping::global::GlobalOptions::default(), &body).context("global map options")?;
+    Ok(Json(json!({ "job": app.generate_global(&id, options)? })))
 }
 
 async fn cancel(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
@@ -810,6 +922,14 @@ mod tests {
 
     /// every listed endpoint is routed: with no session open each answers with a readable JSON error or a result,
     /// never the router's bare 404 / 405
+    #[test]
+    fn partial_options_merge_over_the_defaults() {
+        let options: mapping::global::GlobalOptions = merged(mapping::global::GlobalOptions::default(), &json!({ "tf": { "quality": "high" }, "rrd": { "enabled": true }, "build": { "voxelSize": 0.1 } })).unwrap();
+        assert_eq!(options.tf.unwrap().quality, mapping::correct::Quality::High);
+        assert!(options.rrd.enabled && options.rrd.map, "the rest of rrd kept");
+        assert!((options.build.voxel_size - 0.1).abs() < 1e-6 && options.build.ray_tracing);
+    }
+
     #[tokio::test]
     async fn every_endpoint_is_routed() {
         let (_app, router, _dir) = app();

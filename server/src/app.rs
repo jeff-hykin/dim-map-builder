@@ -2,7 +2,7 @@
 //! ETA and cancel, the event stream the page listens to, and the page's last reported view (what the agent "sees").
 //! Every mutation autosaves the session to disk before it's acknowledged.
 use crate::persist;
-use crate::session::{self, BuildSummary, MapData, Session, Store};
+use crate::session::{self, Session, Store};
 use crate::workspace::{now_seconds, Workspace};
 use anyhow::{bail, Context, Result};
 use dimos_recording::Recording;
@@ -233,7 +233,7 @@ impl App {
         }
     }
 
-    fn start_job(self: &Arc<Self>, id: &str, kind: &str, work: impl FnOnce(&Arc<App>, &dyn Fn(Progress), &AtomicBool) -> Result<()> + Send + 'static) -> Result<Job> {
+    pub(crate) fn start_job(self: &Arc<Self>, id: &str, kind: &str, work: impl FnOnce(&Arc<App>, &dyn Fn(Progress), &AtomicBool) -> Result<()> + Send + 'static) -> Result<Job> {
         {
             let jobs = self.jobs.lock().unwrap();
             if let Some(job) = jobs.get(id).filter(|job| job.state == "running") {
@@ -267,10 +267,13 @@ impl App {
                 let Some(job) = jobs.get_mut(&session) else { return };
                 let lite_record = progress.stage.starts_with("lite_record:");
                 job.post_processed |= lite_record;
-                let fraction = match (lite_record, job.post_processed) {
+                let fraction = match progress.overall {
+                    Some(overall) => overall,
+                    None => match (lite_record, job.post_processed) {
                     (true, _) => POST_PROCESS_SHARE * (progress.stage_index as f64 + fraction("", &progress)) / progress.stage_count.max(1) as f64,
                     (false, true) => POST_PROCESS_SHARE + (1.0 - POST_PROCESS_SHARE) * fraction(&kind, &progress),
                     (false, false) => fraction(&kind, &progress),
+                    },
                 }
                 .max(job.fraction);
                 job.fraction = fraction;
@@ -338,53 +341,13 @@ impl App {
             if cancel.load(Ordering::Relaxed) {
                 return Err(anyhow::anyhow!(Cancelled));
             }
-            let n = result.points.len();
-            let map = MapData {
-                voxel_size: result.voxel_size,
-                points: result.points,
-                normals: result.normals,
-                removed: vec![false; n],
-                raw_path: result.raw_path,
-                corrected_path: result.corrected_path,
-                loops: result.loops,
-            };
-            let summary = BuildSummary {
-                voxel_size: result.voxel_size,
-                world_frame: result.world_frame,
-                cloud_stream: result.cloud_stream,
-                scans_used: result.scans_used,
-                scans_skipped: result.scans_skipped,
-                loops: map.loops.len(),
-                notes: post_notes.into_iter().chain(result.notes).collect(),
-                seconds: now_seconds() - started,
-            };
-            let workspace = shared;
-            let mut workspace = workspace.lock().unwrap();
-            if workspace.discarded {
-                return Ok(());
-            }
-            workspace.set_map(map);
-            // what was erased stays erased in the new map
-            let carried = workspace.carry_erased();
-            if let Some(map) = &workspace.map {
-                app.store.save_map(&workspace.session.id, map)?;
-            }
-            let session = &mut workspace.session;
-            session.build = Some(summary.clone());
-            session.build_options = Some(options);
-            // a new map: old deletions/plans don't apply to it (annotations stay: they're in the map frame)
-            session.undo.clear();
-            session.redo.clear();
-            session.plans.clear();
-            session.revision += 1;
-            session.history.push(format!("Built the global map: {n} voxels, {} loop closures, {} scans in {:.0} s", summary.loops, summary.scans_used, summary.seconds));
-            if carried > 0 {
-                session.history.push(format!("Kept {carried} erased voxels erased"));
-            }
-            app.store.save(session)?;
-            app.emit(json!({ "type": "session", "id": session.id, "revision": session.revision }));
-            Ok(())
+            app.install_map(&session_id, result, options, post_notes, started)
         })
+    }
+
+    /// The raw-recording preview is read again next time (the recording changed).
+    pub fn invalidate_preview(&self, id: &str) {
+        self.previews.lock().unwrap().remove(id);
     }
 
     pub fn preview(self: &Arc<Self>, id: &str) -> Result<Option<Arc<mapping::build::Preview>>> {
@@ -437,7 +400,7 @@ impl App {
             // a snapshot, so the page can keep reading while a big mcap is rewritten
             let snapshot = shared.lock().unwrap().clone();
             persist::save(&snapshot, |done, total| {
-                report(Progress { stage: "Writing into the recording".into(), stage_index: 0, stage_count: 1, done, total, note: String::new() })
+                report(Progress { overall: None, stage: "Writing into the recording".into(), stage_index: 0, stage_count: 1, done, total, note: String::new() })
             })?;
             let mut workspace = shared.lock().unwrap();
             if workspace.discarded {
@@ -521,7 +484,7 @@ mod tests {
 
     #[test]
     fn stage_weights_add_up() {
-        let at = |stage_index, done, total| fraction("build", &Progress { stage: String::new(), stage_index, stage_count: 4, done, total, note: String::new() });
+        let at = |stage_index, done, total| fraction("build", &Progress { overall: None, stage: String::new(), stage_index, stage_count: 4, done, total, note: String::new() });
         assert!((at(3, 1, 1) - 1.0).abs() < 1e-9);
         assert!(at(1, 50, 100) > at(1, 10, 100));
         assert!(at(2, 0, 100) > at(1, 99, 100) - 0.01);

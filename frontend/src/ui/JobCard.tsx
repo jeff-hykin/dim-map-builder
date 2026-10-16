@@ -14,7 +14,14 @@ export function duration(seconds: number | null | undefined): string {
     return minutes < 60 ? `${minutes} min ${Math.round(seconds % 60)} s` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`
 }
 
-const TITLES: Record<string, string> = { build: "Building the global map", preview: "Reading the recording", save: "Saving into the recording" }
+const TITLES: Record<string, string> = {
+    build: "Building the global map",
+    preview: "Reading the recording",
+    save: "Saving into the recording",
+    tags: "Finding AprilTags",
+    tf: "Correcting the tf tree",
+    globalMap: "Generating the global map",
+}
 
 export function JobCard({ job, onCancel, style }: { job: Job; onCancel?: () => void; style?: CSSProperties }) {
     const progress = job.progress

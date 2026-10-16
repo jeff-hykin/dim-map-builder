@@ -163,6 +163,61 @@ impl Recording {
         }
     }
 
+    /// Every message of `stream` with its tags (a JSON object as text): a `.db` row's `tags` column; in an `.mcap`, the
+    /// JSON string at the same index on the companion topic `<stream>/tags` (how the Map Editor writes tagged streams
+    /// there).
+    pub fn for_each_tagged(&self, stream: &str, mut each: impl FnMut(f64, Message, Option<String>) -> Result<bool>) -> Result<()> {
+        match &self.backend {
+            Backend::Db(connection, streams) => {
+                let info = streams.iter().find(|s| s.name == stream).with_context(|| format!("no stream {stream}"))?;
+                db::for_each(connection, info, |row| match decode("lcm", &info.kind, &row.payload) {
+                    Ok(Some(message)) => each(row.ts, message, row.tags),
+                    _ => Ok(true),
+                })
+            }
+            Backend::Mcap(file) => {
+                let mut tags = Vec::new();
+                file.for_each(&format!("{stream}/tags"), |_, _, _, payload| {
+                    tags.push(lcm::decode_string(payload).ok());
+                    Ok(true)
+                })?;
+                let mut index = 0;
+                file.for_each(stream, |ts, encoding, kind, payload| {
+                    let tag = tags.get(index).cloned().flatten();
+                    index += 1;
+                    match decode(encoding, kind, payload) {
+                        Ok(Some(message)) => each(ts, message, tag),
+                        _ => Ok(true),
+                    }
+                })
+            }
+        }
+    }
+
+    /// The first and last message time over every stream, if any has messages.
+    pub fn time_range(&self) -> Result<Option<(f64, f64)>> {
+        match &self.backend {
+            Backend::Db(connection, streams) => {
+                let mut range: Option<(f64, f64)> = None;
+                for stream in streams {
+                    let found: Option<(Option<f64>, Option<f64>)> = connection
+                        .query_row(&format!("SELECT min(ts), max(ts) FROM \"{}\"", stream.name.replace('"', "\"\"")), [], |row| Ok((row.get(0)?, row.get(1)?)))
+                        .ok();
+                    if let Some((Some(lo), Some(hi))) = found {
+                        range = Some(range.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))));
+                    }
+                }
+                Ok(range)
+            }
+            Backend::Mcap(file) => Ok(mcap::Summary::read(file.bytes())
+                .ok()
+                .flatten()
+                .and_then(|summary| summary.stats)
+                .filter(|stats| stats.message_count > 0)
+                .map(|stats| (stats.message_start_time as f64 / 1e9, stats.message_end_time as f64 / 1e9))),
+        }
+    }
+
     /// Every transform in every tf stream (`tf`, `/tf`, `tf_static`, ...).
     pub fn tf_edges(&self) -> Result<Vec<TfEdge>> {
         Ok(self.tf_edges_logged()?.into_iter().map(|(_, edge)| edge).collect())

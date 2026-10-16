@@ -80,7 +80,12 @@ pub fn binary(data_dir: &Path) -> Result<PathBuf> {
 
 /// The commit the `latest` release was built from.
 fn latest_commit() -> Result<String> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases/tags/latest");
+    latest_commit_of(REPO)
+}
+
+/// The commit `repo`'s `latest` release was built from ("Built from <sha>" in its notes).
+pub fn latest_commit_of(repo: &str) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/tags/latest");
     let output = Command::new("curl").args(["-fsSL", "--max-time", "10", "-H", "Accept: application/vnd.github+json"]).arg(&url).output().context("curl")?;
     if !output.status.success() {
         bail!("couldn't read {url}");
@@ -95,10 +100,15 @@ fn commit_of(notes: &str) -> Option<String> {
 }
 
 fn download(path: &Path) -> Result<()> {
-    let url = format!("https://github.com/{REPO}/releases/download/latest/{}", asset()?);
+    download_asset(REPO, asset()?, path)
+}
+
+/// Downloads `repo`'s `latest` release asset to `path` (executable), through a partial file.
+pub fn download_asset(repo: &str, asset: &str, path: &Path) -> Result<()> {
+    let url = format!("https://github.com/{repo}/releases/download/latest/{asset}");
     std::fs::create_dir_all(path.parent().context("bin dir")?)?;
     let partial = path.with_extension("download");
-    let status = Command::new("curl").args(["-fsSL", "--retry", "2", "-o"]).arg(&partial).arg(&url).status().context("curl (to download lite_record)")?;
+    let status = Command::new("curl").args(["-fsSL", "--retry", "2", "-o"]).arg(&partial).arg(&url).status().context("curl (to download a release binary)")?;
     if !status.success() {
         let _ = std::fs::remove_file(&partial);
         bail!("couldn't download {url} (curl exit {status})");
@@ -120,7 +130,7 @@ pub fn parse_line(line: &str, current: &mut Progress) -> bool {
         let Some((numbers, name)) = rest.split_once("] ") else { return false };
         let Some((index, count)) = numbers.split_once(" of ") else { return false };
         let (Ok(index), Ok(count)) = (index.trim().parse::<usize>(), count.trim().parse::<usize>()) else { return false };
-        *current = Progress { stage: format!("lite_record: {name}"), stage_index: index.saturating_sub(1), stage_count: count.max(1), done: 0, total: 100, note: String::new() };
+        *current = Progress { overall: None, stage: format!("lite_record: {name}"), stage_index: index.saturating_sub(1), stage_count: count.max(1), done: 0, total: 100, note: String::new() };
         return true;
     }
     if let Some((percent, _)) = line.split_once('%') {
@@ -171,7 +181,7 @@ pub fn post_process(binary: &Path, recording: &Path, report: &dyn Fn(Progress), 
         }
     });
     let mut output = String::new();
-    let mut progress = Progress { stage: "lite_record: starting".into(), stage_index: 0, stage_count: 1, done: 0, total: 100, note: String::new() };
+    let mut progress = Progress { overall: None, stage: "lite_record: starting".into(), stage_index: 0, stage_count: 1, done: 0, total: 100, note: String::new() };
     report(progress.clone());
     let mut killed = false;
     loop {
@@ -265,7 +275,7 @@ mod tests {
 
     #[test]
     fn post_process_output_becomes_progress() {
-        let mut progress = Progress { stage: String::new(), stage_index: 0, stage_count: 1, done: 0, total: 100, note: String::new() };
+        let mut progress = Progress { overall: None, stage: String::new(), stage_index: 0, stage_count: 1, done: 0, total: 100, note: String::new() };
         assert!(parse_line("[Step 3 of 5] estimating odometry from /rig/lidar + /rig/imu", &mut progress));
         assert_eq!((progress.stage_index, progress.stage_count), (2, 5));
         assert_eq!(progress.stage, "lite_record: estimating odometry from /rig/lidar + /rig/imu");

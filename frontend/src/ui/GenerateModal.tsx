@@ -1,9 +1,12 @@
-// Generate the map: the build settings in a modal. The defaults are good (just press Generate); voxel size and the
-// lidar stream are up front, everything else (skip loop closure / ray tracing, the ray tracer's and the pose graph's
-// tunables) under Advanced. Regenerating over a map asks first: it replaces the map and the edits made on it.
-import { useEffect, useState } from "react"
-import { api, recordings, type RecordingMetadata } from "../core/api.ts"
-import { Alert, Button, Checkbox, Column, Field, Heading, Modal, NumberInput, Panel, Row, Select, Slider, Text, TextInput } from "dimos-react"
+// Generate: the corrected map, or any one of the steps that make it, each written into the recording in place.
+// 1. AprilTags from images (raw_april_tags, april_tags), 2. a corrected tf tree (loop closure, with the tags, written
+// as the edge above the odometry: world → odom), 3. the global map (through the corrected tf, ray traced, decimated:
+// global_map_aggregated + a .pc2.lcm beside the recording, optionally an .rrd). A step whose input the recording
+// doesn't have yet runs the earlier step first. The defaults work for most recordings: press "Generate corrected
+// map". A raw lite_record recording (no odometry) is post-processed and built the classic way.
+import { useEffect, useMemo, useState } from "react"
+import { api, type CloudChoice, type FrameNode, type GenerateStatus } from "../core/api.ts"
+import { Alert, Badge, Button, Card, Checkbox, Chip, Column, Field, Heading, Modal, NumberInput, Panel, Row, Segmented, Select, Slider, Text, TextInput } from "dimos-react"
 import { JobCard, duration } from "./JobCard.tsx"
 import type { Context } from "./context.ts"
 
@@ -12,7 +15,7 @@ type Options = Record<string, any>
 const LITE_RECORD_VOXEL = 0.04
 
 const LABELS: Record<string, [string, string]> = {
-    every: ["use every Nth scan", "1 = all; higher is faster and sparser"],
+    every: ["use every Nth", "1 = all; higher is faster and sparser"],
     maxRange: ["max range", "m; returns farther than this are dropped"],
     tfTolerance: ["tf tolerance", "s; the largest gap between a scan and the transform placing it"],
     worldFrame: ["world frame", "empty = world, map or odom, whichever places the clouds"],
@@ -38,9 +41,42 @@ const LABELS: Record<string, [string, string]> = {
     odom_trans_var_xy: ["odometry xy variance", ""],
     odom_trans_var_z: ["odometry z variance", ""],
     loop_rot_var: ["loop rotation variance", ""],
+    closureSpacing: ["stitch every (m of path)", "at most one ICP stitch per this many meters of path (0 = every candidate)"],
+    icpRadiusM: ["revisit radius", "m; keyframes this close are a stitch candidate"],
+    icpMinDtS: ["revisit time gap", "s; only keyframes at least this far apart in time"],
+    icpMaxCorrM: ["ICP correspondence", "m"],
+    icpVoxelM: ["submap voxel", "m"],
+    icpFitnessMin: ["min fitness", "inlier share a stitch needs"],
+    icpRmseMaxM: ["max inlier RMSE", "m"],
+    icpHuberDelta: ["Huber k", "robust loss on the stitches"],
+    icpRotVar: ["stitch rotation variance", ""],
+    icpTransVar: ["stitch translation variance", ""],
+    submapHalfS: ["submap half width", "s of scans either side of a keyframe"],
+    lmMaxIterations: ["solver iterations", ""],
+    scanVoxel: ["scan thinning", "m; the scans handed to icp_stitch are thinned to this first"],
+    rollPitchVar: ["roll/pitch variance", "odometry between keyframes"],
+    yawVar: ["yaw variance", ""],
+    xyVar: ["xy variance", ""],
+    zVar: ["z variance", ""],
+    keyframeTranslationM: ["keyframe every (m)", ""],
+    keyframeRotationDeg: ["keyframe every (°)", ""],
+    rateHz: ["edge rate", "Hz; how often the corrected edge is written"],
+    minSharpness: ["min sharpness", "Laplacian variance over the tag; lower = blurrier"],
+    maxReprojPx: ["max reprojection", "px"],
+    minTagPx: ["min tag size", "px"],
+    maxDistanceM: ["max distance", "m"],
+    maxViewAngleDeg: ["max view angle", "° off head-on"],
+    maxLinearSpeedMps: ["max camera speed", "m/s"],
+    maxAngularSpeedDps: ["max camera turn rate", "°/s"],
+    clusterGapSec: ["visit gap", "s; a marker seen again after this is a new group"],
+    minObservations: ["min glimpses per group", ""],
+    huberDeltaM: ["Huber delta", "m"],
+    rotationWeightMPerRad: ["rotation weight", "m per radian"],
+    neighbors: ["outlier neighbors", ""],
+    stdRatio: ["outlier std ratio", ""],
 }
 
-function OptionField({ name, value, onChange, disabled }: { name: string; value: unknown; onChange: (value: unknown) => void; disabled: boolean }) {
+function OptionField({ name, value, onChange, disabled }: { name: string; value: unknown; onChange: (value: unknown) => void; disabled?: boolean }) {
     const [label, about] = LABELS[name] ?? [name, ""]
     return (
         <Field inline label={label} title={about}>
@@ -51,57 +87,174 @@ function OptionField({ name, value, onChange, disabled }: { name: string; value:
     )
 }
 
+/** every numeric field of an options group, as inputs */
+function Fields({ group, onChange, disabled, only }: { group: Options; onChange: (patch: Options) => void; disabled?: boolean; only?: string[] }) {
+    return (
+        <>
+            {Object.keys(group).filter((name) => (only ? only.includes(name) : typeof group[name] === "number")).map((name) => (
+                <OptionField key={name} name={name} value={group[name]} disabled={disabled} onChange={(value) => onChange({ [name]: value })} />
+            ))}
+        </>
+    )
+}
+
+// f32 settings arrive as 0.05000000074505806: show them as typed
+const tidy = (value: Options) => JSON.parse(JSON.stringify(value), (_key, v) => (typeof v === "number" ? +v.toPrecision(6) : v))
+
+const when = (seconds: number | undefined) => (seconds ? new Date(seconds * 1000).toLocaleString() : "")
+
+/** The edge a correction of `sensor` would write (the server's correct::plan, for the page's live preview). */
+function edgeFor(frames: FrameNode[], sensor: string, grandparentName: string): { parent: string; grandparent: string; exists: boolean } | null {
+    const byName = new Map(frames.map((f) => [f.name, f]))
+    let at = byName.get(sensor)
+    for (let guard = 0; at && guard < frames.length; guard++) {
+        if (!at.parent) {
+            return null
+        }
+        if (at.dynamic) {
+            const parent = byName.get(at.parent)
+            if (!parent) {
+                return null
+            }
+            return parent.parent ? { parent: parent.name, grandparent: parent.parent, exists: true } : { parent: parent.name, grandparent: grandparentName || "world", exists: false }
+        }
+        at = byName.get(at.parent)
+    }
+    return null
+}
+
+function cloudLabel(cloud: CloudChoice) {
+    const where = !cloud.inTf ? "not in tf" : cloud.isRoot ? `${cloud.frame}, the root` : `${cloud.frame}${cloud.dynamic ? ", moving" : ""}`
+    return `${cloud.stream} (${where}, ${cloud.count})`
+}
+
+function StepCard({ number, title, status, children, run, running, disabled, runLabel, step }: { number: number; title: string; status: React.ReactNode; children: React.ReactNode; run: () => void; running: boolean; disabled?: boolean; runLabel?: string; step: string }) {
+    return (
+        <Card padded data-step={step} title={`${number}. ${title}`} description={status} actions={
+            <Button size="sm" disabled={running || disabled} onClick={run} data-action={`run-${step}`}>
+                {runLabel ?? "Run this step"}
+            </Button>
+        }>
+            <Column gap={8}>{children}</Column>
+        </Card>
+    )
+}
+
 export function GenerateModal({ context, onClose }: { context: Context; onClose: () => void }) {
     const { session, run } = context
-    const [defaults, setDefaults] = useState<Options | null>(null)
-    const [options, setOptions] = useState<Options | null>(null)
-    const [meta, setMeta] = useState<RecordingMetadata | null>(null)
+    const [status, setStatus] = useState<GenerateStatus | null>(null)
+    const [problem, setProblem] = useState<string | null>(null)
+    const [buildDefaults, setBuildDefaults] = useState<Options | null>(null)
+    const [tagOptions, setTagOptions] = useState<Options | null>(null)
+    const [tfOptions, setTfOptions] = useState<Options | null>(null)
+    const [globalOptions, setGlobalOptions] = useState<Options | null>(null)
+    const [classic, setClassic] = useState<Options | null>(null)
     const [confirming, setConfirming] = useState(false)
+    const job = session?.job && session.job.kind !== "save" ? session.job : null
+    const running = job?.state === "running"
+    const jobState = `${job?.id}:${job?.state}`
+
+    const load = () =>
+        session &&
+        api.generateStatus(session.id)
+            .then((fresh) => {
+                setStatus(fresh)
+                setProblem(null)
+                return fresh
+            })
+            .catch((error) => setProblem(String(error.message ?? error)))
+    // the options start from each step's defaults with what it ran with last on top
     useEffect(() => {
-        // f32 settings arrive as 0.05000000074505806: show them as typed
-        const tidy = (value: Options) => JSON.parse(JSON.stringify(value), (_key, v) => (typeof v === "number" ? +v.toPrecision(6) : v))
+        if (!session) {
+            return
+        }
         api.buildDefaults().then((base) => {
-            setDefaults(tidy(base))
-            setOptions(tidy({ ...base, ...(session?.buildOptions ?? {}) }))
+            setBuildDefaults(tidy(base))
+            setClassic(tidy({ ...base, ...(session.buildOptions ?? {}), ...(session.postProcess && !session.buildOptions ? { voxelSize: LITE_RECORD_VOXEL } : {}) }))
         })
-        if (session?.recordingId) {
-            recordings.metadata(session.recordingId).then(setMeta).catch(() => setMeta(null))
-        }
+        load()?.then((fresh) => {
+            if (!fresh) {
+                return
+            }
+            setTagOptions(tidy({ ...fresh.tags.defaults, ...(fresh.tags.record?.options ?? {}) }))
+            setTfOptions(tidy({ ...fresh.tf.defaults, ...(fresh.tf.record?.options ?? {}), cloudStream: fresh.tf.record?.options?.cloudStream || fresh.tf.analysis.defaultCloud || "" }))
+            const global = tidy({ ...fresh.globalMap.defaults })
+            global.rrd = { ...global.rrd, streams: fresh.globalMap.rrdStreams }
+            if (session.buildOptions) {
+                global.build = { ...global.build, voxelSize: session.buildOptions.voxelSize }
+            }
+            setGlobalOptions(global)
+        })
     }, [session?.id])
-    // lite_record post-processes it first, and its own map is 4 cm voxels: this one starts at the same size
-    const liteRecord = !!session?.postProcess
+    // a step finished (here or from the agent): what the recording has now
     useEffect(() => {
-        if (liteRecord && !session?.buildOptions && defaults) {
-            setOptions((current) => current && { ...current, voxelSize: LITE_RECORD_VOXEL })
+        if (job && job.state !== "running") {
+            load()
         }
-    }, [liteRecord, defaults, session?.buildOptions])
-    if (!session || !options || !defaults) {
+    }, [jobState])
+
+    const frames = status?.tf.analysis.frames ?? []
+    const clouds = useMemo(() => [...(status?.tf.analysis.clouds ?? [])].sort((a, b) => Number(a.mapLike) - Number(b.mapLike)), [status])
+    if (!session) {
         return null
     }
-    const job = session.job?.kind === "build" || session.job?.kind === "preview" ? session.job : null
-    const building = session.job?.state === "running" && session.job.kind === "build"
     const built = session.stage === "map"
-    const set = (patch: Options) => setOptions({ ...options, ...patch })
-    const group = (key: "ray" | "pgo", patch: Options) => setOptions({ ...options, [key]: { ...options[key], ...patch } })
-    const clouds = (meta?.streams ?? []).filter((s) => /PointCloud2$/.test(s.type))
-    const changed = JSON.stringify({ ...options, cloudStream: "", voxelSize: 0 }) !== JSON.stringify({ ...defaults, cloudStream: "", voxelSize: 0 })
-    const generate = () => {
+    const lite = !!session.postProcess
+    const ready = status && tagOptions && tfOptions && globalOptions && buildDefaults
+    const setTags = (patch: Options) => setTagOptions({ ...tagOptions, ...patch })
+    const setTf = (patch: Options) => setTfOptions({ ...tfOptions, ...patch })
+    const setGlobal = (patch: Options) => setGlobalOptions({ ...globalOptions, ...patch })
+    const group = (set: (patch: Options) => void, current: Options | null, key: string) => (patch: Options) => set({ [key]: { ...(current?.[key] ?? {}), ...patch } })
+
+    const cloud = clouds.find((c) => c.stream === tfOptions?.cloudStream)
+    const sensor = cloud?.isRoot ? tfOptions?.sensorFrame ?? "" : cloud?.frame ?? ""
+    const sensorChoices = cloud?.isRoot ? frames.filter((f) => f.root === cloud.frame && f.parent).sort((a, b) => a.depth - b.depth || Number(b.dynamic) - Number(a.dynamic)) : []
+    const edge = sensor ? edgeFor(frames, sensor, tfOptions?.grandparent ?? "") : null
+    const markers = status?.tags.markers ?? []
+
+    const runTags = () => run(api.generateTags(session.id, tagOptions ?? {}))
+    // the correction gates the tags the way step 1 does
+    const runTf = () => run(api.generateTf(session.id, { ...tfOptions, gates: tagOptions?.gates, sensorFrame: cloud?.isRoot ? tfOptions?.sensorFrame : "", tags: tagOptions }))
+    const runGlobal = () => {
         if (built && !confirming) {
             setConfirming(true)
             return
         }
         setConfirming(false)
-        run(api.build(session.id, options))
+        if (lite) {
+            run(api.build(session.id, classic ?? {}))
+        } else {
+            run(api.generateGlobal(session.id, { ...globalOptions, tf: { ...tfOptions, gates: tagOptions?.gates, sensorFrame: cloud?.isRoot ? tfOptions?.sensorFrame : "" }, tags: tagOptions }))
+        }
     }
     const a = session.annotations
     const annotationCount = a.boxes.length + a.planes.length + a.points.length + a.planPoints.length + a.areas.length + (a.prisms?.length ?? 0)
+
+    const tagStatus = status && (status.tags.raw > 0 || status.tags.grouped > 0)
+        ? <>{`${status.tags.raw} raw, ${status.tags.grouped} grouped · markers ${markers.map((m) => m.id).join(", ") || "none"}`}{status.tags.record ? ` · ${when(status.tags.record.at)}` : ""}</>
+        : "not in the recording yet"
+    const report = status?.tf.record?.report
+    const tfStatus = status?.tf.corrected
+        ? <>
+            {`${status.tf.record?.plan.grandparent} → ${status.tf.record?.plan.parent} written · ${report?.keyframes ?? 0} keyframes, ${report?.loops ?? 0} loops, ${report?.tagFactors ?? 0} tag factors`}
+            {report?.tagSpreadRaw != null && report?.tagSpreadCorrected != null ? ` · tag spread ${report.tagSpreadRaw.toFixed(3)} → ${report.tagSpreadCorrected.toFixed(3)} m` : ""}
+            {status.tf.stale ? <> <Badge tone="warn">the tags changed since</Badge></> : null}
+        </>
+        : "not in the recording yet"
+    const globalStatus = status?.globalMap.present
+        ? <>
+            {`global_map_aggregated: ${status.globalMap.record?.points?.toLocaleString() ?? "?"} points in ${status.globalMap.record?.worldFrame ?? "?"}${status.globalMap.lcmExists ? " · .pc2.lcm beside it" : ""}${status.globalMap.rrdExists ? " · .rrd beside it" : ""}`}
+            {status.globalMap.stale ? <> <Badge tone="warn">the tf changed since</Badge></> : null}
+        </>
+        : "not in the recording yet"
+
     return (
         <Modal
             open
             size="lg"
             title={built ? "Regenerate the map" : "Generate the map"}
             onClose={onClose}
-            dismissable={!building}
+            dismissable={!running}
             aria-label="Generate the map"
             data-modal="generate"
             footer={
@@ -112,56 +265,167 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                             <Text small muted>
                                 {built && session.build ? `current: ${session.totalVoxels.toLocaleString()} voxels at ${(session.build.voxelSize * 100).toFixed(0)} cm, built in ${duration(session.build.seconds)}` : ""}
                             </Text>
-                            <Button variant="primary" disabled={building} data-action="build" onClick={generate}>
-                                {built ? "Regenerate…" : "Generate"}
+                            <Button variant="primary" disabled={running || !ready} data-action="build" onClick={runGlobal}>
+                                {lite ? (built ? "Regenerate…" : "Generate") : built ? "Regenerate corrected map…" : "Generate corrected map"}
                             </Button>
                         </Row>
                     )
             }
         >
             <Column gap={10}>
-                <Text small muted>Every scan placed by the recording's tf, loops closed (ICP + pose graph), then ray traced so free space clears what moved. The defaults work for most recordings.</Text>
-                {session.postProcess && (
+                <Text small muted>
+                    Everything is written into the recording itself ({status?.format ?? "…"}): run the whole thing, or any one step below. A step that needs an earlier one the recording doesn't have yet runs it first.
+                </Text>
+                {problem && <Alert tone="danger" title="Couldn't read the recording.">{problem}</Alert>}
+                {lite && (
                     <Alert tone="info" title="Not post-processed yet." data-post-process>
-                        Generate first runs lite_record's post-processing on it (its Post process button): odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording in place. Then the map is built from the corrected scans.
+                        Generate first runs lite_record's post-processing on it (its Post process button): odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording in place. Then the map is built from the corrected scans; the steps below work once it has its frame tree.
                         {!session.writable && " This recording is in a read-only folder, so it can't be: move it into the recordings folder first."}
                     </Alert>
                 )}
-                <Field inline label="voxel size">
-                    <Row>
-                        <Slider min={0.02} max={0.2} step={0.01} value={options.voxelSize} disabled={building} showValue={false} onChange={(voxelSize: number) => set({ voxelSize })} style={{ width: 160 }} />
-                        <NumberInput size="sm" min={0.01} max={0.5} step={0.01} unit="m" value={options.voxelSize} disabled={building} onChange={(voxelSize: number) => set({ voxelSize })} data-option="voxelSize" style={{ width: 90 }} />
-                    </Row>
-                </Field>
-                <Field inline label="lidar stream">
-                    <Select
-                        size="sm"
-                        value={options.cloudStream ?? ""}
-                        disabled={building}
-                        onChange={(cloudStream: string) => set({ cloudStream })}
-                        options={[["", "auto (the biggest)"], ...clouds.map((stream) => [stream.name, `${stream.name} (${stream.count})`])]}
-                    />
-                </Field>
-                <Panel collapsible defaultOpen={false} title={`Advanced · ${changed ? "changed" : "loop closure, ray tracing, tunables"}`} data-advanced>
-                    <Checkbox value={!options.loopClosure} disabled={building} onChange={(skip: boolean) => set({ loopClosure: !skip })} data-option="skipLoopClosure" label="skip loop closure (faster; drift where the robot came back stays)" />
-                    <Checkbox value={!options.rayTracing} disabled={building} onChange={(skip: boolean) => set({ rayTracing: !skip })} data-option="skipRayTracing" label="skip ray tracing (faster; what moved through the scene stays in the map)" />
-                    {(["every", "maxRange", "tfTolerance", "worldFrame"] as const).map((name) => (
-                        <OptionField key={name} name={name} value={options[name]} disabled={building} onChange={(value) => set({ [name]: value })} />
-                    ))}
-                    <Heading level={3}>Ray tracer</Heading>
-                    {Object.keys(defaults.ray).map((name) => (
-                        <OptionField key={name} name={name} value={options.ray[name]} disabled={building || !options.rayTracing} onChange={(value) => group("ray", { [name]: value })} />
-                    ))}
-                    <Heading level={3}>Loop closure (pose graph)</Heading>
-                    {Object.keys(defaults.pgo).map((name) => (
-                        <OptionField key={name} name={name} value={options.pgo[name]} disabled={building || !options.loopClosure} onChange={(value) => group("pgo", { [name]: value })} />
-                    ))}
-                    <Row>
-                        <Button size="sm" disabled={building} onClick={() => setOptions({ ...defaults, cloudStream: options.cloudStream })}>
-                            Reset to defaults
-                        </Button>
-                    </Row>
-                </Panel>
+                {!session.writable && !lite && <Alert tone="warn" title="Read-only folder.">The steps write into the recording, and it's in a read-only folder: move it into the recordings folder first.</Alert>}
+                {!ready && !problem && <Text small muted>Reading the recording…</Text>}
+                {ready && !lite && (
+                    <>
+                        <StepCard number={1} step="tags" title="AprilTags from images" status={tagStatus} running={running} disabled={!!status.tags.problem || (!tagOptions.raw && !tagOptions.grouped)} run={runTags}>
+                            {status.tags.problem && <Alert tone="warn" title="Can't find tags here.">{status.tags.problem}</Alert>}
+                            <Row wrap gap={16}>
+                                <Checkbox value={tagOptions.raw} onChange={(raw: boolean) => setTags({ raw })} data-option="tagsRaw" label="raw tags (every glimpse: raw_april_tags)" />
+                                <Checkbox value={tagOptions.grouped} onChange={(grouped: boolean) => setTags({ grouped })} data-option="tagsGrouped" label="grouped tags (gated, one per visit: april_tags)" />
+                            </Row>
+                            <Row wrap gap={16}>
+                                <Field inline label="camera">
+                                    <Select size="sm" value={tagOptions.cameraStream ?? ""} onChange={(cameraStream: string) => setTags({ cameraStream })} options={[["", `auto (${status.tags.camera ?? "none"})`], ...status.tags.images.map((i) => [i.name, `${i.name} (${i.count})`])]} />
+                                </Field>
+                                <Field inline label="tag size">
+                                    <NumberInput size="sm" step={0.01} unit="m" value={tagOptions.markerLength} onChange={(markerLength: number) => setTags({ markerLength })} style={{ width: 90 }} />
+                                </Field>
+                            </Row>
+                            <Panel collapsible defaultOpen={false} title="Advanced · gates, grouping" data-advanced="tags">
+                                <Field inline label="dictionary">
+                                    <Select size="sm" value={tagOptions.dictionary} onChange={(dictionary: string) => setTags({ dictionary })} options={["DICT_APRILTAG_36h11", "DICT_APRILTAG_36h10", "DICT_APRILTAG_25h9", "DICT_APRILTAG_16h5"]} />
+                                </Field>
+                                <OptionField name="every" value={tagOptions.every} onChange={(every) => setTags({ every })} />
+                                <Field inline label="leave out of the grouped tags" title="ids of tags on things that move">
+                                    <TextInput size="sm" value={(tagOptions.exclude ?? []).join(", ")} onChange={(text: string) => setTags({ exclude: text.split(/[ ,]+/).filter(Boolean).map(Number).filter((n) => Number.isFinite(n)) })} data-option="tagsExclude" />
+                                </Field>
+                                <Heading level={3}>Quality gates (step 2 uses them too)</Heading>
+                                <Fields group={tagOptions.gates} onChange={group(setTags, tagOptions, "gates")} />
+                                <Heading level={3}>Grouping</Heading>
+                                <Fields group={tagOptions.grouping} onChange={group(setTags, tagOptions, "grouping")} />
+                            </Panel>
+                        </StepCard>
+
+                        <StepCard number={2} step="tf" title="A corrected tf tree (loop closure)" status={tfStatus} running={running} disabled={!cloud || (cloud.isRoot && !tfOptions.sensorFrame) || !edge} run={runTf}>
+                            {status.tf.planProblem && !cloud && <Alert tone="warn" title="Nothing to correct yet.">{status.tf.planProblem}</Alert>}
+                            <Checkbox value={tfOptions.useTags} onChange={(useTags: boolean) => setTf({ useTags })} disabled={!!status.tags.problem && status.tags.raw === 0} data-option="useTags"
+                                label={status.tags.raw > 0 ? "use the AprilTags" : status.tags.problem ? "use AprilTags (none here: no camera intrinsics)" : "use AprilTags (step 1 runs first: the recording has none yet)"} />
+                            <Field inline label="target cloud">
+                                <Select size="sm" value={tfOptions.cloudStream} onChange={(cloudStream: string) => setTf({ cloudStream, sensorFrame: "" })} data-option="cloudStream"
+                                    options={clouds.map((c) => ({ value: c.stream, label: `${cloudLabel(c)}${c.stream === status.tf.analysis.defaultCloud ? " · default" : ""}`, disabled: !c.inTf }))} />
+                            </Field>
+                            {cloud?.isRoot && (
+                                <Alert tone="warn" title={`${cloud.stream} is in ${cloud.frame}, the root of its tree.`} data-root-warning>
+                                    Its points are already placed, so the correction needs the sensor's own frame to move them back into first. Which frame is the sensor?
+                                    <Row style={{ marginTop: 6 }}>
+                                        <Select size="sm" value={tfOptions.sensorFrame ?? ""} onChange={(sensorFrame: string) => setTf({ sensorFrame })} data-option="sensorFrame"
+                                            options={[["", "pick the sensor frame…"], ...sensorChoices.map((f) => [f.name, `${f.name}${f.dynamic ? " (moving)" : ""}`])]} />
+                                    </Row>
+                                </Alert>
+                            )}
+                            {edge
+                                ? (
+                                    <Row wrap gap={8}>
+                                        <Text small>writes <b>{edge.grandparent} → {edge.parent}</b>{edge.exists ? " (replacing the one there)" : " (a new root above it)"}</Text>
+                                        {!edge.exists && <TextInput size="sm" value={tfOptions.grandparent || "world"} onChange={(grandparent: string) => setTf({ grandparent })} data-option="grandparent" style={{ width: 120 }} />}
+                                    </Row>
+                                )
+                                : sensor && <Text small tone="danger">Nothing moves {sensor}: every edge above it is static.</Text>}
+                            {tfOptions.useTags && markers.length > 0 && (
+                                <Field label="tags to leave out (on things that move)">
+                                    <Row wrap gap={6}>
+                                        {markers.map((m) => (
+                                            <Chip key={m.id} selected={(tfOptions.excludeTags ?? []).includes(m.id)} tone={(tfOptions.excludeTags ?? []).includes(m.id) ? "warn" : undefined} data-tag={m.id}
+                                                onChange={() => setTf({ excludeTags: (tfOptions.excludeTags ?? []).includes(m.id) ? tfOptions.excludeTags.filter((id: number) => id !== m.id) : [...(tfOptions.excludeTags ?? []), m.id] })}>
+                                                {`tag ${m.id} (${m.sightings})`}
+                                            </Chip>
+                                        ))}
+                                    </Row>
+                                </Field>
+                            )}
+                            <Field inline label="quality">
+                                <Segmented size="sm" value={tfOptions.quality} onChange={(quality: string) => setTf({ quality })} data-option="quality"
+                                    items={[{ value: "fast", label: "Faster (loop closure)" }, { value: "high", label: "Higher quality (ICP stitching)", disabled: !status.tf.highQuality }]} />
+                            </Field>
+                            <Panel collapsible defaultOpen={false} title={`Advanced · ${tfOptions.quality === "high" ? "ICP stitching" : "loop closure"}, odometry noise`} data-advanced="tf">
+                                {tfOptions.quality === "high"
+                                    ? <>
+                                        <Heading level={3}>ICP stitching (icp_stitch)</Heading>
+                                        <Fields group={tfOptions.stitch} onChange={group(setTf, tfOptions, "stitch")} />
+                                    </>
+                                    : <>
+                                        <Heading level={3}>Loop closure</Heading>
+                                        <Fields group={tfOptions.pgo} onChange={group(setTf, tfOptions, "pgo")} only={["loop_search_radius", "loop_time_thresh", "loop_score_thresh", "loop_submap_half_range", "submap_resolution", "min_loop_detect_duration", "max_icp_iterations", "max_icp_correspondence_dist", "loop_rot_var"]} />
+                                    </>}
+                                <Heading level={3}>Pose graph</Heading>
+                                <Fields group={tfOptions} onChange={setTf} only={["keyframeTranslationM", "keyframeRotationDeg", "every", "tfTolerance", "rateHz"]} />
+                                <Fields group={tfOptions.odometry} onChange={group(setTf, tfOptions, "odometry")} />
+                            </Panel>
+                        </StepCard>
+
+                        <StepCard number={3} step="globalMap" title="Global map" status={globalStatus} running={running} run={runGlobal} runLabel={built ? "Run this step…" : "Run this step"}>
+                            <Checkbox value={globalOptions.useCorrectedTf} onChange={(useCorrectedTf: boolean) => setGlobal({ useCorrectedTf })} data-option="useCorrectedTf"
+                                label={status.tf.corrected ? "use the corrected tf" : "use the corrected tf (step 2 runs first: the recording has none yet)"} />
+                            <Checkbox value={globalOptions.build.rayTracing} onChange={(rayTracing: boolean) => setGlobal({ build: { ...globalOptions.build, rayTracing } })} data-option="rayTracing" label="ray tracing (free space clears what moved)" />
+                            <Field inline label="voxel size">
+                                <Row>
+                                    <Slider min={0.02} max={0.2} step={0.01} value={globalOptions.build.voxelSize} showValue={false} onChange={(voxelSize: number) => setGlobal({ build: { ...globalOptions.build, voxelSize } })} style={{ width: 160 }} />
+                                    <NumberInput size="sm" min={0.01} max={0.5} step={0.01} unit="m" value={globalOptions.build.voxelSize} onChange={(voxelSize: number) => setGlobal({ build: { ...globalOptions.build, voxelSize } })} data-option="voxelSize" style={{ width: 90 }} />
+                                </Row>
+                            </Field>
+                            <Row wrap gap={16}>
+                                <Field inline label="final decimation" title="m; the saved map is thinned to one point per voxel this size (0 = the voxel size)">
+                                    <NumberInput size="sm" step={0.01} unit="m" value={globalOptions.decimation.voxel} onChange={(voxel: number) => setGlobal({ decimation: { ...globalOptions.decimation, voxel } })} data-option="decimationVoxel" style={{ width: 90 }} />
+                                </Field>
+                                <Checkbox value={globalOptions.decimation.removeOutliers} onChange={(removeOutliers: boolean) => setGlobal({ decimation: { ...globalOptions.decimation, removeOutliers } })} data-option="removeOutliers" label="remove stray points" />
+                            </Row>
+                            <Checkbox value={globalOptions.rrd.enabled} onChange={(enabled: boolean) => setGlobal({ rrd: { ...globalOptions.rrd, enabled } })} data-option="rrd" label="also write an .rrd (rerun) beside the recording" />
+                            {globalOptions.rrd.enabled && (
+                                <Column gap={4} data-rrd-streams>
+                                    <Row wrap gap={16}>
+                                        <Checkbox value={globalOptions.rrd.map} onChange={(map: boolean) => setGlobal({ rrd: { ...globalOptions.rrd, map } })} label="the map" />
+                                        <Checkbox value={globalOptions.rrd.tags} onChange={(tags: boolean) => setGlobal({ rrd: { ...globalOptions.rrd, tags } })} label="AprilTags" />
+                                        <Checkbox value={globalOptions.rrd.trajectory} onChange={(trajectory: boolean) => setGlobal({ rrd: { ...globalOptions.rrd, trajectory } })} label="paths" />
+                                    </Row>
+                                    {(globalOptions.rrd.streams as { name: string; enabled: boolean; hz: number }[]).map((stream, index) => (
+                                        <Row key={stream.name} gap={8}>
+                                            <Checkbox value={stream.enabled} data-rrd-stream={stream.name} label={stream.name}
+                                                onChange={(enabled: boolean) => setGlobal({ rrd: { ...globalOptions.rrd, streams: globalOptions.rrd.streams.map((s: Options, i: number) => (i === index ? { ...s, enabled } : s)) } })} />
+                                            <NumberInput size="sm" step={0.5} unit="Hz" value={stream.hz} disabled={!stream.enabled} style={{ width: 90 }}
+                                                onChange={(hz: number) => setGlobal({ rrd: { ...globalOptions.rrd, streams: globalOptions.rrd.streams.map((s: Options, i: number) => (i === index ? { ...s, hz } : s)) } })} />
+                                        </Row>
+                                    ))}
+                                </Column>
+                            )}
+                            <Panel collapsible defaultOpen={false} title="Advanced · ray tracer, decimation, build" data-advanced="globalMap">
+                                <Heading level={3}>Ray tracer</Heading>
+                                <Fields group={globalOptions.build.ray} disabled={!globalOptions.build.rayTracing} onChange={(patch) => setGlobal({ build: { ...globalOptions.build, ray: { ...globalOptions.build.ray, ...patch } } })} />
+                                <Heading level={3}>Stray points</Heading>
+                                <Fields group={globalOptions.decimation} only={["neighbors", "stdRatio"]} disabled={!globalOptions.decimation.removeOutliers} onChange={(patch) => setGlobal({ decimation: { ...globalOptions.decimation, ...patch } })} />
+                                <Heading level={3}>Build</Heading>
+                                <Fields group={globalOptions.build} only={["every", "maxRange", "tfTolerance"]} onChange={(patch) => setGlobal({ build: { ...globalOptions.build, ...patch } })} />
+                                {!globalOptions.useCorrectedTf && (
+                                    <Checkbox value={globalOptions.build.loopClosure} onChange={(loopClosure: boolean) => setGlobal({ build: { ...globalOptions.build, loopClosure } })} label="without the corrected tf: close loops while building (the classic Generate)" />
+                                )}
+                            </Panel>
+                        </StepCard>
+                    </>
+                )}
+                {ready && lite && classic && (
+                    <Field inline label="voxel size">
+                        <NumberInput size="sm" min={0.01} max={0.5} step={0.01} unit="m" value={classic.voxelSize} onChange={(voxelSize: number) => setClassic({ ...classic, voxelSize })} data-option="voxelSize" style={{ width: 90 }} />
+                    </Field>
+                )}
                 {confirming && (
                     <Alert
                         tone="warn"
@@ -169,7 +433,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                         data-regen-warning
                         actions={
                             <>
-                                <Button size="sm" variant="danger" onClick={generate} data-action="confirm-regenerate">
+                                <Button size="sm" variant="danger" onClick={runGlobal} data-action="confirm-regenerate">
                                     Yes, regenerate
                                 </Button>
                                 <Button size="sm" onClick={() => setConfirming(false)}>

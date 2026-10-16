@@ -7,9 +7,29 @@ moves it on a click). Opening a recording with a map goes straight to it. Only g
 everything else is optional and in any order.
 
 - **Open** a recording (`.db` or `.mcap`) from Desktop's shared recordings folder (the Live Viewer records there).
-- **Generate** (the blue orb): the global map, every scan placed through the recording's tf, loops closed (ICP + pose
-  graph), ray traced so free space clears what moved. Voxel size up front; skip loop closure / ray tracing and every
-  ray-tracer and pose-graph tunable under Advanced. A progress bar with stage, ETA and Cancel.
+- **Generate** (the blue orb): a corrected map in one press ("Generate corrected map"), or any one of the steps that make
+  it, each with its own Run button, progress bar, ETA and Cancel. Every step writes into the recording in place
+  ([docs/schema.md](docs/schema.md#what-generate-writes)), and a step whose input the recording doesn't have yet runs
+  the earlier one first (it reads what's there from the file: its streams, its tf and `map/pipeline`).
+  1. **AprilTags from images**: every image through an AprilTag detector (tag36h11, 10 cm; kornia-apriltag and a planar
+     PnP, ported from icp_stitch / dimos's `apriltags.py`), posed with the recording's CameraInfo: `raw_april_tags`
+     (every glimpse, with its quality diagnostics; the camera's speed comes from tf, never from an image's stored pose)
+     and/or `april_tags` (gated, grouped per marker visit into one Huber medoid, as gsc_pgo's `add_april.py` does).
+  2. **A corrected tf tree**: loop closure over the trajectory of one point cloud's sensor, written as the tf edge above
+     the odometry (`world → odom` / `map → odom`: the one there is replaced, else a new root, `world` by default), the way
+     dtk edits tf. Static vs moving edges are told apart from the data. The default cloud is one whose frame moves,
+     in the biggest tree, nearest its root; a cloud already in its root frame asks for the sensor's frame and is moved
+     back into it first. Optional AprilTag landmarks (and tags to leave out). **Faster** = the app's loop closure (the
+     PGO port) and one pose graph solved here; **Higher quality** = [icp_stitch](https://github.com/jeff-hykin/icp_stitch)
+     (gsc_pgo's tag PGO + ICP stitching on GTSAM; its release binary, or `ICP_STITCH_BIN`) run on a temporary db in the
+     data folder, with its stitching knobs under Advanced.
+  3. **Global map**: every scan placed through the corrected tf (on by default), ray traced (on by default; the ray
+     tracer's tunables under Advanced), decimated (a final voxel and stray-point removal), written into the recording as
+     `global_map_aggregated` (one cloud at its start) and beside it as `<name>_global_map_aggregated.pc2.lcm`; it becomes
+     the map in the editor. Optionally an `.rrd` beside the recording too: the map, the paths, each AprilTag drawn as its
+     own pattern with its id, and the streams picked at the rates picked (color images at 2 Hz by default).
+- **Drop a recording** (`.db` / `.mcap`) on the page to open it with Generate up: one Desktop already has opens in place;
+  any other is streamed into Desktop's recordings folder first (a page is handed a dropped file's bytes, not its path).
 - **Not post-processed yet** (a lidar + IMU and no odometry, e.g. a raw [lite_record](https://github.com/jeff-hykin/lite_record)
   recording): Generate first runs lite_record's own `post_process` on it, in place (its release binary, re-fetched into
   the data dir when the release is rebuilt, or `LITE_RECORD_BIN`): viewable images, the frame tree, odometry, a

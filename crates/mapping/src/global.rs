@@ -10,6 +10,28 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZero;
 use std::path::{Path, PathBuf};
 
+/// The global map step's options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GlobalOptions {
+    /// place the scans through the corrected tf (the tf step runs first when the recording has none)
+    pub use_corrected_tf: bool,
+    /// the map build: voxel size, ray tracing and its tunables; without the corrected tf, the app's own loop closure
+    pub build: crate::build::BuildOptions,
+    pub decimation: Decimation,
+    pub rrd: crate::rrd::RrdOptions,
+    /// the tf step's options, when it has to run first (None = what it ran with last, else its defaults)
+    pub tf: Option<crate::correct::CorrectOptions>,
+    /// the tags step's options, when it has to run first
+    pub tags: Option<crate::tags::TagOptions>,
+}
+
+impl Default for GlobalOptions {
+    fn default() -> Self {
+        GlobalOptions { use_corrected_tf: true, build: crate::build::BuildOptions::default(), decimation: Decimation::default(), rrd: crate::rrd::RrdOptions::default(), tf: None, tags: None }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Decimation {

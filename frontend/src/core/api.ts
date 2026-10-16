@@ -138,6 +138,8 @@ export interface PlanInfo {
 }
 
 export interface Progress {
+    /** 0..1 over a job made of several steps */
+    overall?: number
     stage: string
     stageIndex: number
     stageCount: number
@@ -149,7 +151,7 @@ export interface Progress {
 export interface Job {
     id: number
     session: string
-    kind: "build" | "preview" | "save"
+    kind: "build" | "preview" | "save" | "tags" | "tf" | "globalMap"
     state: "running" | "done" | "failed" | "cancelled"
     progress: Progress | null
     fraction: number
@@ -245,6 +247,8 @@ const json = (body: unknown): RequestInit => ({ method: "POST", body: JSON.strin
 /** Desktop's shared recordings folder (docs/api.md in dimos-desktop). */
 export const recordings = {
     list: () => call<{ dir: string; extraDirs: string[]; recordings: DesktopRecording[] }>("../../recordings"),
+    /** a free path in Desktop's main recordings folder for a new file */
+    create: (name: string, format: "db" | "mcap") => call<{ id: string; path: string }>("../../recordings/new", json({ name, format })),
     metadata: (id: string) => call<RecordingMetadata>(`../../recordings/${id.split("/").map(encodeURIComponent).join("/")}`),
 }
 
@@ -314,6 +318,78 @@ export const uploads = {
     clearFinished: () => desktop<UploadQueue>("../../dimos-gateway/cloud/uploads", { method: "DELETE" }),
 }
 
+/** a cloud stream the tf correction could follow (server: mapping::frames::CloudChoice) */
+export interface CloudChoice {
+    stream: string
+    frame: string
+    count: number
+    inTf: boolean
+    isRoot: boolean
+    dynamic: boolean
+    depth: number
+    treeSize: number
+    mapLike: boolean
+}
+
+export interface FrameNode {
+    name: string
+    parent: string | null
+    dynamic: boolean
+    depth: number
+    root: string
+    treeSize: number
+    children: string[]
+}
+
+export interface TfPlan {
+    cloudStream: string
+    cloudFrame: string
+    sensorFrame: string
+    compensate: boolean
+    parent: string
+    odometryChild: string
+    grandparent: string
+    grandparentExists: boolean
+    notes: string[]
+}
+
+/** GET api/sessions/{id}/generate: what the recording has for each generation step, the defaults, what ran last */
+export interface GenerateStatus {
+    format: "db" | "mcap"
+    tags: {
+        images: { name: string; count: number }[]
+        camera: string | null
+        cameraInfo: { stream: string; frame: string; width: number; height: number } | null
+        problem: string | null
+        raw: number
+        grouped: number
+        markers: { id: number; sightings: number }[]
+        record: { at: number; options: Record<string, any>; raw: number; grouped: number; images: number; markers: number[]; cameraStream: string } | null
+        defaults: Record<string, any>
+    }
+    tf: {
+        analysis: { frames: FrameNode[]; roots: string[]; clouds: CloudChoice[]; defaultCloud: string | null; edges: { parent: string; child: string; fixed: boolean; samples: number }[] }
+        plan: TfPlan | null
+        planProblem: string | null
+        corrected: boolean
+        stale: boolean
+        record: { at: number; options: Record<string, any>; plan: TfPlan; samples: number; report: Record<string, any> } | null
+        defaults: Record<string, any>
+        highQuality: boolean
+    }
+    globalMap: {
+        present: boolean
+        lcmPath: string
+        lcmExists: boolean
+        rrdPath: string
+        rrdExists: boolean
+        stale: boolean
+        record: { at: number; points: number; voxelSize: number; worldFrame: string; lcmPath: string; rrdPath: string | null } | null
+        defaults: Record<string, any>
+        rrdStreams: { name: string; enabled: boolean; hz: number }[]
+    }
+}
+
 export const api = {
     state: () => call<{ active: string | null; session: Session | null; last: LastSession | null; recordingsDir: string }>("api/state"),
     open: (recording: { id: string; path: string; name: string; writable?: boolean }) => call<Session>("api/open", json(recording)),
@@ -343,6 +419,19 @@ export const api = {
     buildDefaults: () => call<Record<string, any>>("api/build-defaults"),
     build: (id: string, options: Partial<BuildOptions>) => call<{ job: Job }>(`api/sessions/${id}/build`, json(options)),
     cancel: (id: string) => call(`api/sessions/${id}/job`, { method: "DELETE" }),
+    /** streams a dropped file into `path` (a free path Desktop handed out) */
+    importFile: async (path: string, file: File) => {
+        const response = await fetch(here(`api/import?path=${encodeURIComponent(path)}`), { method: "PUT", body: file })
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) {
+            throw new Error(body.error ?? `import: ${response.status}`)
+        }
+        return body as { path: string; size: number }
+    },
+    generateStatus: (id: string) => call<GenerateStatus>(`api/sessions/${id}/generate`),
+    generateTags: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/tags`, json(options)),
+    generateTf: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/tf`, json(options)),
+    generateGlobal: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/global-map`, json(options)),
     op: (id: string, op: string, region: Region, params: Record<string, unknown> = {}, preview = false) =>
         call<OpResult>(`api/sessions/${id}/op`, json({ op, region, params, preview })),
     modify: (id: string, body: Record<string, unknown>) => call<OpResult>(`api/sessions/${id}/modify`, json(body)),

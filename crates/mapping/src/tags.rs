@@ -138,7 +138,7 @@ pub fn detect(recording: &Recording, options: &TagOptions, progress: &mut dyn Fn
     let camera = CameraModel::from_info(&info);
     let total = recording.streams()?.iter().find(|s| s.name == camera_stream).map_or(0, |s| s.count);
     let mut result = TagResult { camera_stream: camera_stream.clone(), camera_info_stream: info_stream, camera_frame: info.header.frame_id.trim_start_matches('/').to_string(), ..Default::default() };
-    progress(Progress { stage: "Reading tf".into(), stage_index: 0, stage_count: 2, done: 0, total: 1, note: String::new() });
+    progress(Progress { overall: None, stage: "Reading tf".into(), stage_index: 0, stage_count: 2, done: 0, total: 1, note: String::new() });
     let tree = crate::frames::tf_tree(recording)?;
     let every = options.every.max(1);
     // batches of decoded-on-demand frames, detected in parallel (a detector per thread)
@@ -190,7 +190,7 @@ pub fn detect(recording: &Recording, options: &TagOptions, progress: &mut dyn Fn
         batch.push((ts, image));
         if batch.len() >= 64 {
             process(&mut batch, &mut result)?;
-            progress(Progress { stage: format!("Finding AprilTags in {camera_stream}"), stage_index: 1, stage_count: 2, done: index, total, note: format!("{} tags in {} images", result.raw.len(), result.images) });
+            progress(Progress { overall: None, stage: format!("Finding AprilTags in {camera_stream}"), stage_index: 1, stage_count: 2, done: index, total, note: format!("{} tags in {} images", result.raw.len(), result.images) });
             if cancel.load(Ordering::Relaxed) {
                 return Err(anyhow::anyhow!(Cancelled));
             }
@@ -211,7 +211,7 @@ pub fn detect(recording: &Recording, options: &TagOptions, progress: &mut dyn Fn
     let (grouped, report) = group(&result.raw, &options.gates, &options.grouping, &options.exclude);
     result.grouped = grouped;
     result.report = report;
-    progress(Progress { stage: format!("Finding AprilTags in {camera_stream}"), stage_index: 1, stage_count: 2, done: total, total, note: format!("{} raw, {} grouped", result.raw.len(), result.grouped.len()) });
+    progress(Progress { overall: None, stage: format!("Finding AprilTags in {camera_stream}"), stage_index: 1, stage_count: 2, done: total, total, note: format!("{} raw, {} grouped", result.raw.len(), result.grouped.len()) });
     Ok(result)
 }
 
@@ -305,7 +305,7 @@ pub fn read(recording: &Recording, stream: &str) -> Result<Option<(Vec<Detection
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::apriltag::tests::{render_tag, test_camera};
     use nalgebra::{Rotation3, Vector3};

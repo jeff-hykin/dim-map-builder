@@ -16,3 +16,19 @@
 .plan-view, .minimap-view { position: absolute; inset: 0; overflow: hidden; z-index: 1; touch-action: none; }
 .plan-view canvas, .minimap-view canvas { position: absolute; inset: 0; }
 .minimap-view { inset: 10px; border-radius: var(--radius-lg); border: 1px solid var(--border); }
+
+/* a recording dragged over the page */
+.drop-overlay {
+    position: fixed;
+    inset: 12px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--dr-primary, #4c8dff);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--dr-bg, #000) 70%, transparent);
+    color: var(--dr-text, #fff);
+    font-size: 1.2rem;
+    pointer-events: none;
+}

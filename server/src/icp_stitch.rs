@@ -1,0 +1,169 @@
+//! The high-quality tf correction runs icp_stitch (github.com/jeff-hykin/icp_stitch: gsc_pgo's offline tag PGO + ICP
+//! stitching, in Rust on GTSAM) on a temporary memory2 db the correction writes (mapping::correct), the way Generate
+//! runs lite_record: its release binary, fetched into the data dir and re-fetched when the release is rebuilt, or
+//! ICP_STITCH_BIN. It only ever touches the temporary db, so Cancel kills it at any point.
+use anyhow::{bail, Context, Result};
+use mapping::build::{Cancelled, Progress};
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+const REPO: &str = "jeff-hykin/icp_stitch";
+const CHECK_EVERY: Duration = Duration::from_secs(600);
+
+fn asset() -> Result<&'static str> {
+    Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "icp_stitch-aarch64-macos",
+        ("linux", "x86_64") => "icp_stitch-x86_64-linux",
+        ("linux", "aarch64") => "icp_stitch-aarch64-linux",
+        (os, arch) => bail!("icp_stitch has no release for {os} {arch}: set ICP_STITCH_BIN to an icp_stitch binary, or use the fast correction"),
+    })
+}
+
+/// Whether the high-quality correction can run here: ICP_STITCH_BIN, a copy already fetched, or a release for this
+/// platform to fetch.
+pub fn available(data_dir: &Path) -> bool {
+    std::env::var_os("ICP_STITCH_BIN").is_some_and(|v| !v.is_empty()) || data_dir.join("bin").join("icp_stitch").is_file() || asset().is_ok()
+}
+
+/// ICP_STITCH_BIN, else the release binary in `<data>/bin`, fetched again whenever the `latest` release was rebuilt
+/// from another commit; offline, the copy there is is used.
+pub fn binary(data_dir: &Path) -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("ICP_STITCH_BIN").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(path));
+    }
+    static CHECKED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let path = data_dir.join("bin").join("icp_stitch");
+    let stamp = path.with_extension("commit");
+    if path.is_file() && CHECKED.lock().unwrap().is_some_and(|at| at.elapsed() < CHECK_EVERY) {
+        return Ok(path);
+    }
+    let have = std::fs::read_to_string(&stamp).unwrap_or_default().trim().to_string();
+    let outcome = crate::lite_record::latest_commit_of(REPO).and_then(|latest| {
+        if latest != have || !path.is_file() {
+            crate::lite_record::download_asset(REPO, asset()?, &path)?;
+            std::fs::write(&stamp, &latest)?;
+        }
+        Ok(())
+    });
+    match outcome {
+        Ok(()) => {
+            *CHECKED.lock().unwrap() = Some(std::time::Instant::now());
+            Ok(path)
+        }
+        Err(error) if path.is_file() => {
+            eprintln!("map builder: couldn't check icp_stitch's release ({error:#}); using the copy there is");
+            Ok(path)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// How far through its run icp_stitch is, from what it prints: (stage index of 4, fraction within it, note).
+pub fn parse_line(line: &str) -> Option<(usize, f64, String)> {
+    let line = line.trim();
+    if line.starts_with("building factor graph") || line.starts_with("solving stage 1") {
+        return Some((1, 0.0, line.to_string()));
+    }
+    if line.starts_with("ICP stage: thinned") || line.starts_with("ICP stage: reading") || line.starts_with("ICP stage: built") || line.starts_with("ICP stage:") && line.contains("candidate pairs") {
+        return Some((2, 0.05, line.to_string()));
+    }
+    // "  5000/12000 pairs, 40 accepted, 31s"
+    if let Some((done, rest)) = line.split_once('/') {
+        if let (Ok(done), Some(total)) = (done.trim().parse::<f64>(), rest.split_whitespace().next().and_then(|t| t.parse::<f64>().ok())) {
+            if rest.contains("pairs") && total > 0.0 {
+                return Some((2, 0.05 + 0.95 * done / total, line.to_string()));
+            }
+        }
+    }
+    if line.starts_with("ICP stage: accepted") || line.starts_with("solving stage 2") {
+        return Some((3, 0.0, line.to_string()));
+    }
+    if line.starts_with("PGO:") || line.starts_with("wrote ") || line.starts_with("writing ") {
+        return Some((3, 0.5, line.to_string()));
+    }
+    None
+}
+
+/// Runs icp_stitch with `args`, reporting progress as stages 1..3 of 4 (stage 0 is writing its input); returns its
+/// output.
+pub fn run(binary: &Path, args: &[String], report: &dyn Fn(Progress), cancel: &AtomicBool) -> Result<String> {
+    let mut child = Command::new(binary)
+        .args(args)
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("couldn't run {}", binary.display()))?;
+    let stdout = child.stdout.take().context("stdout")?;
+    let stderr = child.stderr.take().context("stderr")?;
+    let errors = std::thread::spawn(move || std::io::read_to_string(stderr).unwrap_or_default());
+    let (lines, receiver) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(|l| l.ok()) {
+            if lines.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let names = ["Preparing the scans for icp_stitch", "icp_stitch: tag PGO", "icp_stitch: ICP stitching", "icp_stitch: solving"];
+    let mut output = String::new();
+    report(Progress { overall: None, stage: names[1].into(), stage_index: 1, stage_count: 4, done: 0, total: 1000, note: String::new() });
+    let mut killed = false;
+    loop {
+        match receiver.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                output.push_str(&line);
+                output.push('\n');
+                if let Some((stage, fraction, note)) = parse_line(&line) {
+                    report(Progress { overall: None, stage: names[stage].into(), stage_index: stage, stage_count: 4, done: (fraction * 1000.0) as u64, total: 1000, note });
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        if cancel.load(Ordering::Relaxed) && !killed {
+            let _ = child.kill();
+            killed = true;
+        }
+    }
+    let status = child.wait()?;
+    let errors = errors.join().unwrap_or_default();
+    if killed || cancel.load(Ordering::Relaxed) {
+        return Err(anyhow::anyhow!(Cancelled));
+    }
+    if !status.success() {
+        let tail: Vec<&str> = errors.lines().chain(output.lines()).filter(|l| !l.trim().is_empty()).collect();
+        bail!("icp_stitch failed ({status}): {}", tail[tail.len().saturating_sub(6)..].join(" / "));
+    }
+    Ok(output)
+}
+
+/// The figures icp_stitch printed, for the notes.
+pub fn summary_lines(output: &str) -> Vec<String> {
+    output.lines().map(str::trim).filter(|l| l.starts_with("PGO:") || l.starts_with("ICP stage: accepted") || l.starts_with("tags with no loop-closure")).map(|l| format!("icp_stitch: {l}")).collect()
+}
+
+/// How many ICP stitches it accepted.
+pub fn accepted(output: &str) -> usize {
+    output.lines().find_map(|l| l.trim().strip_prefix("ICP stage: accepted ")).and_then(|rest| rest.split('/').next()).and_then(|n| n.trim().parse().ok()).unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn its_output_becomes_progress() {
+        assert_eq!(parse_line("solving stage 1 (tag PGO)...").unwrap().0, 1);
+        let (stage, fraction, _) = parse_line("  5000/10000 pairs, 40 accepted, 31s").unwrap();
+        assert_eq!(stage, 2);
+        assert!((fraction - 0.525).abs() < 1e-9);
+        assert_eq!(parse_line("solving stage 2 (tag PGO + ICP closures)...").unwrap().0, 3);
+        assert_eq!(accepted("ICP stage: accepted 37/120 loop closures\n"), 37);
+        assert!(parse_line("recording: /x").is_none());
+    }
+}

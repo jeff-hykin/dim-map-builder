@@ -420,7 +420,7 @@ pub fn solve_fast(recording: &Recording, tree: &TfTree, plan: &Plan, options: &C
         options,
         &mut |done, total| {
             let (keyframes, loops) = counts.get();
-            progress(Progress { stage: "Closing loops".into(), stage_index: 0, stage_count: 2, done, total, note: format!("{keyframes} keyframes, {loops} loops") })
+            progress(Progress { overall: None, stage: "Closing loops".into(), stage_index: 0, stage_count: 2, done, total, note: format!("{keyframes} keyframes, {loops} loops") })
         },
         cancel,
         |scan| {
@@ -435,7 +435,7 @@ pub fn solve_fast(recording: &Recording, tree: &TfTree, plan: &Plan, options: &C
     if pgo.keyframes.len() < 2 {
         bail!("{} gave {} keyframes: too little motion to correct", plan.cloud_stream, pgo.keyframes.len());
     }
-    progress(Progress { stage: "Solving the pose graph".into(), stage_index: 1, stage_count: 2, done: 0, total: 1, note: String::new() });
+    progress(Progress { overall: None, stage: "Solving the pose graph".into(), stage_index: 1, stage_count: 2, done: 0, total: 1, note: String::new() });
     let mut graph = Graph::default();
     for keyframe in &pgo.keyframes {
         graph.add(keyframe.optimized);
@@ -482,7 +482,7 @@ pub fn solve_fast(recording: &Recording, tree: &TfTree, plan: &Plan, options: &C
     let keyframes: Vec<Keyframe> = pgo.keyframes.iter().enumerate().map(|(k, keyframe)| Keyframe { ts: keyframe.ts, raw: keyframe.local, corrected: graph.values[k] }).collect();
     report.keyframes = keyframes.len();
     finish_report(&mut report, &keyframes, &sightings);
-    progress(Progress { stage: "Solving the pose graph".into(), stage_index: 1, stage_count: 2, done: 1, total: 1, note: format!("{} keyframes, {} loops, {} tag factors", report.keyframes, report.loops, report.tag_factors) });
+    progress(Progress { overall: None, stage: "Solving the pose graph".into(), stage_index: 1, stage_count: 2, done: 1, total: 1, note: format!("{} keyframes, {} loops, {} tag factors", report.keyframes, report.loops, report.tag_factors) });
     Ok((keyframes, trajectory, report))
 }
 
@@ -575,7 +575,7 @@ pub fn write_stitch_inputs(
         tree,
         plan,
         options,
-        &mut |done, total| progress(Progress { stage: "Preparing the scans for icp_stitch".into(), stage_index: 0, stage_count: 4, done, total, note: String::new() }),
+        &mut |done, total| progress(Progress { overall: None, stage: "Preparing the scans for icp_stitch".into(), stage_index: 0, stage_count: 4, done, total, note: String::new() }),
         cancel,
         |scan| {
             let (t, q) = parts(&scan.pose);
@@ -736,6 +736,53 @@ mod tests {
         let registered = plan(&analysis, &CorrectOptions { cloud_stream: "registered".into(), sensor_frame: "mid360_link".into(), grandparent: "map".into(), ..Default::default() }).unwrap();
         assert!(registered.compensate);
         assert_eq!(registered.grandparent, "map");
+    }
+
+    /// clouds published already registered in odom (the root) give the same scans, moved back into the sensor frame
+    #[test]
+    fn a_root_frame_cloud_is_moved_back_into_the_sensor_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.db");
+        let mut connection = db::Connection::open(&path).unwrap();
+        let local: Vec<[f32; 3]> = vec![[1.0, 0.0, 0.0], [0.0, 2.0, 0.5]];
+        let (mut sensor, mut registered, mut tfs) = (Vec::new(), Vec::new(), Vec::new());
+        for step in 0..10 {
+            let ts = step as f64 * 0.1;
+            let pose = iso([step as f64 * 0.3, 0.1, 0.0], [0.0, 0.0, (step as f64 * 0.05).sin(), (step as f64 * 0.05).cos()]);
+            sensor.push((ts, lcm::encode_xyz_cloud(&Header::at(ts, "lidar"), &local, None)));
+            let placed: Vec<[f32; 3]> = local.iter().map(|p| crate::tf::transform_point(&pose, *p)).collect();
+            registered.push((ts, lcm::encode_xyz_cloud(&Header::at(ts, "odom"), &placed, None)));
+            let (t, q) = parts(&pose);
+            tfs.push((ts, lcm::encode_tf(&[TfEdge { header: Header::at(ts, "odom"), child: "lidar".into(), translation: t, rotation: q }])));
+        }
+        db::write_stream(&mut connection, "lidar", lcm::POINT_CLOUD2_TYPE, &sensor).unwrap();
+        db::write_stream(&mut connection, "registered", lcm::POINT_CLOUD2_TYPE, &registered).unwrap();
+        db::write_stream(&mut connection, "tf", lcm::TF_TYPE, &tfs).unwrap();
+        drop(connection);
+        let recording = Recording::open(&path).unwrap();
+        let tree = crate::frames::tf_tree(&recording).unwrap();
+        let analysis = crate::frames::analyze(&recording, &tree).unwrap();
+        let scans = |options: CorrectOptions| {
+            let plan = plan(&analysis, &options).unwrap();
+            let mut found = Vec::new();
+            for_each_scan(&recording, &tree, &plan, &options, &mut |_, _| {}, &AtomicBool::new(false), |scan| {
+                found.push(scan);
+                Ok(())
+            })
+            .unwrap();
+            (plan, found)
+        };
+        let (direct_plan, direct) = scans(CorrectOptions::default());
+        let (moved_plan, moved) = scans(CorrectOptions { cloud_stream: "registered".into(), sensor_frame: "lidar".into(), ..Default::default() });
+        assert_eq!(direct_plan.cloud_stream, "lidar");
+        assert!(moved_plan.compensate && !direct_plan.compensate);
+        assert_eq!((direct.len(), moved.len()), (10, 10));
+        for (a, b) in direct.iter().zip(&moved) {
+            assert!((a.pose.translation.vector - b.pose.translation.vector).norm() < 1e-9);
+            for (p, q) in a.points.iter().zip(&b.points) {
+                assert!((0..3).all(|i| (p[i] - q[i]).abs() < 1e-4), "{p:?} vs {q:?}");
+            }
+        }
     }
 
     #[test]

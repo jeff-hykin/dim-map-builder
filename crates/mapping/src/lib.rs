@@ -13,6 +13,7 @@ pub mod graph;
 pub mod icp;
 pub mod pgo;
 pub mod pipeline;
+pub mod rrd;
 pub mod tags;
 pub mod ray {
     pub mod mapper;

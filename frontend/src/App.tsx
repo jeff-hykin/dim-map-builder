@@ -4,7 +4,7 @@
 // back to the same recording, view, tool, map, edits, cameras and selection; running jobs keep running and the page
 // reattaches to their progress.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
-import { api, events, type Job, type LastSession, type Session } from "./core/api.ts"
+import { api, events, recordings, type Job, type LastSession, type Session } from "./core/api.ts"
 import { MapScene } from "./core/scene.ts"
 import type { FloorModel } from "./core/slice.ts"
 import { DEFAULT_UI, restoreUi, TOOLS, type Context, type Modal as ModalName, type ToolId, type UiState, type ViewMode } from "./ui/context.ts"
@@ -284,6 +284,62 @@ export function App() {
         [run, adopt],
     )
 
+    // a .db / .mcap dropped on the page opens, ready to Generate: the one Desktop already has (same name and size), else
+    // it's streamed into Desktop's recordings folder first (a browser hands over the bytes, not the file's path)
+    const [dropping, setDropping] = useState(false)
+    useEffect(() => {
+        const isFile = (event: DragEvent) => !!event.dataTransfer && [...event.dataTransfer.types].includes("Files")
+        const over = (event: DragEvent) => {
+            if (isFile(event)) {
+                event.preventDefault()
+                setDropping(true)
+            }
+        }
+        const leave = (event: DragEvent) => {
+            if (!event.relatedTarget) {
+                setDropping(false)
+            }
+        }
+        const drop = async (event: DragEvent) => {
+            if (!isFile(event)) {
+                return
+            }
+            event.preventDefault()
+            setDropping(false)
+            const file = [...(event.dataTransfer?.files ?? [])].find((f) => /\.(db|mcap)$/i.test(f.name))
+            if (!file) {
+                say("Drop a recording: a .db or an .mcap", true)
+                return
+            }
+            const listed = await run(recordings.list())
+            const known = listed?.recordings.find((r) => r.name === file.name || r.path.endsWith(`/${file.name}`))
+            if (known && known.size === file.size) {
+                await openRecording({ id: known.id, path: known.path, name: known.name, writable: known.writable })
+                setModal("generate")
+                return
+            }
+            const format = /\.mcap$/i.test(file.name) ? "mcap" : "db"
+            const target = await run(recordings.create(file.name.replace(/\.(db|mcap)$/i, ""), format))
+            if (!target) {
+                return
+            }
+            say(`Copying ${file.name} (${(file.size / 1e6).toFixed(0)} MB) into Desktop's recordings…`)
+            const copied = await run(api.importFile(target.path, file))
+            if (copied) {
+                await openRecording({ id: target.id, path: copied.path, name: file.name, writable: true })
+                setModal("generate")
+            }
+        }
+        window.addEventListener("dragover", over)
+        window.addEventListener("dragleave", leave)
+        window.addEventListener("drop", drop)
+        return () => {
+            window.removeEventListener("dragover", over)
+            window.removeEventListener("dragleave", leave)
+            window.removeEventListener("drop", drop)
+        }
+    }, [run, say, openRecording])
+
     // on load: go back to what's open since the server started (a refresh, Recordings' Open), else ask for a recording
     useEffect(() => {
         if (!scene) {
@@ -335,11 +391,14 @@ export function App() {
             } else if (event.type === "job" && current && event.job.session === current.id) {
                 const job = event.job as Job
                 setSession((s) => (s ? { ...s, job } : s))
-                if (job.state === "done" && job.kind === "build") {
-                    say("Map generated")
+                if (job.state === "done" && (job.kind === "build" || job.kind === "globalMap")) {
+                    say(job.kind === "globalMap" ? "Global map generated and written into the recording" : "Map generated")
                     setModal(null)
                     await refresh()
                     scene.frameMap()
+                } else if (job.state === "done" && (job.kind === "tags" || job.kind === "tf")) {
+                    say(job.kind === "tags" ? "AprilTags written into the recording" : "Corrected tf written into the recording")
+                    await refresh()
                 } else if (job.state === "done" && job.kind === "save") {
                     say("Saved into the recording")
                     await refresh()
@@ -632,6 +691,7 @@ export function App() {
 
     return (
         <AppShell topBar={topBar} className={sliding ? "sliding" : undefined} data-mode={mode}>
+            {dropping && <div className="drop-overlay" data-drop-overlay>Drop a .db or .mcap recording to open it</div>}
             <section className="view" ref={viewBox}>
                 <div className="pane pane-3d" style={{ width: target[0] }}>
                     <div className="pane-inner" style={{ width: inner[0] }}>

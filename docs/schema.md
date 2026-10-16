@@ -60,3 +60,24 @@ takes `areas` with `kind == "no-go"` for the floor it's on, and rasterizes those
 
 Opening a recording that has `map/annotations` (or, from earlier versions, `map_builder_annotations`) and no working
 session for it restores the map, the transform, every annotation, the saved views and the grids from these streams.
+
+# What Generate writes
+
+Generate's steps (the Generate dialog, or `POST api/sessions/{id}/generate/...`) also write into the recording in
+place: a `.db` has the stream replaced, an `.mcap` gets a newer channel appended on the same topic (channel metadata
+`map_builder_generation` = unix seconds; readers here take the newest, and older ones are left as they were, since an
+mcap is only ever appended to). Nothing is left beside the recording but the two files asked for: the `.pc2.lcm` and,
+when asked for, the `.rrd`. The high-quality tf correction runs icp_stitch on a temporary db in the app's data
+folder, deleted when the step ends.
+
+| Stream / channel | dimos type | Content |
+| --- | --- | --- |
+| `raw_april_tags` | `geometry_msgs.PoseStamped` | Step 1: every AprilTag glimpse: the tag's pose in the camera's optical frame (`frame_id`), at the image's time. `.db` row tags (and pose columns = the same pose, as dimos's `add_april.py` writes): `marker_id`, `sharpness`, `reproj_px`, `tag_px`, `distance_m`, `view_angle_deg`, `lin_speed`, `ang_speed` (the camera's speed from tf; -1 unknown). `.mcap`: the same JSON object per message on `raw_april_tags/tags` (`std_msgs.String`) |
+| `april_tags` | `geometry_msgs.PoseStamped` | Step 1: the glimpses that pass the quality gates, grouped per marker visit (a gap of more than 5 s starts a new one), each group reduced to one Huber-refined medoid pose; tags `marker_id`, `n_observations` |
+| `tf` (`.db`) / the tf topic (`.mcap`) | `tf2_msgs.TFMessage` | Step 2: the drift correction as one edge, grandparent → parent (e.g. `world → odom`), at 10 Hz over the whole recording and at every keyframe, one transform per message (rows tagged `child_frame`). In a `.db` every transform of that edge already there is dropped from the tf streams (a message left empty is deleted), the way dtk's `db_tf_*` tools edit tf. In an `.mcap` the samples are a new channel on the tf topic with metadata `map_builder_edge: "<parent>><child>"`; readers here take that edge from the newest such channel only (other readers see the old samples too) |
+| `global_map_aggregated` | `sensor_msgs.PointCloud2` | Step 3: the global map (through the corrected tf, ray traced, decimated, stray points removed), one message at the recording's first timestamp, in the world frame. Also written beside the recording as `<name>_global_map_aggregated.pc2.lcm` (that one LCM-encoded PointCloud2) |
+| `map/pipeline` | `std_msgs.String` | JSON: what each step last ran with, when, and what it found (so a later step knows whether it needs an earlier one, and the dialog shows it) |
+
+`<name>.rrd` (step 3, optional, beside the recording): the global map, the raw and corrected paths, each AprilTag as
+its own pattern at its place (with its id), and the streams picked at the rates picked (color images at 2 Hz by
+default, on a posed pinhole), all placed through the recording's tf.
