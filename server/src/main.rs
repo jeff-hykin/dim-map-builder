@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     let app = dimos_app::get().cloned().unwrap_or_default();
     let desktop_url = app.desktop_url.clone().unwrap_or_default();
     if args.agent_json {
-        println!("{}", serde_json::to_string_pretty(&api::routes().manifest(api::DESCRIPTION))?);
+        println!("{}", serde_json::to_string_pretty(&api::routes().manifest(api::WHEN, api::DESCRIPTION))?);
         return Ok(());
     }
     // where working sessions are autosaved, and Desktop's shared recordings folder

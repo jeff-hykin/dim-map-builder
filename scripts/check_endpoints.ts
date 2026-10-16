@@ -1,7 +1,7 @@
 // dimos.yaml's `provides:` must list exactly the endpoints the server serves at agent.json (server/src/api.rs builds both
 // the routes and agent.json from one table), so Desktop sees every endpoint even before the app runs.
 // `deno task check-endpoints` (CI runs it on the nix-built binary: `--binary result/bin/dimos-app-server`);
-// `--write` rewrites its description and endpoints.
+// `--write` rewrites its when, description and endpoints.
 import { parse, stringify } from "@std/yaml"
 
 type Endpoint = { method: string; path: string }
@@ -19,15 +19,18 @@ if (!output.success) {
     Deno.exit(1)
 }
 const served = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+    when: string
     description: string
     endpoints: (Endpoint & Record<string, unknown>)[]
 }
-// method and path first, so dimos.yaml reads well
+// method and path first, then when (when to use it) right above description (how), so dimos.yaml reads well
 const want = {
+    when: served.when,
     description: served.description,
-    endpoints: served.endpoints.map(({ method, path, description, params, role }) => ({
+    endpoints: served.endpoints.map(({ method, path, when, description, params, role }) => ({
         method,
         path,
+        when,
         description,
         ...(params ? { params } : {}),
         ...(role ? { role } : {}),
@@ -37,13 +40,13 @@ const want = {
 const file = new URL("../dimos.yaml", import.meta.url)
 const yaml = parse(await Deno.readTextFile(file)) as Record<string, unknown>
 if (Deno.args.includes("--write")) {
-    // replace only `provides:`'s description and endpoints (its last keys), so the rest of the file (and its comments)
+    // replace only `provides:`'s when, description and endpoints (its last keys), so the rest of the file (and its comments)
     // stays as written
     const lines = (await Deno.readTextFile(file)).split("\n")
     const provides = lines.findIndex((line) => /^provides:/.test(line))
     let start = provides + 1
     while (
-        provides !== -1 && start < lines.length && !/^ {4}description:/.test(lines[start]) &&
+        provides !== -1 && start < lines.length && !/^ {4}(when|description):/.test(lines[start]) &&
         !/^[A-Za-z]/.test(lines[start])
     ) {
         start++
