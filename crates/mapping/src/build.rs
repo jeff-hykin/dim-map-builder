@@ -25,6 +25,9 @@ pub struct BuildOptions {
     pub cloud_stream: String,
     /// the fixed frame; empty = world, map or odom, whichever places the clouds
     pub world_frame: String,
+    /// the sensor's own frame, for clouds published in their tree's root (registered scans): each scan is moved back
+    /// into it, then placed (and ray traced from it) through tf. Empty = the clouds' own frame.
+    pub sensor_frame: String,
     pub voxel_size: f32,
     pub max_range: f32,
     pub loop_closure: bool,
@@ -65,6 +68,7 @@ impl Default for BuildOptions {
         BuildOptions {
             cloud_stream: String::new(),
             world_frame: String::new(),
+            sensor_frame: String::new(),
             voxel_size: 0.05,
             max_range: 30.0,
             loop_closure: true,
@@ -127,6 +131,9 @@ enum Placement {
     World(Option<TfTree>),
     /// the row's stored pose is the sensor pose in the world
     StoredPose,
+    /// clouds in their root frame, from a sensor named by tf: world ← sensor through tf, the points moved from the
+    /// cloud's frame into the sensor's
+    Mounted { tree: TfTree, sensor: String },
 }
 
 fn pick_cloud_stream(recording: &Recording, wanted: &str) -> Result<(String, u64)> {
@@ -174,16 +181,24 @@ impl Prepared {
                 .or_else(|| odometry.as_ref().and_then(|tree| tree.lookup(&self.world, ODOMETRY_FRAME, ts, tolerance)))
                 .or(Some(Iso::identity())),
             Placement::StoredPose => stored,
+            Placement::Mounted { tree, sensor } => (stamp > 0.0).then(|| tree.lookup(&self.world, sensor, stamp + self.cloud_offset, tolerance)).flatten().or_else(|| tree.lookup(&self.world, sensor, ts, tolerance)),
         }
     }
 
-    /// the scan's points in the sensor frame
-    fn sensor_points(&self, sensor: &Iso, points: Vec<[f32; 3]>) -> Vec<[f32; 3]> {
-        if matches!(self.placement, Placement::World(_)) {
-            let back = sensor.inverse();
-            points.iter().map(|p| crate::tf::transform_point(&back, *p)).collect()
-        } else {
-            points
+    /// the scan's points in the sensor frame (`frame` = the cloud's, `ts` / `stamp` its times)
+    fn sensor_points(&self, sensor: &Iso, points: Vec<[f32; 3]>, frame: &str, ts: f64, stamp: f64, tolerance: f64) -> Vec<[f32; 3]> {
+        let into = match &self.placement {
+            Placement::World(_) => Some(sensor.inverse()),
+            Placement::Mounted { tree, .. } => {
+                let frame = frame.trim_start_matches('/');
+                let world_cloud = (stamp > 0.0).then(|| tree.lookup(&self.world, frame, stamp + self.cloud_offset, tolerance)).flatten().or_else(|| tree.lookup(&self.world, frame, ts, tolerance));
+                world_cloud.map(|w| sensor.inverse() * w)
+            }
+            _ => None,
+        };
+        match into {
+            Some(into) => points.iter().map(|p| crate::tf::transform_point(&into, *p)).collect(),
+            None => points,
         }
     }
 }
@@ -233,7 +248,14 @@ fn prepare(recording: &Recording, options: &BuildOptions) -> Result<Prepared> {
     } else {
         0.0
     };
-    let placement = if cloud_frame == world || cloud_frame.is_empty() {
+    let sensor = options.sensor_frame.trim_start_matches('/').to_string();
+    let placement = if !sensor.is_empty() && sensor != cloud_frame {
+        if tree.lookup(&world, &sensor, first_ts, f64::INFINITY).is_none() || tree.lookup(&cloud_frame, &sensor, first_ts, f64::INFINITY).is_none() {
+            bail!("tf doesn't connect {sensor} to {world} and {cloud_frame}");
+        }
+        notes.push(format!("{cloud_frame} clouds moved back into {sensor}, placed in {world} through tf"));
+        Placement::Mounted { tree, sensor }
+    } else if cloud_frame == world || cloud_frame.is_empty() {
         // world-frame clouds: ray trace from where the robot was (its odometry), so free space carves correctly
         let mut odometry = TfTree::default();
         for stream in recording.streams()?.into_iter().filter(|s| matches!(s.kind, Kind::Odometry | Kind::PoseStamped)) {
@@ -303,7 +325,7 @@ pub fn preview(recording: &Recording, options: &BuildOptions, max_scans: usize, 
             return Ok(true);
         }
         result.scans += 1;
-        for p in prepared.sensor_points(&sensor, cloud.points) {
+        for p in prepared.sensor_points(&sensor, cloud.points, &cloud.frame_id, ts, cloud.ts, options.tf_tolerance) {
             let w = crate::tf::transform_point(&sensor, p);
             if cells.insert(crate::voxels::key_of(w, resolution)) {
                 result.points.push(w);
@@ -361,7 +383,7 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
                 return Ok(true);
             }
             let Some(sensor) = sensor_pose(ts, cloud.ts, &cloud.frame_id, pose) else { return Ok(true) };
-            let body = prepared.sensor_points(&sensor, cloud.points);
+            let body = prepared.sensor_points(&sensor, cloud.points, &cloud.frame_id, ts, cloud.ts, options.tf_tolerance);
             if pgo.process(sensor, ts, &body) {
                 loops += 1;
             }
@@ -423,7 +445,7 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
             result.corrected_path.push(position);
             last_position = Some(position);
         }
-        let points: Vec<(f32, f32, f32)> = prepared.sensor_points(&sensor, cloud.points).into_iter().map(|p| (p[0], p[1], p[2])).collect();
+        let points: Vec<(f32, f32, f32)> = prepared.sensor_points(&sensor, cloud.points, &cloud.frame_id, ts, cloud.ts, options.tf_tolerance).into_iter().map(|p| (p[0], p[1], p[2])).collect();
         let (t, q) = parts(&corrected);
         if options.ray_tracing {
             mapper.add_frame(points, Pose { position: (t[0] as f32, t[1] as f32, t[2] as f32), orientation: (q[0] as f32, q[1] as f32, q[2] as f32, q[3] as f32) });

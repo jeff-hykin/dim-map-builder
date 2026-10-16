@@ -59,6 +59,18 @@ impl Edge {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EdgeSummary {
+    pub parent: String,
+    pub child: String,
+    /// static: every sample is the same transform
+    pub fixed: bool,
+    pub samples: usize,
+    pub first: f64,
+    pub last: f64,
+}
+
 #[derive(Default, Clone)]
 pub struct TfTree {
     edges: HashMap<(String, String), Edge>,
@@ -84,6 +96,30 @@ impl TfTree {
                 edge.samples.iter().all(|(_, value)| (value.translation.vector - first.translation.vector).norm() < 1e-6 && value.rotation.angle_to(&first.rotation) < 1e-6)
             });
         }
+    }
+
+    /// Every recorded edge: parent, child, whether it's static (every sample the same transform, however often it
+    /// was published), how many samples and their time span.
+    pub fn edges(&self) -> Vec<EdgeSummary> {
+        let mut list: Vec<EdgeSummary> = self
+            .edges
+            .iter()
+            .map(|((parent, child), edge)| EdgeSummary {
+                parent: parent.clone(),
+                child: child.clone(),
+                fixed: edge.fixed || edge.samples.len() == 1,
+                samples: edge.samples.len(),
+                first: edge.samples.first().map_or(0.0, |s| s.0),
+                last: edge.samples.last().map_or(0.0, |s| s.0),
+            })
+            .collect();
+        list.sort_by(|a, b| (&a.parent, &a.child).cmp(&(&b.parent, &b.child)));
+        list
+    }
+
+    /// The samples of one edge (parent ← child), sorted by time.
+    pub fn samples(&self, parent: &str, child: &str) -> Vec<(f64, Iso)> {
+        self.edges.get(&(parent.to_string(), child.to_string())).map(|edge| edge.samples.clone()).unwrap_or_default()
     }
 
     pub fn frames(&self) -> Vec<String> {
