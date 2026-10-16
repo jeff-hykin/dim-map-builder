@@ -30,6 +30,16 @@
                         '';
                     };
 
+                    # the git dependencies (one hash per repo + rev): the dimos ray tracer, the dimos-module it builds on, and lcm-msgs
+                    cargoLock = {
+                        lockFile = ./Cargo.lock;
+                        outputHashes = {
+                            "dimos-voxel-ray-tracing-0.1.0" = "sha256-JmKOq9JmuFQ3HSwnpryrQu1w6Iq/76VQew8Ke+qyLuk=";
+                            "dimos-module-0.1.0" = "sha256-6ikqdS3sroOJGI4WGuSyFx2yZjtJ+4Qgt+IGlkFl+qA=";
+                            "lcm-msgs-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
+                        };
+                    };
+
                     # the backend: one Rust binary (map building, editing, saving, the agent tools); no Python at runtime
                     server = rustPlatform.buildRustPackage {
                         pname = "dim-map-builder-server";
@@ -39,7 +49,7 @@
                             root = ./.;
                             fileset = pkgs.lib.fileset.unions [ ./Cargo.toml ./Cargo.lock ./crates ./server ];
                         };
-                        cargoLock.lockFile = ./Cargo.lock;
+                        inherit cargoLock;
                         cargoBuildFlags = [ "-p" "dimos-app-server" ];
                         doCheck = false;
                     };
@@ -54,7 +64,7 @@
                             pname = "dim-map-builder-server-${arch}-linux";
                             version = "0.1.0";
                             src = server.src;
-                            cargoLock.lockFile = ./Cargo.lock;
+                            inherit cargoLock;
                             nativeBuildInputs = [ pkgs.cargo-zigbuild pkgs.zig ];
                             # cargo-auditable's -Wl,--undefined is a flag zig's linker rejects
                             auditable = false;

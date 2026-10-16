@@ -6,8 +6,9 @@
 //!    space a later scan sees through clears what moved;
 //! 4. normals, for the cleanup tools and floor detection.
 use crate::pgo::{Pgo, PgoConfig};
-use crate::ray::mapper::{Mapper, Pose};
-use crate::ray::voxel_ray_tracer::Config as RayConfig;
+use dimos_voxel_ray_tracing::mapper::{Mapper, Pose};
+use dimos_voxel_ray_tracing::voxel_ray_tracer::Config as RayConfig;
+use validator::Validate;
 use crate::tf::{iso, parts, Iso, TfTree};
 use anyhow::{bail, Result};
 use dimos_recording::{Kind, Message, Recording};
@@ -416,6 +417,12 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
         region_percentile: 95.0,
         world_frame: world.clone(),
         tf_match_tolerance_s: options.tf_tolerance,
+        // the live module's catch-up and viz knobs; a recording is replayed whole
+        max_cloud_age_s: 0.0,
+        tf_wait_timeout_s: 0.0,
+        region_m: 10.0,
+        viz_emit_every: 0,
+        viz_sweep_regions: 0,
         worker_threads: std::thread::available_parallelism().map_or(4, |n| n.get() as u32).clamp(1, 8),
     };
     config.validate()?;

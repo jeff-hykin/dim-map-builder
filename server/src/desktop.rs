@@ -120,7 +120,9 @@ mod tests {
             }
             let text = String::from_utf8_lossy(&raw).to_string();
             assert!(text.starts_with("POST /desktop/frontend/maps/events HTTP/1.1"), "{text}");
-            assert!(text.ends_with(&format!("{{\"n\":{n},\"type\":\"session\"}}")), "{text}");
+            // key order follows serde_json's preserve_order, which a dependency (dimos-module) turns on
+            let body: serde_json::Value = serde_json::from_str(text.split("\r\n\r\n").nth(1).unwrap_or_default()).unwrap();
+            assert_eq!(body, serde_json::json!({ "type": "session", "n": n }), "{text}");
             stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 11\r\n\r\n{\"ok\":true}").await.unwrap();
         }
     }

@@ -90,7 +90,7 @@ In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (b
 | Path | What |
 | --- | --- |
 | `crates/dimos-recording` | read/write dimos recordings without dimos: memory2 `.db`, `.mcap`; LCM + ROS 2 CDR clouds, tf, odometry |
-| `crates/mapping` | the map math: the ray-traced voxel map (vendored from dimos), tf tree, ICP, loop closure (a port of dimos's PGO), cleanup selections, floors, floor plans, the staged build |
+| `crates/mapping` | the map math: the ray-traced voxel map (dimos's `dimos-voxel-ray-tracing` crate, a git dependency), tf tree, ICP, loop closure (a port of dimos's PGO), cleanup selections, floors, floor plans, the staged build |
 | `server` | `dimos-app-server`: sessions, jobs, every action as an endpoint (`api.rs`, one table that is also `/agent.json`), save/restore |
 | `scripts/check_endpoints.ts` | checks dimos.yaml's `agent:` against the server's `--agent-json` (`--write` regenerates it) |
 | `frontend` | the page: React + Vite, built from [dimos-react](https://github.com/jeff-hykin/dimos-react) (every control, panel and dialog, Desktop's theme, and the 3D view: its renderer, point styles and palettes); `src/core/scene.ts` is the editor on top of that view; `src/share` the shared-map page (`vite.share.config.ts` builds its viewer) |
