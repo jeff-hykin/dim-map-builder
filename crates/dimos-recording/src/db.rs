@@ -53,17 +53,36 @@ pub fn dimos_type(module: &str) -> String {
 }
 
 pub fn streams(db: &Connection) -> Result<Vec<DbStream>> {
-    let mut statement = db.prepare("SELECT name, config FROM _streams ORDER BY name").context("not a dimos recording (no _streams)")?;
-    let rows: Vec<(String, String)> = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
-    let mut streams = Vec::new();
-    for (name, config) in rows {
-        let config: serde_json::Value = serde_json::from_str(&config).unwrap_or_default();
-        let kind = config["payload_module"].as_str().map(dimos_type).unwrap_or_default();
-        let codec = config["codec_id"].as_str().unwrap_or("lcm").to_string();
-        let count = db.query_row(&format!("SELECT count(*) FROM {}", quote(&name)), [], |row| row.get(0)).unwrap_or(0);
-        streams.push(DbStream { name, kind, codec, count });
+    let mut streams = stream_list(db)?;
+    for stream in &mut streams {
+        stream.count = count(db, &stream.name);
     }
     Ok(streams)
+}
+
+/// The streams from `_streams` alone, `count` 0: counting a stream's rows reads its whole table (seconds on a big
+/// recording), and opening one doesn't need it.
+pub fn stream_list(db: &Connection) -> Result<Vec<DbStream>> {
+    let mut statement = db.prepare("SELECT name, config FROM _streams ORDER BY name").context("not a dimos recording (no _streams)")?;
+    let rows: Vec<(String, String)> = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+    Ok(rows
+        .into_iter()
+        .map(|(name, config)| {
+            let config: serde_json::Value = serde_json::from_str(&config).unwrap_or_default();
+            let kind = config["payload_module"].as_str().map(dimos_type).unwrap_or_default();
+            let codec = config["codec_id"].as_str().unwrap_or("lcm").to_string();
+            DbStream { name, kind, codec, count: 0 }
+        })
+        .collect())
+}
+
+pub fn count(db: &Connection, name: &str) -> u64 {
+    db.query_row(&format!("SELECT count(*) FROM {}", quote(name)), [], |row| row.get(0)).unwrap_or(0)
+}
+
+/// Whether a stream has a row (without counting them).
+pub fn has_rows(db: &Connection, name: &str) -> bool {
+    db.query_row(&format!("SELECT EXISTS (SELECT 1 FROM {})", quote(name)), [], |row| row.get(0)).unwrap_or(false)
 }
 
 pub fn decode_blob(codec: &str, data: &[u8]) -> Result<Vec<u8>> {
@@ -78,23 +97,26 @@ pub fn decode_blob(codec: &str, data: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-/// Calls `each` for every row of `stream` in timestamp order. `each` returns false to stop early.
+/// Calls `each` for every row of `stream` in timestamp order. `each` returns false to stop early. The rows are put in
+/// order without their payloads and each payload read as it's reached (a sort that carried the blobs would read every
+/// one before the first row: a reader wanting the first message would read the whole stream).
 pub fn for_each(db: &Connection, stream: &DbStream, mut each: impl FnMut(DbRow) -> Result<bool>) -> Result<()> {
     let table = quote(&stream.name);
     let blob = quote(&format!("{}_blob", stream.name));
     let mut statement = db.prepare(&format!(
-        "SELECT m.ts, m.pose_x, m.pose_y, m.pose_z, m.pose_qx, m.pose_qy, m.pose_qz, m.pose_qw, b.data, m.id{} \
-         FROM {table} AS m JOIN {blob} AS b ON b.id = m.id ORDER BY m.ts",
+        "SELECT m.ts, m.pose_x, m.pose_y, m.pose_z, m.pose_qx, m.pose_qy, m.pose_qz, m.pose_qw, m.id{} \
+         FROM {table} AS m WHERE EXISTS (SELECT 1 FROM {blob} AS b WHERE b.id = m.id) ORDER BY m.ts",
         if has_tags(db, &stream.name) { ", json(m.tags)" } else { ", NULL" }
     ))?;
+    let mut payload = db.prepare(&format!("SELECT data FROM {blob} WHERE id = ?1"))?;
     let mut rows = statement.query([])?;
     while let Some(row) = rows.next()? {
         let ts: f64 = row.get(0)?;
         let pose: Vec<Option<f64>> = (1..8).map(|i| row.get(i)).collect::<rusqlite::Result<_>>()?;
         let pose = if pose.iter().all(Option::is_some) { Some(std::array::from_fn(|i| pose[i].unwrap())) } else { None };
-        let data: Vec<u8> = row.get(8)?;
-        let id: i64 = row.get(9)?;
-        let tags: Option<String> = row.get(10).unwrap_or(None);
+        let id: i64 = row.get(8)?;
+        let tags: Option<String> = row.get(9).unwrap_or(None);
+        let data: Vec<u8> = payload.query_row([id], |row| row.get(0))?;
         let payload = decode_blob(&stream.codec, &data)?;
         if !each(DbRow { id, ts, pose, payload, tags })? {
             break;

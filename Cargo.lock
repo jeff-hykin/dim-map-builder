@@ -1385,6 +1385,7 @@ dependencies = [
  "lz4_flex 0.11.6",
  "mcap",
  "memmap2",
+ "rayon",
  "rusqlite",
  "serde",
  "serde_json",

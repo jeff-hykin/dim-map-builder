@@ -3,7 +3,8 @@
 //! (`append`): the summary is cut off, the new chunks go where it was and a summary covering both is put back, so a
 //! save costs the bytes saved, never a copy of the recording.
 use anyhow::{Context, Result};
-use std::collections::{BTreeMap, HashMap};
+use crate::mcap_index::{self, Index, ProgressFn};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 pub const LCM_TYPE_KEY: &str = "lcm_type";
@@ -50,13 +51,29 @@ pub struct McapChannel {
 }
 
 pub struct McapFile {
+    path: std::path::PathBuf,
     map: memmap2::Mmap,
+    index: std::sync::OnceLock<std::sync::Arc<Index>>,
 }
 
 impl McapFile {
     pub fn open(path: &Path) -> Result<Self> {
         let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
-        Ok(McapFile { map: unsafe { memmap2::Mmap::map(&file) }? })
+        Ok(McapFile { path: path.to_path_buf(), map: unsafe { memmap2::Mmap::map(&file) }?, index: std::sync::OnceLock::new() })
+    }
+
+    /// Where each channel's messages are (mcap_index): the summary's, else the file walked once, on first use.
+    pub fn index(&self) -> Result<std::sync::Arc<Index>> {
+        self.index_with(None, None)
+    }
+
+    /// `index`, walking a file without a summary with `progress(bytes done, total)` and `cancel`.
+    pub fn index_with(&self, progress: Option<ProgressFn>, cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<std::sync::Arc<Index>> {
+        if let Some(index) = self.index.get() {
+            return Ok(index.clone());
+        }
+        let index = mcap_index::index(&self.path, &self.map, progress, cancel)?;
+        Ok(self.index.get_or_init(|| index).clone())
     }
 
     /// The compression of the file's chunks: the first chunk's ("" = none). A file with no chunk index (cut short)
@@ -76,20 +93,12 @@ impl McapFile {
 
     /// Every channel (several may share a topic), from the summary, else by reading the file.
     pub fn channel_infos(&self) -> Result<Vec<ChannelInfo>> {
-        let mut found: BTreeMap<u16, ChannelInfo> = BTreeMap::new();
-        let mut add = |channel: &mcap::Channel| {
-            found.entry(channel.id).or_insert_with(|| ChannelInfo { id: channel.id, topic: channel.topic.clone(), encoding: channel.message_encoding.clone(), kind: kind_of(channel), metadata: channel.metadata.clone() });
-        };
-        match mcap::Summary::read(&self.map).ok().flatten() {
-            Some(summary) if !summary.channels.is_empty() => summary.channels.values().for_each(|channel| add(channel)),
-            _ => {
-                for message in mcap::MessageStream::new(&self.map)? {
-                    let Ok(message) = message else { break };
-                    add(&message.channel);
-                }
-            }
-        }
-        Ok(found.into_values().collect())
+        Ok(self
+            .index()?
+            .channels
+            .values()
+            .map(|channel| ChannelInfo { id: channel.id, topic: channel.topic.clone(), encoding: channel.message_encoding.clone(), kind: kind_of(channel), metadata: channel.metadata.clone() })
+            .collect())
     }
 
     /// The channels of `topic` a reader should use: the newest Map Editor generation when it appended any (an edge
@@ -120,35 +129,17 @@ impl McapFile {
 
     pub fn channels(&self) -> Result<Vec<McapChannel>> {
         let mut by_topic: BTreeMap<String, McapChannel> = BTreeMap::new();
-        let summary = mcap::Summary::read(&self.map).ok().flatten();
+        let index = self.index()?;
         let superseded = self.superseded()?;
-        let mut add = |channel: &mcap::Channel, count: u64| {
-            if superseded.contains(&channel.id) {
-                return;
-            }
-            let kind = kind_of(channel);
+        for channel in index.channels.values().filter(|c| !superseded.contains(&c.id)) {
             let entry = by_topic.entry(channel.topic.clone()).or_insert(McapChannel {
                 topic: channel.topic.clone(),
                 encoding: channel.message_encoding.clone(),
-                kind,
+                kind: kind_of(channel),
                 count: 0,
                 derived_from: channel.metadata.get(DERIVED_FROM_KEY).filter(|v| !v.is_empty()).cloned(),
             });
-            entry.count += count;
-        };
-        match summary {
-            Some(summary) if summary.stats.is_some() => {
-                let counts = summary.stats.as_ref().map(|stats| stats.channel_message_counts.clone()).unwrap_or_default();
-                for channel in summary.channels.values() {
-                    add(channel, counts.get(&channel.id).copied().unwrap_or(0));
-                }
-            }
-            _ => {
-                for message in mcap::MessageStream::new(&self.map)? {
-                    let Ok(message) = message else { break };
-                    add(&message.channel, 1);
-                }
-            }
+            entry.count += index.counts.get(&channel.id).copied().unwrap_or(0);
         }
         Ok(by_topic.into_values().collect())
     }
@@ -165,22 +156,23 @@ impl McapFile {
         })
     }
 
-    /// Every message on `topic` (all its channels), with the channel it came on.
-    pub fn for_each_channel(&self, topic: &str, mut each: impl FnMut(f64, &mcap::Channel, &[u8]) -> Result<bool>) -> Result<()> {
-        for message in mcap::MessageStream::new(&self.map)? {
-            let message = match message {
-                Ok(message) => message,
-                // a recording cut short (no footer) still yields what was written
-                Err(_) => break,
-            };
-            if message.channel.topic != topic {
-                continue;
-            }
-            if !each(message.log_time as f64 / 1e9, &message.channel, &message.data)? {
-                break;
-            }
-        }
-        Ok(())
+    /// Every message on `topic` (all its channels), with the channel it came on, read from the chunks that hold it.
+    pub fn for_each_channel(&self, topic: &str, each: impl FnMut(f64, &mcap::Channel, &[u8]) -> Result<bool>) -> Result<()> {
+        self.for_each_channel_with(topic, None, each)
+    }
+
+    /// The bytes `for_each_channel(topic)` reads: the chunks holding it.
+    pub fn bytes_for(&self, topic: &str) -> Result<u64> {
+        let index = self.index()?;
+        let ids: BTreeSet<u16> = index.channels.values().filter(|c| c.topic == topic).map(|c| c.id).collect();
+        Ok(mcap_index::bytes_for(&index, &ids))
+    }
+
+    /// `for_each_channel` with `progress(bytes done, total)` over the chunks it reads.
+    pub fn for_each_channel_with(&self, topic: &str, progress: Option<ProgressFn>, mut each: impl FnMut(f64, &mcap::Channel, &[u8]) -> Result<bool>) -> Result<()> {
+        let index = self.index()?;
+        let ids: BTreeSet<u16> = index.channels.values().filter(|c| c.topic == topic).map(|c| c.id).collect();
+        mcap_index::for_each(&self.map, &index, &ids, progress, |log_time, channel, payload| each(log_time as f64 / 1e9, channel, payload))
     }
 
     /// The newest message on `topic`.
