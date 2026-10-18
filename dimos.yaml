@@ -260,7 +260,8 @@ provides:
                 The generation steps for the open recording: what it has (image / CameraInfo streams, raw_april_tags and
                 april_tags counts and marker ids, the tf tree analyzed: frames, which edges move, cloud streams and the
                 default one to correct, the edge the correction would write, whether a corrected tf is in it and is
-                stale, global_map_aggregated / .pc2.lcm / .rrd), each step's defaults and what each ran with last.
+                stale, global_map_aggregated / .pc2.lcm / .rrd), each step's defaults (and the marker dictionaries step
+                1 knows) and what each ran with last.
             params:
                 id:
                     type: string
@@ -269,13 +270,15 @@ provides:
         -
             method: POST
             path: 'api/sessions/{id}/generate/tags'
-            when: you need AprilTag sightings (raw or grouped per marker) written into a recording
+            when: you need AprilTag or ArUco marker sightings (raw or grouped per marker) written into a recording
             description: >-
-                Step 1, AprilTags from images, in the background: every image of the camera stream through the AprilTag
-                detector (tag36h11, 10 cm, posed with the recording's CameraInfo), written into the recording:
-                raw_april_tags (every glimpse with its quality diagnostics) and/or april_tags (gated, grouped per marker
-                visit). Options (all optional): raw, grouped, cameraStream, cameraInfoStream, markerLength, dictionary,
-                exclude (marker ids left out of the grouped stream), every, gates {...}, grouping {...}.
+                Step 1, fiducial markers from images, in the background: every image of the camera stream through the
+                marker detector (an AprilTag family or an OpenCV ArUco dictionary, by its OpenCV name:
+                DICT_APRILTAG_36h11 by default, DICT_4X4_50 .. DICT_7X7_1000, DICT_ARUCO_ORIGINAL, ...; 10 cm; posed
+                with the recording's CameraInfo), written into the recording: raw_april_tags (every glimpse with its
+                quality diagnostics) and/or april_tags (gated, grouped per marker visit). Options (all optional): raw,
+                grouped, cameraStream, cameraInfoStream, markerLength, dictionary, exclude (marker ids left out of the
+                grouped stream), every, gates {...}, grouping {...}.
             params:
                 raw:
                     type: boolean
@@ -292,6 +295,11 @@ provides:
                 markerLength:
                     type: number
                     description: m
+                dictionary:
+                    type: string
+                    description: >-
+                        OpenCV name: DICT_APRILTAG_36h11 (default) | DICT_APRILTAG_36h10 | _25h9 | _16h5 | DICT_4X4_50
+                        .. DICT_7X7_1000 | DICT_ARUCO_ORIGINAL | DICT_ARUCO_MIP_36h12
                 exclude:
                     type: array
                     items:

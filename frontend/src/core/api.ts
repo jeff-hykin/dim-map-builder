@@ -366,6 +366,8 @@ export interface GenerateStatus {
         markers: { id: number; sightings: number }[]
         record: { at: number; options: Record<string, any>; raw: number; grouped: number; images: number; markers: number[]; cameraStream: string } | null
         defaults: Record<string, any>
+        /** every dictionary the detector knows, by OpenCV name: AprilTag families, then ArUco */
+        dictionaries?: string[]
     }
     tf: {
         analysis: { frames: FrameNode[]; roots: string[]; clouds: CloudChoice[]; defaultCloud: string | null; edges: { parent: string; child: string; fixed: boolean; samples: number }[] }

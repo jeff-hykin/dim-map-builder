@@ -29,8 +29,8 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | `GET api/sessions/{id}/paths` | `{ raw, corrected, loops }` |
 | `POST api/sessions/{id}/build` | build options (all optional): `{ job }` |
 | `DELETE api/sessions/{id}/job` | cancel the running job |
-| `GET api/sessions/{id}/generate` | the generation steps: what the recording has (tags, the tf tree analyzed, the default cloud and the edge the correction would write, the global map), each step's defaults, what each ran with last |
-| `POST api/sessions/{id}/generate/tags` | step 1, AprilTags from images (a job): `{ raw, grouped, cameraStream, markerLength, exclude, gates, grouping, ... }` |
+| `GET api/sessions/{id}/generate` | the generation steps: what the recording has (tags and the marker dictionaries the detector knows, the tf tree analyzed, the default cloud and the edge the correction would write, the global map), each step's defaults, what each ran with last |
+| `POST api/sessions/{id}/generate/tags` | step 1, fiducial markers from images (a job): `{ raw, grouped, cameraStream, markerLength, dictionary, exclude, gates, grouping, ... }`; `dictionary` is an OpenCV name, an AprilTag family (`DICT_APRILTAG_36h11`, the default, `_36h10`, `_25h9`, `_16h5`) or an ArUco dictionary (`DICT_4X4_50` .. `DICT_7X7_1000`, `DICT_ARUCO_ORIGINAL`, `DICT_ARUCO_MIP_36h12`) |
 | `POST api/sessions/{id}/generate/tf` | step 2, the corrected tf (a job; runs step 1 first when it needs tags the recording lacks): `{ cloudStream, sensorFrame, grandparent, useTags, excludeTags, quality: "fast" \| "high", stitch, tags }` |
 | `POST api/sessions/{id}/generate/global-map` | step 3, the global map (a job; runs step 2 first when the recording has no correction): `{ useCorrectedTf, build, decimation, rrd, tf, tags }` |
 | `POST api/sessions/{id}/op` | `{ op, region, params, preview }`: floating, outliers, floor, walls, keepWalls, cropOutside, deleteInside, cropHeight |

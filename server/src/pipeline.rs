@@ -275,7 +275,7 @@ pub fn status(data_dir: &Path, path: &Path) -> Result<Value> {
             "camera": camera,
             "cameraInfo": intrinsics.as_ref().map(|r| r.as_ref().ok()),
             "problem": match &intrinsics {
-                None => Some("no image stream to find AprilTags in".to_string()),
+                None => Some("no image stream to find markers in".to_string()),
                 Some(Err(error)) => Some(error.clone()),
                 _ => None,
             },
@@ -284,6 +284,7 @@ pub fn status(data_dir: &Path, path: &Path) -> Result<Value> {
             "markers": markers.iter().map(|(id, n)| json!({ "id": id, "sightings": n })).collect::<Vec<_>>(),
             "record": state.tags,
             "defaults": TagOptions::default(),
+            "dictionaries": mapping::apriltag::dictionaries(),
         },
         "tf": {
             "analysis": analysis,
@@ -336,7 +337,7 @@ impl App {
     pub fn generate_tags(self: &Arc<Self>, id: &str, options: TagOptions) -> Result<Job> {
         self.pipeline_job(id, "tags", move |_, path, share, cancel| {
             let record = run_tags(path, &options, share, cancel)?;
-            Ok(format!("AprilTags: {} raw, {} grouped over {} images (markers {:?})", record.raw, record.grouped, record.images, record.markers))
+            Ok(format!("{}: {} raw, {} grouped over {} images (markers {:?})", options.dictionary, record.raw, record.grouped, record.images, record.markers))
         })
     }
 

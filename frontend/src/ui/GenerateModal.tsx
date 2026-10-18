@@ -1,5 +1,5 @@
 // Generate: the corrected map, or any one of the steps that make it, each written into the recording in place.
-// 1. AprilTags from images (raw_april_tags, april_tags), 2. a corrected tf tree (loop closure, with the tags, written
+// 1. fiducial markers from images, AprilTag or ArUco (raw_april_tags, april_tags), 2. a corrected tf tree (loop closure, with the tags, written
 // as the edge above the odometry: world → odom), 3. the global map (through the corrected tf, ray traced, decimated:
 // global_map_aggregated + a .pc2.lcm beside the recording, optionally an .rrd). A step whose input the recording
 // doesn't have yet runs the earlier step first. The defaults work for most recordings: press "Generate corrected
@@ -121,6 +121,19 @@ function edgeFor(frames: FrameNode[], sensor: string, grandparentName: string): 
         at = byName.get(at.parent)
     }
     return null
+}
+
+/** DICT_APRILTAG_36h11 → "AprilTag 36h11", DICT_4X4_50 → "ArUco 4x4 (50)", DICT_ARUCO_ORIGINAL → "ArUco original" */
+function dictionaryLabel(name: string) {
+    const april = name.match(/^DICT_APRILTAG_(\w+)$/)
+    if (april) {
+        return `AprilTag ${april[1]}`
+    }
+    const aruco = name.match(/^DICT_(\d)X\d_(\d+)$/)
+    if (aruco) {
+        return `ArUco ${aruco[1]}x${aruco[1]} (${aruco[2]})`
+    }
+    return `ArUco ${name.replace(/^DICT_ARUCO_/, "").replace("_", " ").toLowerCase()}`
 }
 
 function cloudLabel(cloud: CloudChoice) {
@@ -287,7 +300,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 {!ready && !problem && <Text small muted>Reading the recording…</Text>}
                 {ready && !lite && (
                     <>
-                        <StepCard number={1} step="tags" title="AprilTags from images" status={tagStatus} running={running} disabled={!!status.tags.problem || (!tagOptions.raw && !tagOptions.grouped)} run={runTags}>
+                        <StepCard number={1} step="tags" title="Fiducial markers (AprilTag / ArUco)" status={tagStatus} running={running} disabled={!!status.tags.problem || (!tagOptions.raw && !tagOptions.grouped)} run={runTags}>
                             {status.tags.problem && <Alert tone="warn" title="Can't find tags here.">{status.tags.problem}</Alert>}
                             <Row wrap gap={16}>
                                 <Checkbox value={tagOptions.raw} onChange={(raw: boolean) => setTags({ raw })} data-option="tagsRaw" label="raw tags (every glimpse: raw_april_tags)" />
@@ -297,14 +310,15 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                                 <Field inline label="camera">
                                     <Select size="sm" value={tagOptions.cameraStream ?? ""} onChange={(cameraStream: string) => setTags({ cameraStream })} options={[["", `auto (${status.tags.camera ?? "none"})`], ...status.tags.images.map((i) => [i.name, `${i.name} (${i.count})`])]} />
                                 </Field>
+                                <Field inline label="markers">
+                                    <Select size="sm" value={tagOptions.dictionary} onChange={(dictionary: string) => setTags({ dictionary })} data-option="tagsDictionary"
+                                        options={(status.tags.dictionaries ?? ["DICT_APRILTAG_36h11"]).map((name) => [name, dictionaryLabel(name)])} />
+                                </Field>
                                 <Field inline label="tag size">
                                     <NumberInput size="sm" step={0.01} unit="m" value={tagOptions.markerLength} onChange={(markerLength: number) => setTags({ markerLength })} style={{ width: 90 }} />
                                 </Field>
                             </Row>
                             <Panel collapsible defaultOpen={false} title="Advanced · gates, grouping" data-advanced="tags">
-                                <Field inline label="dictionary">
-                                    <Select size="sm" value={tagOptions.dictionary} onChange={(dictionary: string) => setTags({ dictionary })} options={["DICT_APRILTAG_36h11", "DICT_APRILTAG_36h10", "DICT_APRILTAG_25h9", "DICT_APRILTAG_16h5"]} />
-                                </Field>
                                 <OptionField name="every" value={tagOptions.every} onChange={(every) => setTags({ every })} />
                                 <Field inline label="leave out of the grouped tags" title="ids of tags on things that move">
                                     <TextInput size="sm" value={(tagOptions.exclude ?? []).join(", ")} onChange={(text: string) => setTags({ exclude: text.split(/[ ,]+/).filter(Boolean).map(Number).filter((n) => Number.isFinite(n)) })} data-option="tagsExclude" />

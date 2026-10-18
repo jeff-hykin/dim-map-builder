@@ -18,7 +18,7 @@ const TITLES: Record<string, string> = {
     build: "Building the global map",
     preview: "Reading the recording",
     save: "Saving into the recording",
-    tags: "Finding AprilTags",
+    tags: "Finding fiducial markers",
     tf: "Correcting the tf tree",
     globalMap: "Generating the global map",
 }

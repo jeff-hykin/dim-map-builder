@@ -11,7 +11,9 @@ everything else is optional and in any order.
   it, each with its own Run button, progress bar, ETA and Cancel. Every step writes into the recording in place
   ([docs/schema.md](docs/schema.md#what-generate-writes)), and a step whose input the recording doesn't have yet runs
   the earlier one first (it reads what's there from the file: its streams, its tf and `map/pipeline`).
-  1. **AprilTags from images**: every image through an AprilTag detector (tag36h11, 10 cm; kornia-apriltag and a planar
+  1. **Fiducial markers (AprilTag / ArUco)**: every image through a marker detector (tag36h11, 10 cm by default;
+     kornia-apriltag, or for an OpenCV ArUco dictionary, `DICT_4X4_50` .. `DICT_7X7_1000`, `DICT_ARUCO_ORIGINAL`,
+     `DICT_ARUCO_MIP_36h12`, cv2.aruco's decoding on kornia's quads; then a planar
      PnP, ported from icp_stitch / dimos's `apriltags.py`), posed with the recording's CameraInfo: `raw_april_tags`
      (every glimpse, with its quality diagnostics; the camera's speed comes from tf, never from an image's stored pose)
      and/or `april_tags` (gated, grouped per marker visit into one Huber medoid, as gsc_pgo's `add_april.py` does).

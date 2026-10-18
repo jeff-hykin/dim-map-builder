@@ -397,7 +397,7 @@ export function App() {
                     await refresh()
                     scene.frameMap()
                 } else if (job.state === "done" && (job.kind === "tags" || job.kind === "tf")) {
-                    say(job.kind === "tags" ? "AprilTags written into the recording" : "Corrected tf written into the recording")
+                    say(job.kind === "tags" ? "Fiducial markers written into the recording" : "Corrected tf written into the recording")
                     await refresh()
                 } else if (job.state === "done" && job.kind === "save") {
                     say("Saved into the recording")
