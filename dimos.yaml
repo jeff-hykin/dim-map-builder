@@ -49,8 +49,8 @@ provides:
                 bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.
             params:
                 session:
-                    description: 'session id (default: the recording open in the page)'
                     type: string
+                    description: 'session id (default: the recording open in the page)'
             role: context
         -
             method: GET
@@ -70,19 +70,19 @@ provides:
                 edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the
                 recordings folder. Returns the session's full state (as GET api/sessions/{id}).
             params:
-                id:
-                    description: Desktop's recording id
-                    type: string
-                name:
-                    description: display name
-                    type: string
                 path:
+                    type: string
                     description: the recording file
                     required: true
+                name:
                     type: string
+                    description: display name
+                id:
+                    type: string
+                    description: Desktop's recording id
                 writable:
-                    description: 'false for a read-only folder: saving is refused, recordings are never copied (default true)'
                     type: boolean
+                    description: 'false for a read-only folder: saving is refused, recordings are never copied (default true)'
         -
             method: GET
             path: api/build-defaults
@@ -101,16 +101,16 @@ provides:
                 (images[0]).
             params:
                 screenshot:
-                    description: include a screenshot (default true)
                     type: boolean
-                session:
-                    description: 'session id (default: the recording open in the page)'
-                    type: string
+                    description: include a screenshot (default true)
                 topDown:
+                    type: boolean
                     description: >-
                         screenshot from straight above the current target instead of the user's angle (the user's camera
                         is restored after)
-                    type: boolean
+                session:
+                    type: string
+                    description: 'session id (default: the recording open in the page)'
             role: view
         -
             method: POST
@@ -118,18 +118,18 @@ provides:
             when: you want to point the user's camera at a spot on the map
             description: 'Move the user''s camera (every open page) to look at a point in the map frame. Returns { ok: true }.'
             params:
-                distance:
-                    description: meters from the target
-                    type: number
                 target:
-                    description: 'the point to look at, [x, y, z] map-frame meters'
+                    type: array
                     items:
                         type: number
+                    description: 'the point to look at, [x, y, z] map-frame meters'
                     required: true
-                    type: array
+                distance:
+                    type: number
+                    description: meters from the target
                 topDown:
-                    description: look straight down
                     type: boolean
+                    description: look straight down
         -
             method: PATCH
             path: api/ui
@@ -141,35 +141,35 @@ provides:
                 loops}, look {style: voxel | disc | square | splat, gradient, scale}, scope (view | region | all), slice
                 ([zStart, zEnd] over the local floor). An unknown field is a 400. Returns { ok, applied }.
             params:
-                floorOverlay:
-                    description: draw the local floor model over the map
-                    type: boolean
-                look:
-                    description: 'how voxels are drawn: {style: voxel | disc | square | splat, gradient, scale}'
-                    type: object
                 mode:
+                    type: string
                     description: 3d | split | 2d
-                    type: string
-                paletteOpen:
-                    description: show the tool palette
-                    type: boolean
-                planFloor:
-                    description: storey index the 2D view works on
-                    type: integer
-                scope:
-                    description: 'what the clean-up tools act on: view | region | all'
-                    type: string
-                showPaths:
-                    description: 'which trajectories to draw: {corrected, raw, loops} booleans'
-                    type: object
-                slice:
-                    description: '[zStart, zEnd] meters over the local floor'
-                    type: object
                 tool:
+                    type: string
                     description: >-
                         palette tool: select | erase | brush | line | straighten | polygon | places | annotate | clean |
                         views
+                planFloor:
+                    type: integer
+                    description: storey index the 2D view works on
+                paletteOpen:
+                    type: boolean
+                    description: show the tool palette
+                floorOverlay:
+                    type: boolean
+                    description: draw the local floor model over the map
+                showPaths:
+                    type: object
+                    description: 'which trajectories to draw: {corrected, raw, loops} booleans'
+                look:
+                    type: object
+                    description: 'how voxels are drawn: {style: voxel | disc | square | splat, gradient, scale}'
+                scope:
                     type: string
+                    description: 'what the clean-up tools act on: view | region | all'
+                slice:
+                    type: object
+                    description: '[zStart, zEnd] meters over the local floor'
         -
             method: GET
             path: 'api/sessions/{id}'
@@ -179,9 +179,9 @@ provides:
                 plans, job, history, undo/redo labels, unsaved, voxel counts, bounds.
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: DELETE
             path: 'api/sessions/{id}'
@@ -191,9 +191,9 @@ provides:
                 { ok: true }.
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: GET
             path: 'api/sessions/{id}/paths'
@@ -201,9 +201,9 @@ provides:
             description: 'The robot''s trajectory in the map frame: { raw, corrected, loops } (loop closures as point pairs).'
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/build'
@@ -215,41 +215,156 @@ provides:
                 (job) or watch the page. Every option is optional (GET api/build-defaults; nested ray / pgo /
                 tfTolerance pass through too).
             params:
-                cloudStream:
-                    description: 'the point cloud stream (default: the cloud stream with the most messages)'
-                    type: string
-                every:
-                    description: use every n-th scan (1 = all)
-                    type: integer
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
-                loopClosure:
-                    description: correct drift with loop closure (pose graph optimization)
-                    type: boolean
-                maxRange:
-                    description: 'ignore lidar returns farther than this, meters'
-                    type: number
-                rayTracing:
-                    description: 'ray trace the scans so free space clears what moved; false keeps every return, just voxelized'
-                    type: boolean
                 voxelSize:
-                    description: 'voxel edge, meters'
                     type: number
-                worldFrame:
-                    description: 'the fixed frame (default: world, map or odom, whichever places the clouds)'
+                    description: 'voxel edge, meters'
+                loopClosure:
+                    type: boolean
+                    description: correct drift with loop closure (pose graph optimization)
+                rayTracing:
+                    type: boolean
+                    description: 'ray trace the scans so free space clears what moved; false keeps every return, just voxelized'
+                every:
+                    type: integer
+                    description: use every n-th scan (1 = all)
+                maxRange:
+                    type: number
+                    description: 'ignore lidar returns farther than this, meters'
+                cloudStream:
                     type: string
+                    description: 'the point cloud stream (default: the cloud stream with the most messages)'
+                worldFrame:
+                    type: string
+                    description: 'the fixed frame (default: world, map or odom, whichever places the clouds)'
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: DELETE
             path: 'api/sessions/{id}/job'
-            when: you want to stop a running build or save
-            description: 'Cancel the running job (build, preview or save). Returns { cancelled } (false when nothing was running).'
+            when: 'you want to stop a running build, save or generation step'
+            description: >-
+                Cancel the running job (build, preview, save, or a generation step). Returns { cancelled } (false when
+                nothing was running).
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
+        -
+            method: GET
+            path: 'api/sessions/{id}/generate'
+            when: you need to see which generation steps a recording has done and what each would run with
+            description: >-
+                The generation steps for the open recording: what it has (image / CameraInfo streams, raw_april_tags and
+                april_tags counts and marker ids, the tf tree analyzed: frames, which edges move, cloud streams and the
+                default one to correct, the edge the correction would write, whether a corrected tf is in it and is
+                stale, global_map_aggregated / .pc2.lcm / .rrd), each step's defaults and what each ran with last.
+            params:
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
+        -
+            method: POST
+            path: 'api/sessions/{id}/generate/tags'
+            when: you need AprilTag sightings (raw or grouped per marker) written into a recording
+            description: >-
+                Step 1, AprilTags from images, in the background: every image of the camera stream through the AprilTag
+                detector (tag36h11, 10 cm, posed with the recording's CameraInfo), written into the recording:
+                raw_april_tags (every glimpse with its quality diagnostics) and/or april_tags (gated, grouped per marker
+                visit). Options (all optional): raw, grouped, cameraStream, cameraInfoStream, markerLength, dictionary,
+                exclude (marker ids left out of the grouped stream), every, gates {...}, grouping {...}.
+            params:
+                raw:
+                    type: boolean
+                    description: write raw_april_tags (default true)
+                grouped:
+                    type: boolean
+                    description: write april_tags (default true)
+                cameraStream:
+                    type: string
+                    description: ''
+                cameraInfoStream:
+                    type: string
+                    description: ''
+                markerLength:
+                    type: number
+                    description: m
+                exclude:
+                    type: array
+                    items:
+                        type: number
+                    description: marker ids on moving things
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
+        -
+            method: POST
+            path: 'api/sessions/{id}/generate/tf'
+            when: you need a loop-closure-corrected tf tree written into a recording
+            description: >-
+                Step 2, a corrected tf tree, in the background: loop closure over the trajectory of a point cloud's
+                sensor, written into the recording's tf as the edge above the odometry (grandparent → parent, e.g. world
+                → odom; replaced if it's there). quality fast = the app's loop closure, high = icp_stitch (ICP
+                stitching). useTags adds AprilTag landmarks (runs step 1 first when the recording has no
+                raw_april_tags). Options: cloudStream, sensorFrame (for a cloud in its tree's root frame), grandparent
+                (name when there's none, default world), useTags, excludeTags, quality, stitch {closureSpacing,
+                icpRadiusM, icpMinDtS, ...}, rateHz.
+            params:
+                cloudStream:
+                    type: string
+                    description: 'default: the scans whose frame moves, nearest the root of the biggest tree'
+                sensorFrame:
+                    type: string
+                    description: ''
+                grandparent:
+                    type: string
+                    description: ''
+                useTags:
+                    type: boolean
+                    description: ''
+                excludeTags:
+                    type: array
+                    items:
+                        type: number
+                    description: ''
+                quality:
+                    type: string
+                    description: fast | high
+                stitch:
+                    type: object
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
+        -
+            method: POST
+            path: 'api/sessions/{id}/generate/global-map'
+            when: you need the corrected global map built and written into a recording
+            description: >-
+                Step 3, the global map, in the background: built through the corrected tf (useCorrectedTf, default true:
+                runs step 2 first when the recording has none) with ray tracing, decimated, written into the recording
+                as global_map_aggregated (one cloud at its start) and beside it as <name>_global_map_aggregated.pc2.lcm;
+                it becomes the map in the editor. Options: useCorrectedTf, build {voxelSize, rayTracing, ray {...},
+                ...}, decimation {voxel, removeOutliers, neighbors, stdRatio}, rrd {enabled, streams [{name, enabled,
+                hz}], map, tags, trajectory} (an .rrd beside the recording).
+            params:
+                useCorrectedTf:
+                    type: boolean
+                    description: default true
+                build:
+                    type: object
+                decimation:
+                    type: object
+                rrd:
+                    type: object
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/op'
@@ -262,51 +377,51 @@ provides:
                 cropHeight (keep params.zMin..params.zMax). Returns { label, changed (voxels removed), remaining };
                 preview=true only counts (and adds preview: the points it would remove).
             params:
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
                 op:
+                    type: string
                     description: floating | outliers | floor | walls | keepWalls | cropOutside | deleteInside | cropHeight
                     required: true
-                    type: string
-                params:
-                    description: 'the op''s tunables: minVoxels, neighbors, stdRatio, thickness, minHeight, zMin, zMax (see above)'
-                    type: object
-                preview:
-                    description: 'only count what it would remove, change nothing'
-                    type: boolean
                 region:
+                    description: '"view" (the user''s current camera view), "all" (default), or a box {center, size, yaw}'
                     anyOf:
                         -
+                            type: string
                             enum:
                                 - view
                                 - all
-                            type: string
                         -
+                            type: object
                             description: an oriented box in map-frame meters
                             properties:
                                 center:
+                                    type: array
                                     items:
                                         type: number
-                                    maxItems: 3
                                     minItems: 3
-                                    type: array
+                                    maxItems: 3
                                 size:
-                                    description: 'full extents along the box''s x, y, z'
+                                    type: array
                                     items:
                                         type: number
-                                    maxItems: 3
                                     minItems: 3
-                                    type: array
+                                    maxItems: 3
+                                    description: 'full extents along the box''s x, y, z'
                                 yaw:
-                                    description: radians about +z (default 0)
                                     type: number
+                                    description: radians about +z (default 0)
                             required:
                                 - center
                                 - size
-                            type: object
-                    description: '"view" (the user''s current camera view), "all" (default), or a box {center, size, yaw}'
+                params:
+                    type: object
+                    description: 'the op''s tunables: minVoxels, neighbors, stdRatio, thickness, minHeight, zMin, zMax (see above)'
+                preview:
+                    type: boolean
+                    description: 'only count what it would remove, change nothing'
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/transform'
@@ -316,20 +431,20 @@ provides:
                 degrees; kind=level tilts it so the main floor is flat at z = 0; kind=set sets the transform
                 {translation, rotation (x,y,z,w)}. Returns { ok: true }.
             params:
-                degrees:
-                    description: 'for rotate: degrees about +z'
-                    type: number
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
                 kind:
+                    type: string
                     description: rotate | level | set
                     required: true
-                    type: string
+                degrees:
+                    type: number
+                    description: 'for rotate: degrees about +z'
                 transform:
-                    description: 'for set: {translation [x, y, z], rotation [x, y, z, w]}'
                     type: object
+                    description: 'for set: {translation [x, y, z], rotation [x, y, z, w]}'
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: GET
             path: 'api/sessions/{id}/floor'
@@ -339,9 +454,9 @@ provides:
                 (a grid, null = unknown), measured }] }.
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: PUT
             path: 'api/sessions/{id}/slice'
@@ -350,31 +465,31 @@ provides:
                 Set (undoable) the slicer's view: { zMin, zMax, yaw, xMin, xMax, yMin, yMax } in map meters, or null /
                 {} to clear it. Returns { ok: true }.
             params:
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
-                xMax:
-                    description: 'm, along the slice''s yawed x'
-                    type: number
-                xMin:
-                    description: 'm, along the slice''s yawed x'
-                    type: number
-                yMax:
-                    description: 'm, along the slice''s yawed y'
-                    type: number
-                yMin:
-                    description: 'm, along the slice''s yawed y'
-                    type: number
-                yaw:
-                    description: radians
-                    type: number
-                zMax:
-                    description: 'top of the slice, m'
-                    type: number
                 zMin:
-                    description: 'bottom of the slice, m'
                     type: number
+                    description: 'bottom of the slice, m'
+                zMax:
+                    type: number
+                    description: 'top of the slice, m'
+                yaw:
+                    type: number
+                    description: radians
+                xMin:
+                    type: number
+                    description: 'm, along the slice''s yawed x'
+                xMax:
+                    type: number
+                    description: 'm, along the slice''s yawed x'
+                yMin:
+                    type: number
+                    description: 'm, along the slice''s yawed y'
+                yMax:
+                    type: number
+                    description: 'm, along the slice''s yawed y'
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: GET
             path: 'api/sessions/{id}/alignment'
@@ -382,9 +497,9 @@ provides:
             description: 'The suggested yaw (radians) that lines the walls up with x and y: { yaw }.'
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/modify'
@@ -398,56 +513,56 @@ provides:
                 band, default 0.4; up to zEnd, default 2.5) with one straight slab (thickness = the wall's own unless
                 given). Returns { label, changed, remaining }.
             params:
-                floor:
-                    description: storey index
-                    required: true
-                    type: integer
-                from:
-                    description: 'straighten: [x, y]'
-                    items:
-                        type: number
-                    type: array
-                fullColumn:
-                    description: 'erase/straighten: reach up to the next storey, ignoring zEnd'
-                    type: boolean
-                height:
-                    description: 'draw: wall height, m'
-                    type: number
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
-                path:
-                    description: 'erase/draw: [[x, y], ...]'
-                    items:
-                        items:
-                            type: number
-                        type: array
-                    type: array
-                radius:
-                    description: 'erase: brush radius, m'
-                    type: number
-                relative:
-                    description: zEnd over the local floor (default true)
-                    type: boolean
-                thickness:
-                    description: 'straighten: slab thickness, m'
-                    type: number
-                to:
-                    description: 'straighten: [x, y]'
-                    items:
-                        type: number
-                    type: array
                 tool:
+                    type: string
                     description: erase | draw | straighten
                     required: true
-                    type: string
+                floor:
+                    type: integer
+                    description: storey index
+                    required: true
+                path:
+                    type: array
+                    items:
+                        type: array
+                        items:
+                            type: number
+                    description: 'erase/draw: [[x, y], ...]'
+                radius:
+                    type: number
+                    description: 'erase: brush radius, m'
                 width:
+                    type: number
                     description: 'draw/straighten: band width, m'
+                height:
                     type: number
+                    description: 'draw: wall height, m'
+                from:
+                    type: array
+                    items:
+                        type: number
+                    description: 'straighten: [x, y]'
+                to:
+                    type: array
+                    items:
+                        type: number
+                    description: 'straighten: [x, y]'
+                thickness:
+                    type: number
+                    description: 'straighten: slab thickness, m'
                 zEnd:
-                    description: 'erase/straighten: how high it reaches, m (erase default 1.8, straighten 2.5)'
                     type: number
+                    description: 'erase/straighten: how high it reaches, m (erase default 1.8, straighten 2.5)'
+                relative:
+                    type: boolean
+                    description: zEnd over the local floor (default true)
+                fullColumn:
+                    type: boolean
+                    description: 'erase/straighten: reach up to the next storey, ignoring zEnd'
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: GET
             path: 'api/sessions/{id}/annotations'
@@ -457,9 +572,9 @@ provides:
                 views (saved 2D views), the slice; each with its id.
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/annotations'
@@ -472,94 +587,94 @@ provides:
                 zMin, zMax, center?, follow} (a saved 2D view). label and name stand in for each other. source: who made
                 it (default user; pass "agent"). Returns { id }.
             params:
-                base:
-                    description: 'prism: m over the local floor'
-                    type: number
+                type:
+                    type: string
+                    description: box | plane | point | planPoint | area | prism | view
+                    required: true
+                label:
+                    type: string
+                    description: box / plane / point / prism label
+                name:
+                    type: string
+                    description: planPoint / area / view
                 box:
+                    type: object
                     description: an oriented box in map-frame meters
                     properties:
                         center:
+                            type: array
                             items:
                                 type: number
-                            maxItems: 3
                             minItems: 3
-                            type: array
+                            maxItems: 3
                         size:
-                            description: 'full extents along the box''s x, y, z'
+                            type: array
                             items:
                                 type: number
-                            maxItems: 3
                             minItems: 3
-                            type: array
+                            maxItems: 3
+                            description: 'full extents along the box''s x, y, z'
                         yaw:
-                            description: radians about +z (default 0)
                             type: number
+                            description: radians about +z (default 0)
                     required:
                         - center
                         - size
-                    type: object
                 center:
+                    type: array
+                    items:
+                        type: number
                     description: 'plane: [x, y, z]; view: [x, y]'
-                    items:
-                        type: number
-                    type: array
-                floor:
-                    description: storey index
-                    type: integer
-                follow:
-                    description: 'view: z over the local floor (default true)'
-                    type: boolean
-                height:
-                    description: 'prism: m (default 1)'
-                    type: number
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
-                kind:
-                    description: 'area kind: no-go, zone, ...'
-                    type: string
-                label:
-                    description: box / plane / point / prism label
-                    type: string
-                name:
-                    description: planPoint / area / view
-                    type: string
                 normal:
-                    description: 'plane: [x, y, z]'
+                    type: array
                     items:
                         type: number
+                    description: 'plane: [x, y, z]'
+                size:
                     type: array
-                polygon:
-                    description: '[[x, y], ...]'
                     items:
+                        type: number
+                    description: 'plane: [w, h]'
+                position:
+                    type: array
+                    items:
+                        type: number
+                    description: 'point: [x, y, z]; planPoint: [x, y]'
+                floor:
+                    type: integer
+                    description: storey index
+                kind:
+                    type: string
+                    description: 'area kind: no-go, zone, ...'
+                polygon:
+                    type: array
+                    items:
+                        type: array
                         items:
                             type: number
-                        type: array
-                    type: array
-                position:
-                    description: 'point: [x, y, z]; planPoint: [x, y]'
-                    items:
-                        type: number
-                    type: array
-                size:
-                    description: 'plane: [w, h]'
-                    items:
-                        type: number
-                    type: array
-                source:
-                    description: user | agent
-                    type: string
-                type:
-                    description: box | plane | point | planPoint | area | prism | view
-                    required: true
-                    type: string
-                zMax:
-                    description: 'view: m (default 1.8)'
+                    description: '[[x, y], ...]'
+                height:
                     type: number
+                    description: 'prism: m (default 1)'
+                base:
+                    type: number
+                    description: 'prism: m over the local floor'
                 zMin:
-                    description: 'view: m (default 0.1)'
                     type: number
+                    description: 'view: m (default 0.1)'
+                zMax:
+                    type: number
+                    description: 'view: m (default 1.8)'
+                follow:
+                    type: boolean
+                    description: 'view: z over the local floor (default true)'
+                source:
+                    type: string
+                    description: user | agent
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: PATCH
             path: 'api/sessions/{id}/annotations/{annotation}'
@@ -569,13 +684,13 @@ provides:
                 {"box": {"center": [..], "size": [..], "yaw": 0}}. Returns { ok: true }.
             params:
                 annotation:
+                    type: string
                     description: annotation id
                     required: true
-                    type: string
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: DELETE
             path: 'api/sessions/{id}/annotations/{annotation}'
@@ -583,13 +698,13 @@ provides:
             description: 'Delete an annotation by id (undoable). Returns { ok: true }.'
             params:
                 annotation:
+                    type: string
                     description: annotation id
                     required: true
-                    type: string
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/fit-box'
@@ -599,37 +714,37 @@ provides:
                 result hugs the object. Returns { box, voxels }; add=true also adds it as a box annotation (label,
                 default "object"; source default agent) and returns its id.
             params:
-                add:
-                    description: also add the fitted box as an annotation
-                    type: boolean
                 box:
+                    type: object
                     description: an oriented box in map-frame meters
                     properties:
                         center:
+                            type: array
                             items:
                                 type: number
-                            maxItems: 3
                             minItems: 3
-                            type: array
+                            maxItems: 3
                         size:
-                            description: 'full extents along the box''s x, y, z'
+                            type: array
                             items:
                                 type: number
-                            maxItems: 3
                             minItems: 3
-                            type: array
+                            maxItems: 3
+                            description: 'full extents along the box''s x, y, z'
                         yaw:
-                            description: radians about +z (default 0)
                             type: number
+                            description: radians about +z (default 0)
                     required: true
-                    type: object
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
                 label:
-                    description: for add (default "object")
                     type: string
+                    description: for add (default "object")
+                add:
+                    type: boolean
+                    description: also add the fitted box as an annotation
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/query'
@@ -638,44 +753,44 @@ provides:
                 Probe the map: { count (voxels in the region), min / max corner, horizontalSurfaceVoxels,
                 verticalSurfaceVoxels, sample (up to limit positions) }.
             params:
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
-                limit:
-                    description: sample size (default 40)
-                    type: integer
                 region:
+                    description: '"view" (the user''s current camera view), "all" (default), or a box {center, size, yaw}'
                     anyOf:
                         -
+                            type: string
                             enum:
                                 - view
                                 - all
-                            type: string
                         -
+                            type: object
                             description: an oriented box in map-frame meters
                             properties:
                                 center:
+                                    type: array
                                     items:
                                         type: number
-                                    maxItems: 3
                                     minItems: 3
-                                    type: array
+                                    maxItems: 3
                                 size:
-                                    description: 'full extents along the box''s x, y, z'
+                                    type: array
                                     items:
                                         type: number
-                                    maxItems: 3
                                     minItems: 3
-                                    type: array
+                                    maxItems: 3
+                                    description: 'full extents along the box''s x, y, z'
                                 yaw:
-                                    description: radians about +z (default 0)
                                     type: number
+                                    description: radians about +z (default 0)
                             required:
                                 - center
                                 - size
-                            type: object
-                    description: '"view" (the user''s current camera view), "all" (default), or a box {center, size, yaw}'
+                limit:
+                    type: integer
+                    description: sample size (default 40)
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/find-objects'
@@ -685,47 +800,47 @@ provides:
                 voxels, heightAboveFloor, footprint [x, y] }] }, largest first, at most 60. Floor, ceiling and walls are
                 excluded. A good first step for 'box every chair'.
             params:
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
-                maxHeight:
-                    description: 'ignore clusters taller than this above the floor (m), default 2'
-                    type: number
-                minVoxels:
-                    description: smallest cluster kept (default 25)
-                    type: integer
                 region:
+                    description: '"view" (the user''s current camera view), "all" (default), or a box {center, size, yaw}'
                     anyOf:
                         -
+                            type: string
                             enum:
                                 - view
                                 - all
-                            type: string
                         -
+                            type: object
                             description: an oriented box in map-frame meters
                             properties:
                                 center:
+                                    type: array
                                     items:
                                         type: number
-                                    maxItems: 3
                                     minItems: 3
-                                    type: array
+                                    maxItems: 3
                                 size:
-                                    description: 'full extents along the box''s x, y, z'
+                                    type: array
                                     items:
                                         type: number
-                                    maxItems: 3
                                     minItems: 3
-                                    type: array
+                                    maxItems: 3
+                                    description: 'full extents along the box''s x, y, z'
                                 yaw:
-                                    description: radians about +z (default 0)
                                     type: number
+                                    description: radians about +z (default 0)
                             required:
                                 - center
                                 - size
-                            type: object
-                    description: '"view" (the user''s current camera view), "all" (default), or a box {center, size, yaw}'
+                minVoxels:
+                    type: integer
+                    description: smallest cluster kept (default 25)
+                maxHeight:
+                    type: number
+                    description: 'ignore clusters taller than this above the floor (m), default 2'
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/plans'
@@ -735,23 +850,23 @@ provides:
                 storey when multiFloor (default true), optionally at explicit floor heights. Returns { floors: [{ index,
                 name, z }] }; GET .../plans/{floor} gives each.
             params:
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
+                multiFloor:
+                    type: boolean
+                    description: one plan per storey (default true)
                 levels:
-                    description: 'floor heights (m); default: found from the map'
+                    type: array
                     items:
                         type: number
-                    type: array
-                multiFloor:
-                    description: one plan per storey (default true)
-                    type: boolean
+                    description: 'floor heights (m); default: found from the map'
                 options:
+                    type: object
                     description: >-
                         {resolution (m per pixel, default 0.05), obstacleMin (0.15), obstacleMax (1.8), floorBand
                         (0.12)}: meters over the floor
-                    type: object
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: GET
             path: 'api/sessions/{id}/plans/{floor}'
@@ -762,13 +877,13 @@ provides:
                 areas. `{floor}.png` is the bare image.
             params:
                 floor:
+                    type: string
                     description: storey index (or `N.png` for the bare image)
                     required: true
-                    type: string
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/undo'
@@ -776,9 +891,9 @@ provides:
             description: 'Undo the last edit (anyone''s). Returns { undone: its label, or null }.'
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/redo'
@@ -786,9 +901,9 @@ provides:
             description: 'Redo the last undone edit. Returns { redone: its label, or null }.'
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/save'
@@ -799,9 +914,9 @@ provides:
                 job }.
             params:
                 id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
                     type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
             path: 'api/sessions/{id}/upload'
@@ -812,13 +927,13 @@ provides:
                 with unsaved edits and saveFirst (default true) it saves into it first and returns { job, note },
                 queueing the upload when the save finishes. 503 when not started by Desktop.
             params:
-                id:
-                    description: 'session id, or `current` (the recording open in the page)'
-                    required: true
-                    type: string
                 saveFirst:
-                    description: save unsaved edits into the recording first (default true)
                     type: boolean
+                    description: save unsaved edits into the recording first (default true)
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
 nix:
     cache:
         aarch64-linux:
