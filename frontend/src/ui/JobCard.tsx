@@ -15,6 +15,8 @@ export function duration(seconds: number | null | undefined): string {
 }
 
 const TITLES: Record<string, string> = {
+    open: "Opening the recording",
+    read: "Reading the recording's tf",
     build: "Building the global map",
     preview: "Reading the recording",
     save: "Saving into the recording",

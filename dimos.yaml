@@ -68,7 +68,10 @@ provides:
             description: >-
                 Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and
                 edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the
-                recordings folder. Returns the session's full state (as GET api/sessions/{id}).
+                recordings folder. Returns the session's full state (as GET api/sessions/{id}) at once: only the
+                recording's index is read (an .mcap's summary, a .db's stream list). An .mcap with no summary (cut
+                short) is read in the background as an open job (job: bytes read / total, ETA, cancel); GET
+                api/sessions/{id}/generate answers 202 with it until it's done.
             params:
                 path:
                     type: string
@@ -257,11 +260,13 @@ provides:
             path: 'api/sessions/{id}/generate'
             when: you need to see which generation steps a recording has done and what each would run with
             description: >-
-                The generation steps for the open recording: what it has (image / CameraInfo streams, raw_april_tags and
-                april_tags counts and marker ids, the tf tree analyzed: frames, which edges move, cloud streams and the
-                default one to correct, the edge the correction would write, whether a corrected tf is in it and is
-                stale, global_map_aggregated / .pc2.lcm / .rrd), each step's defaults (and the marker dictionaries step
-                1 knows) and what each ran with last.
+                The generation steps for the open recording (202 + { job } while what they need is read in the
+                background: an open job, or a big .mcap's tf in a read job or the preview's first stage; ask again when
+                that job ends): what it has (image / CameraInfo streams, raw_april_tags and april_tags counts and marker
+                ids, the tf tree analyzed: frames, which edges move, cloud streams and the default one to correct, the
+                edge the correction would write, whether a corrected tf is in it and is stale, global_map_aggregated /
+                .pc2.lcm / .rrd), each step's defaults (and the marker dictionaries step 1 knows) and what each ran with
+                last.
             params:
                 id:
                     type: string

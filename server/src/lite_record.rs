@@ -22,13 +22,18 @@ const CHECK_EVERY: Duration = Duration::from_secs(600);
 /// Why lite_record's post_process should run, or None: a PointCloud2 and an Imu under the same topic prefix (its own
 /// rule for finding a lidar and the IMU inside it), and no odometry anywhere in the recording to place the scans.
 pub fn pending(streams: &[StreamInfo]) -> Option<String> {
+    pending_with(streams, |s| s.count > 0)
+}
+
+/// `pending` with `has_messages` in place of the streams' counts (opening a .db doesn't count its rows).
+pub fn pending_with(streams: &[StreamInfo], has_messages: impl Fn(&StreamInfo) -> bool) -> Option<String> {
     let prefix = |name: &str| name.rsplit_once('/').map_or(String::new(), |(prefix, _)| prefix.to_string());
     let is_imu = |s: &StreamInfo| s.type_name.replace("/msg/", ".").replace('/', ".") == "sensor_msgs.Imu";
     let lidar = streams
         .iter()
         .filter(|s| s.kind == Kind::Cloud && s.derived_from.is_none())
         .find(|cloud| streams.iter().any(|imu| is_imu(imu) && prefix(&imu.name) == prefix(&cloud.name)))?;
-    if streams.iter().any(|s| s.kind == Kind::Odometry && s.count > 0) {
+    if streams.iter().any(|s| s.kind == Kind::Odometry && has_messages(s)) {
         return None;
     }
     Some(format!("{} has an IMU beside it and nothing places its scans yet: lite_record estimates the odometry, corrects the scans and builds its voxel map", lidar.name))

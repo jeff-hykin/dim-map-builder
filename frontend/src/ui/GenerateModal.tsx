@@ -4,7 +4,7 @@
 // global_map_aggregated + a .pc2.lcm beside the recording, optionally an .rrd). A step whose input the recording
 // doesn't have yet runs the earlier step first. The defaults work for most recordings: press "Generate corrected
 // map". A raw lite_record recording (no odometry) is post-processed and built the classic way.
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type CloudChoice, type FrameNode, type GenerateStatus } from "../core/api.ts"
 import { Alert, Badge, Button, Card, Checkbox, Chip, Column, Field, Heading, Modal, NumberInput, Panel, Row, Segmented, Select, Slider, Text, TextInput } from "dimos-react"
 import { JobCard, duration } from "./JobCard.tsx"
@@ -153,6 +153,9 @@ function StepCard({ number, title, status, children, run, running, disabled, run
     )
 }
 
+/** the stage the preview and "read" jobs read the tf in (server/src/app.rs READING_TF) */
+const READING_TF = "Reading the tf tree"
+
 export function GenerateModal({ context, onClose }: { context: Context; onClose: () => void }) {
     const { session, run } = context
     const [status, setStatus] = useState<GenerateStatus | null>(null)
@@ -165,18 +168,39 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const [confirming, setConfirming] = useState(false)
     const job = session?.job && session.job.kind !== "save" ? session.job : null
     const running = job?.state === "running"
-    const jobState = `${job?.id}:${job?.state}`
+    // the preview reads the tf first: past that, the step list can be read
+    const readingTf = job?.state === "running" && job.progress?.stage === READING_TF
+    const jobState = `${job?.id}:${job?.state}:${readingTf}`
 
+    // the options start from each step's defaults with what it ran with last on top (once per session: the first
+    // status there is, which waits for an "open" job reading a recording with no index)
+    const optionsFor = useRef<string | null>(null)
+    const initOptions = (fresh: GenerateStatus) => {
+        if (!session || optionsFor.current === session.id) {
+            return
+        }
+        optionsFor.current = session.id
+        setTagOptions(tidy({ ...fresh.tags.defaults, ...(fresh.tags.record?.options ?? {}) }))
+        setTfOptions(tidy({ ...fresh.tf.defaults, ...(fresh.tf.record?.options ?? {}), cloudStream: fresh.tf.record?.options?.cloudStream || fresh.tf.analysis.defaultCloud || "" }))
+        const global = tidy({ ...fresh.globalMap.defaults })
+        global.rrd = { ...global.rrd, streams: fresh.globalMap.rrdStreams }
+        if (session.buildOptions) {
+            global.build = { ...global.build, voxelSize: session.buildOptions.voxelSize }
+        }
+        setGlobalOptions(global)
+    }
     const load = () =>
         session &&
         api.generateStatus(session.id)
             .then((fresh) => {
-                setStatus(fresh)
-                setProblem(null)
+                if (fresh) {
+                    setStatus(fresh)
+                    setProblem(null)
+                    initOptions(fresh)
+                }
                 return fresh
             })
             .catch((error) => setProblem(String(error.message ?? error)))
-    // the options start from each step's defaults with what it ran with last on top
     useEffect(() => {
         if (!session) {
             return
@@ -185,23 +209,11 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
             setBuildDefaults(tidy(base))
             setClassic(tidy({ ...base, ...(session.buildOptions ?? {}), ...(session.postProcess && !session.buildOptions ? { voxelSize: LITE_RECORD_VOXEL } : {}) }))
         })
-        load()?.then((fresh) => {
-            if (!fresh) {
-                return
-            }
-            setTagOptions(tidy({ ...fresh.tags.defaults, ...(fresh.tags.record?.options ?? {}) }))
-            setTfOptions(tidy({ ...fresh.tf.defaults, ...(fresh.tf.record?.options ?? {}), cloudStream: fresh.tf.record?.options?.cloudStream || fresh.tf.analysis.defaultCloud || "" }))
-            const global = tidy({ ...fresh.globalMap.defaults })
-            global.rrd = { ...global.rrd, streams: fresh.globalMap.rrdStreams }
-            if (session.buildOptions) {
-                global.build = { ...global.build, voxelSize: session.buildOptions.voxelSize }
-            }
-            setGlobalOptions(global)
-        })
+        load()
     }, [session?.id])
     // a step finished (here or from the agent): what the recording has now
     useEffect(() => {
-        if (job && job.state !== "running") {
+        if (job && (job.state !== "running" || (!status && !readingTf))) {
             load()
         }
     }, [jobState])

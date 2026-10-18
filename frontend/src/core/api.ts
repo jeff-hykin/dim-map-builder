@@ -151,7 +151,7 @@ export interface Progress {
 export interface Job {
     id: number
     session: string
-    kind: "build" | "preview" | "save" | "tags" | "tf" | "globalMap"
+    kind: "open" | "read" | "build" | "preview" | "save" | "tags" | "tf" | "globalMap"
     state: "running" | "done" | "failed" | "cancelled"
     progress: Progress | null
     fraction: number
@@ -430,7 +430,16 @@ export const api = {
         }
         return body as { path: string; size: number }
     },
-    generateStatus: (id: string) => call<GenerateStatus>(`api/sessions/${id}/generate`),
+    /** null while a job reads what the steps need (an "open" job, a "read" job or the preview's tf stage): load again
+     * when it finishes (or the preview moves on to the scans) */
+    generateStatus: async (id: string): Promise<GenerateStatus | null> => {
+        const response = await fetch(here(`api/sessions/${id}/generate`))
+        const body = await response.json().catch(() => ({}))
+        if (!response.ok) {
+            throw new Error(body.error ?? `${response.status} ${response.statusText}`)
+        }
+        return response.status === 202 ? null : (body as GenerateStatus)
+    },
     generateTags: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/tags`, json(options)),
     generateTf: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/tf`, json(options)),
     generateGlobal: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/global-map`, json(options)),

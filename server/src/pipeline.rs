@@ -232,9 +232,16 @@ pub fn run_global(data_dir: &Path, path: &Path, options: &GlobalOptions, share: 
 /// The tf correction's defaults for this recording: tags when it has them or a camera to find them in, gated the way
 /// the tags step last gated them.
 pub fn default_correction(path: &Path) -> CorrectOptions {
-    let Ok(recording) = Recording::open(path) else { return CorrectOptions::default() };
-    let can_tag = has_raw_tags(&recording).unwrap_or(false) || tags::pick_camera(&recording, "").and_then(|camera| tags::camera_info(&recording, &camera, "")).is_ok();
-    let gates = pipeline::read(&recording).ok().and_then(|state| state.tags).map(|tags| tags.options.gates).unwrap_or_default();
+    match Recording::open(path) {
+        Ok(recording) => default_correction_for(&recording),
+        Err(_) => CorrectOptions::default(),
+    }
+}
+
+/// `default_correction` for a recording already open (a .db counts its streams once per opening).
+pub fn default_correction_for(recording: &Recording) -> CorrectOptions {
+    let can_tag = has_raw_tags(recording).unwrap_or(false) || tags::pick_camera(recording, "").and_then(|camera| tags::camera_info(recording, &camera, "")).is_ok();
+    let gates = pipeline::read(recording).ok().and_then(|state| state.tags).map(|tags| tags.options.gates).unwrap_or_default();
     CorrectOptions { use_tags: can_tag, gates, ..Default::default() }
 }
 
@@ -258,7 +265,7 @@ pub fn status(data_dir: &Path, path: &Path) -> Result<Value> {
         }
         markers = by.into_iter().collect();
     }
-    let tf_defaults = default_correction(path);
+    let tf_defaults = default_correction_for(&recording);
     let plan = correct::plan(&analysis, &tf_defaults);
     let corrected = has_correction(&state, &tree);
     let tags_at = state.tags.as_ref().map(|t| t.at);
@@ -330,6 +337,14 @@ impl App {
             app.store.save(&ws.session)?;
             app.emit(json!({ "type": "session", "id": ws.session.id, "revision": ws.session.revision }));
             app.emit(json!({ "type": "recording-changed", "path": path }));
+            Ok(())
+        })
+    }
+
+    /// The step list's slow part in the background: the recording's tf, read once for every later reader.
+    pub fn read_steps(self: &Arc<Self>, id: &str, path: PathBuf) -> Result<Job> {
+        self.start_job(id, "read", move |_, report, _| {
+            App::read_tf(&Recording::open(&path)?, report, 1.0)?;
             Ok(())
         })
     }

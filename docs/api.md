@@ -20,7 +20,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | `PUT api/import?path=` (plumbing) | a dropped recording's bytes, streamed into a free path Desktop's `POST /recordings/new` handed out |
 | `GET api/status` (context) | the open map briefly: recording, stage, voxels, bounds, floors, annotation counts, job, unsaved, recent history |
 | `GET api/state` | what the page loads: `{ active, session, last, recordingsDir }` (only a recording opened since the server started is open; `last` is the one before, offered on the empty page) |
-| `POST api/open` | `{ path, name?, id?, writable? }`: open a recording; every page follows (`opened` event) |
+| `POST api/open` | `{ path, name?, id?, writable? }`: open a recording; every page follows (`opened` event). Returns at once: only the index is read (an `.mcap`'s summary, a `.db`'s stream list); an `.mcap` without a summary is read in an `open` job |
 | `GET api/build-defaults` | the default build options |
 | `GET api/view` (view) | camera, visible bounds, selection, UI, and a screenshot with a 1 m grid and labels (`screenshot`, `topDown`) |
 | `POST api/camera` | `{ target, distance?, topDown? }`: move the user's camera (`setView` event) |
@@ -29,7 +29,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | `GET api/sessions/{id}/paths` | `{ raw, corrected, loops }` |
 | `POST api/sessions/{id}/build` | build options (all optional): `{ job }` |
 | `DELETE api/sessions/{id}/job` | cancel the running job |
-| `GET api/sessions/{id}/generate` | the generation steps: what the recording has (tags and the marker dictionaries the detector knows, the tf tree analyzed, the default cloud and the edge the correction would write, the global map), each step's defaults, what each ran with last |
+| `GET api/sessions/{id}/generate` | (202 + a job while what it needs is read in the background: the `open` job, or a big `.mcap`'s tf in a `read` job or the preview's first stage; ask again when it ends) the generation steps: what the recording has (tags and the marker dictionaries the detector knows, the tf tree analyzed, the default cloud and the edge the correction would write, the global map), each step's defaults, what each ran with last |
 | `POST api/sessions/{id}/generate/tags` | step 1, fiducial markers from images (a job): `{ raw, grouped, cameraStream, markerLength, dictionary, exclude, gates, grouping, ... }`; `dictionary` is an OpenCV name, an AprilTag family (`DICT_APRILTAG_36h11`, the default, `_36h10`, `_25h9`, `_16h5`) or an ArUco dictionary (`DICT_4X4_50` .. `DICT_7X7_1000`, `DICT_ARUCO_ORIGINAL`, `DICT_ARUCO_MIP_36h12`) |
 | `POST api/sessions/{id}/generate/tf` | step 2, the corrected tf (a job; runs step 1 first when it needs tags the recording lacks): `{ cloudStream, sensorFrame, grandparent, useTags, excludeTags, quality: "fast" \| "high", stitch, tags }` |
 | `POST api/sessions/{id}/generate/global-map` | step 3, the global map (a job; runs step 2 first when the recording has no correction): `{ useCorrectedTf, build, decimation, rrd, tf, tags }` |
@@ -58,7 +58,7 @@ to Desktop's relay (`/desktop/frontend/<name>/events`), which publishes it on `<
 the page hears it on its one zenoh-gateway connection (dim-app's appEvents), in order: `job`, `session`, `preview`,
 `opened`, `discarded`, `ui`, `setView`, `capture`, `upload`. After that connection comes back the page re-reads.
 
-Jobs: `{ id, kind: "build" | "preview" | "save" | "tags" | "tf" | "globalMap", state: "running" | "done" | "failed" | "cancelled", progress: { stage,
+Jobs: `{ id, kind: "open" | "read" | "build" | "preview" | "save" | "tags" | "tf" | "globalMap", state: "running" | "done" | "failed" | "cancelled", progress: { stage,
 stageIndex, stageCount, done, total, note }, fraction, elapsed, etaSeconds, error }`.
 
 Sessions are autosaved under `<dataDir>/sessions/<id>/` (the app data dir in Desktop's `DIMOS_APP`) (`session.json`, `map.bin`, `removed.bin`) on every change.

@@ -152,7 +152,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .role("context")
         .endpoint("GET", "api/state", "What the page loads: { active (the open session id, or null), session (its full state: annotations, plans, job, history...), last (when nothing is open: the session open before a restart, offered, not loaded), recordingsDir (Desktop's recordings folder) }. Only a recording opened since the server started is open.", json!({}), state)
         .when("you need to know which recording is open, or which was open last")
-        .endpoint("POST", "api/open", "Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the recordings folder. Returns the session's full state (as GET api/sessions/{id}).", json!({ "path": required(s("the recording file")), "name": s("display name"), "id": s("Desktop's recording id"), "writable": b("false for a read-only folder: saving is refused, recordings are never copied (default true)") }), open)
+        .endpoint("POST", "api/open", "Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and edits come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the recordings folder. Returns the session's full state (as GET api/sessions/{id}) at once: only the recording's index is read (an .mcap's summary, a .db's stream list). An .mcap with no summary (cut short) is read in the background as an open job (job: bytes read / total, ETA, cancel); GET api/sessions/{id}/generate answers 202 with it until it's done.", json!({ "path": required(s("the recording file")), "name": s("display name"), "id": s("Desktop's recording id"), "writable": b("false for a read-only folder: saving is refused, recordings are never copied (default true)") }), open)
         .when("you need to open a recording in the Map Editor")
         .endpoint("GET", "api/build-defaults", "The default map build options (voxelSize, loopClosure, rayTracing, every, maxRange, tfTolerance, worldFrame, cloudStream, ray, pgo), as an object POST .../build takes.", json!({}), |  | async { Json(json!(mapping::build::BuildOptions::default())) })
         .when("you want the default options before building a map")
@@ -174,7 +174,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .when("you need to build or rebuild the 3D map from the recording")
         .endpoint("DELETE", "api/sessions/{id}/job", "Cancel the running job (build, preview, save, or a generation step). Returns { cancelled } (false when nothing was running).", with_id(json!({})), cancel)
         .when("you want to stop a running build, save or generation step")
-        .endpoint("GET", "api/sessions/{id}/generate", "The generation steps for the open recording: what it has (image / CameraInfo streams, raw_april_tags and april_tags counts and marker ids, the tf tree analyzed: frames, which edges move, cloud streams and the default one to correct, the edge the correction would write, whether a corrected tf is in it and is stale, global_map_aggregated / .pc2.lcm / .rrd), each step's defaults (and the marker dictionaries step 1 knows) and what each ran with last.", with_id(json!({})), generate_status)
+        .endpoint("GET", "api/sessions/{id}/generate", "The generation steps for the open recording (202 + { job } while what they need is read in the background: an open job, or a big .mcap's tf in a read job or the preview's first stage; ask again when that job ends): what it has (image / CameraInfo streams, raw_april_tags and april_tags counts and marker ids, the tf tree analyzed: frames, which edges move, cloud streams and the default one to correct, the edge the correction would write, whether a corrected tf is in it and is stale, global_map_aggregated / .pc2.lcm / .rrd), each step's defaults (and the marker dictionaries step 1 knows) and what each ran with last.", with_id(json!({})), generate_status)
         .when("you need to see which generation steps a recording has done and what each would run with")
         .endpoint("POST", "api/sessions/{id}/generate/tags", "Step 1, fiducial markers from images, in the background: every image of the camera stream through the marker detector (an AprilTag family or an OpenCV ArUco dictionary, by its OpenCV name: DICT_APRILTAG_36h11 by default, DICT_4X4_50 .. DICT_7X7_1000, DICT_ARUCO_ORIGINAL, ...; 10 cm; posed with the recording's CameraInfo), written into the recording: raw_april_tags (every glimpse with its quality diagnostics) and/or april_tags (gated, grouped per marker visit). Options (all optional): raw, grouped, cameraStream, cameraInfoStream, markerLength, dictionary, exclude (marker ids left out of the grouped stream), every, gates {...}, grouping {...}.", with_id(json!({ "raw": b("write raw_april_tags (default true)"), "grouped": b("write april_tags (default true)"), "cameraStream": s(""), "cameraInfoStream": s(""), "markerLength": n("m"), "dictionary": s("OpenCV name: DICT_APRILTAG_36h11 (default) | DICT_APRILTAG_36h10 | _25h9 | _16h5 | DICT_4X4_50 .. DICT_7X7_1000 | DICT_ARUCO_ORIGINAL | DICT_ARUCO_MIP_36h12"), "exclude": numbers("marker ids on moving things") })), generate_tags)
         .when("you need AprilTag or ArUco marker sightings (raw or grouped per marker) written into a recording")
@@ -489,11 +489,32 @@ fn merged<T: serde::Serialize + serde::de::DeserializeOwned>(defaults: T, given:
     Ok(serde_json::from_value(value)?)
 }
 
-async fn generate_status(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
-    let (_, workspace) = session(&app, &id)?;
+/// 202 + a job while what the steps need is read in the background: the recording being opened (an .mcap with no
+/// index), or its tf when that's big (a "read" job, or the preview's first stage). Then the step list itself.
+async fn generate_status(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Response> {
+    let (id, workspace) = session(&app, &id)?;
+    let accepted = |job: crate::app::Job| Ok((StatusCode::ACCEPTED, Json(json!({ "job": job }))).into_response());
+    let running = app.job(&id).filter(|job| job.state == "running");
+    if let Some(job) = running.clone().filter(|job| job.kind == "open") {
+        return accepted(job);
+    }
     let path = std::path::PathBuf::from(workspace.lock().unwrap().session.recording_path.clone());
+    let path2 = path.clone();
+    let slow = blocking(move || Ok(dimos_recording::Recording::open(&path2)?.tf_bytes_to_read()? >= crate::app::SLOW_TF_BYTES)).await?;
+    if slow {
+        match running {
+            None => {
+                if let Ok(job) = app.read_steps(&id, path.clone()) {
+                    return accepted(job);
+                }
+            }
+            Some(job) if job.kind == "read" || job.kind == "preview" => return accepted(job),
+            // another job (a step the page started): read it here
+            Some(_) => {}
+        }
+    }
     let data = app.store.dir.clone();
-    Ok(Json(blocking(move || crate::pipeline::status(&data, &path)).await?))
+    Ok(Json(blocking(move || crate::pipeline::status(&data, &path)).await?).into_response())
 }
 
 async fn generate_tags(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): Body) -> Result<Json<Value>> {

@@ -21,7 +21,7 @@ use tokio::sync::{broadcast, oneshot};
 pub struct Job {
     pub id: u64,
     pub session: String,
-    /// "build", "preview", "save"
+    /// "open", "read", "build", "preview", "save", "tags", "tf", "globalMap"
     pub kind: String,
     /// "running", "done", "failed", "cancelled"
     pub state: String,
@@ -54,6 +54,11 @@ pub struct App {
     next_job: AtomicU64,
     next_capture: AtomicU64,
 }
+
+/// Reading this many bytes of an .mcap's chunks for its tf is a job (the Generate step list's "read" job, or the
+/// preview's first stage), not something an HTTP request waits on
+pub const SLOW_TF_BYTES: u64 = 1 << 30;
+pub const READING_TF: &str = "Reading the tf tree";
 
 /// How much of a build's progress bar lite_record's post_process takes when it runs first (it reads the whole recording
 /// two or three times, about what the map build does)
@@ -94,7 +99,9 @@ impl App {
     }
 
     /// Opens (or resumes) the session for a recording. A recording with an earlier save and no session restores it.
-    pub fn open(&self, recording_id: &str, path: &str, name: &str, writable: bool) -> Result<Arc<Mutex<Workspace>>> {
+    /// Nothing here reads messages: a `.db` lists its streams, an `.mcap` reads its summary (and the chunks holding
+    /// an earlier save). An `.mcap` with no summary (cut short) opens at once and is read in an "open" job.
+    pub fn open(self: &Arc<Self>, recording_id: &str, path: &str, name: &str, writable: bool) -> Result<Arc<Mutex<Workspace>>> {
         let path = PathBuf::from(path);
         dimos_recording::format_of(&path)?;
         if !path.is_file() {
@@ -115,17 +122,8 @@ impl App {
                     history: vec![format!("Opened {}", path.display())],
                     ..Default::default()
                 };
-                let recording = Recording::open(&path)?;
-                let post_process = crate::lite_record::pending(&recording.streams()?);
-                let (session, map) = match persist::load(&recording, fresh.clone()) {
-                    Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map)),
-                    Ok(None) => (fresh, None),
-                    Err(error) => {
-                        let mut session = fresh;
-                        session.history.push(format!("Couldn't restore the saved map: {error:#}"));
-                        (session, None)
-                    }
-                };
+                let unindexed = dimos_recording::format_of(&path)? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(&path);
+                let (session, map, post_process) = if unindexed { (fresh.clone(), None, None) } else { Self::read_for_open(&path, fresh.clone())? };
                 self.store.save(&session)?;
                 if let Some(map) = &map {
                     self.store.save_map(&id, map)?;
@@ -134,12 +132,65 @@ impl App {
                 workspace.post_process = post_process;
                 let workspace = Arc::new(Mutex::new(workspace));
                 self.workspaces.lock().unwrap().insert(id.clone(), workspace.clone());
+                if unindexed {
+                    self.start_open_job(&id, path.clone(), fresh)?;
+                }
                 workspace
             }
         };
         self.store.set_last_open(&id);
         *self.active.lock().unwrap() = Some(id);
         Ok(workspace)
+    }
+
+    /// What opening reads from the recording: an earlier save to restore (else `fresh`), and whether it needs
+    /// lite_record's post_process.
+    fn read_for_open(path: &std::path::Path, fresh: Session) -> Result<(Session, Option<crate::session::MapData>, Option<String>)> {
+        let recording = Recording::open(path)?;
+        let post_process = crate::lite_record::pending_with(&recording.stream_list()?, |s| recording.has_messages(&s.name).unwrap_or(false));
+        Ok(match persist::load(&recording, fresh.clone()) {
+            Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map), post_process),
+            Ok(None) => (fresh, None, post_process),
+            Err(error) => {
+                let mut session = fresh;
+                session.history.push(format!("Couldn't restore the saved map: {error:#}"));
+                (session, None, post_process)
+            }
+        })
+    }
+
+    /// An .mcap with no summary: walk it once (bytes read / total, ETA, cancel), then restore an earlier save into the
+    /// session if nothing was done to it meanwhile.
+    fn start_open_job(self: &Arc<Self>, id: &str, path: PathBuf, fresh: Session) -> Result<Job> {
+        let session_id = id.to_string();
+        self.start_job(id, "open", move |app, report, cancel| {
+            let file = dimos_recording::mcap_io::McapFile::open(&path)?;
+            let progress = |done: u64, total: u64| {
+                let note = format!("{:.1} of {:.1} GB (the recording has no index: it was cut short)", done as f64 / 1e9, total as f64 / 1e9);
+                report(Progress { overall: None, stage: "Reading the recording".into(), stage_index: 0, stage_count: 1, done, total, note })
+            };
+            if let Err(error) = file.index_with(Some(&progress), Some(cancel)) {
+                return Err(if cancel.load(Ordering::Relaxed) { anyhow::anyhow!(Cancelled) } else { error });
+            }
+            drop(file);
+            let (session, map, post_process) = Self::read_for_open(&path, fresh)?;
+            let shared = app.require(&session_id)?;
+            let mut ws = shared.lock().unwrap();
+            if ws.discarded {
+                return Ok(());
+            }
+            if map.is_some() && ws.map.is_none() && ws.session.revision == 0 {
+                if let Some(map) = &map {
+                    app.store.save_map(&session_id, map)?;
+                }
+                let view = std::mem::take(&mut ws.session.view);
+                *ws = Workspace::new(Session { view, ..session }, map);
+            }
+            ws.post_process = post_process;
+            app.store.save(&ws.session)?;
+            app.emit(json!({ "type": "session", "id": session_id, "revision": ws.session.revision }));
+            Ok(())
+        })
     }
 
     /// A session from memory, else from disk.
@@ -368,7 +419,9 @@ impl App {
         if !running {
             self.start_job(id, "preview", move |app, report, cancel| {
                 let recording = Recording::open(std::path::Path::new(&path))?;
-                let mut progress = |p: Progress| report(p);
+                // the tf first, on its own share of the bar (the Generate step list waits for it, not for the scans)
+                let tf_share = Self::read_tf(&recording, report, 0.5)?;
+                let mut progress = |p: Progress| report(Progress { overall: Some(tf_share + (1.0 - tf_share) * fraction("", &p)), ..p });
                 let preview = mapping::build::preview(&recording, &BuildOptions::default(), 300, 0.1, &mut progress, cancel)?;
                 app.previews.lock().unwrap().insert(session.clone(), Arc::new(preview));
                 app.emit(json!({ "type": "preview", "id": session }));
@@ -376,6 +429,21 @@ impl App {
             })?;
         }
         Ok(None)
+    }
+
+    /// Reads the recording's tf (kept for every later reader of the same file) when that's slow, reporting it as the
+    /// first `share` of a job's bar; returns the share it took (0 when there was nothing slow to read).
+    pub(crate) fn read_tf(recording: &Recording, report: &dyn Fn(Progress), share: f64) -> Result<f64> {
+        if recording.tf_bytes_to_read()? < SLOW_TF_BYTES {
+            return Ok(0.0);
+        }
+        let progress = |done: u64, total: u64| {
+            let within = if total > 0 { done as f64 / total as f64 } else { 1.0 };
+            let note = format!("{:.1} of {:.1} GB of chunks holding tf", done as f64 / 1e9, total as f64 / 1e9);
+            report(Progress { overall: Some(share * within), stage: READING_TF.into(), stage_index: 0, stage_count: 1, done, total, note })
+        };
+        recording.tf_edges_logged_with(Some(&progress))?;
+        Ok(share)
     }
 
     /// Everything the Map Editor writes goes into the recording in place; one in a read-only folder is refused, never
@@ -480,6 +548,52 @@ mod tests {
         assert!(app.store.last_open().is_none());
         assert!(app.mutate(&id, |w| w.add_point("x", [0.0; 3], "user")).is_err());
         assert!(app.store.load(&id).unwrap().is_none());
+    }
+
+    /// an .mcap with no summary isn't read while opening: open returns, an open job reads it and restores its save
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_mcap_cut_short_opens_at_once_and_is_read_in_a_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.mcap");
+        let cloud = dimos_recording::lcm::encode_xyz_cloud(&dimos_recording::lcm::Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        dimos_recording::mcap_io::write_fixture(&path, &[("/lidar", "lcm", dimos_recording::lcm::POINT_CLOUD2_TYPE, 1.0, cloud)]);
+        let saved = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), ..Default::default() };
+        persist::save(&Workspace::new(saved, Some(crate::workspace::tests::room_map())), |_, _| {}).unwrap();
+        // cut the summary off: the footer's summary_start, less the 13-byte DataEnd record before it
+        let bytes = std::fs::read(&path).unwrap();
+        let summary_start = u64::from_le_bytes(bytes[bytes.len() - 28..bytes.len() - 20].try_into().unwrap()) as usize;
+        std::fs::write(&path, &bytes[..summary_start - 13]).unwrap();
+
+        let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let held = app.open("", &path.display().to_string(), "r", true).unwrap();
+        let id = held.lock().unwrap().session.id.clone();
+        assert_eq!(held.lock().unwrap().session.stage, "raw", "opened without reading it");
+        assert_eq!(app.job(&id).unwrap().kind, "open");
+        let started = std::time::Instant::now();
+        while app.job(&id).unwrap().state == "running" {
+            assert!(started.elapsed() < Duration::from_secs(20));
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let job = app.job(&id).unwrap();
+        assert_eq!(job.state, "done", "{:?}", job.error);
+        let ws = held.lock().unwrap();
+        assert_eq!(ws.session.stage, "map", "the save in it was restored");
+        assert!(ws.map.as_ref().is_some_and(|m| !m.points.is_empty()));
+        drop(ws);
+        // the same file again (another session's open, or after a restart): walked already, nothing to wait for
+        assert!(dimos_recording::mcap_index::is_indexed(&path));
+    }
+
+    /// a finished .mcap (or a .db) opens with no job: its summary says what's in it
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_finished_mcap_opens_with_no_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.mcap");
+        dimos_recording::mcap_io::write_fixture(&path, &[("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1.0, vec![1, 2])]);
+        let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let held = app.open("", &path.display().to_string(), "r", true).unwrap();
+        let id = held.lock().unwrap().session.id.clone();
+        assert!(app.job(&id).is_none());
     }
 
     #[test]

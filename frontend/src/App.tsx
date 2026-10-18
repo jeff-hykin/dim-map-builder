@@ -399,6 +399,16 @@ export function App() {
                 } else if (job.state === "done" && (job.kind === "tags" || job.kind === "tf")) {
                     say(job.kind === "tags" ? "Fiducial markers written into the recording" : "Corrected tf written into the recording")
                     await refresh()
+                } else if (job.state === "done" && (job.kind === "open" || job.kind === "read")) {
+                    // a recording with no index was read in the background (its saved map), or its tf: now the preview,
+                    // which waited for it
+                    await refresh()
+                    const fresh = await api.session(current.id).catch(() => null)
+                    const preview = fresh && fresh.stage !== "map" ? await api.preview(current.id).catch(() => null) : null
+                    if (preview) {
+                        scene.setRaw(preview.points, preview.path)
+                        scene.frameMap()
+                    }
                 } else if (job.state === "done" && job.kind === "save") {
                     say("Saved into the recording")
                     await refresh()

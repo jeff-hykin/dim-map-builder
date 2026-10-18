@@ -7,6 +7,9 @@ moves it on a click). Opening a recording with a map goes straight to it. Only g
 everything else is optional and in any order.
 
 - **Open** a recording (`.db` or `.mcap`) from Desktop's shared recordings folder (the Live Viewer records there).
+  Opening reads only its index (an `.mcap`'s summary, a `.db`'s stream list), so it's instant at any size; a topic is
+  read from the chunks that hold it. An `.mcap` cut short (no summary) is read once in the background, with progress,
+  and so is a big recording's tf for the Generate steps.
 - **Generate** (the blue orb): a corrected map in one press ("Generate corrected map"), or any one of the steps that make
   it, each with its own Run button, progress bar, ETA and Cancel. Every step writes into the recording in place
   ([docs/schema.md](docs/schema.md#what-generate-writes)), and a step whose input the recording doesn't have yet runs
