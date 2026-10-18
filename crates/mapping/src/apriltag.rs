@@ -6,6 +6,7 @@
 //! error, size in pixels, distance, view angle, the camera's speed); grouping clusters a marker's gated glimpses in
 //! time and reduces each cluster to one Huber-refined medoid pose, which is what `add_april.py` writes as
 //! `april_tags`.
+use crate::aruco::{ArucoDetector, ArucoDictionary};
 use dimos_recording::lcm::{CameraInfo, Image};
 use kornia_apriltag::family::TagFamilyKind;
 use kornia_apriltag::{AprilTagDecoder, DecodeTagsConfig};
@@ -416,12 +417,19 @@ pub fn tag_sharpness(gray: &[u8], width: usize, height: usize, corners: &[[f64; 
 
 pub fn family(dictionary: &str) -> anyhow::Result<TagFamilyKind> {
     Ok(match dictionary {
-        "DICT_APRILTAG_36h11" | "tag36h11" | "36h11" => TagFamilyKind::Tag36H11,
-        "DICT_APRILTAG_36h10" | "tag36h10" => TagFamilyKind::Tag36H10,
-        "DICT_APRILTAG_25h9" | "tag25h9" => TagFamilyKind::Tag25H9,
-        "DICT_APRILTAG_16h5" | "tag16h5" => TagFamilyKind::Tag16H5,
-        other => anyhow::bail!("unsupported tag dictionary {other:?} (DICT_APRILTAG_36h11, 36h10, 25h9 or 16h5)"),
+        "DICT_APRILTAG_36h11" | "DICT_APRILTAG_36H11" | "tag36h11" | "36h11" => TagFamilyKind::Tag36H11,
+        "DICT_APRILTAG_36h10" | "DICT_APRILTAG_36H10" | "tag36h10" => TagFamilyKind::Tag36H10,
+        "DICT_APRILTAG_25h9" | "DICT_APRILTAG_25H9" | "tag25h9" => TagFamilyKind::Tag25H9,
+        "DICT_APRILTAG_16h5" | "DICT_APRILTAG_16H5" | "tag16h5" => TagFamilyKind::Tag16H5,
+        other => anyhow::bail!("unsupported tag dictionary {other:?} (DICT_APRILTAG_36h11, 36h10, 25h9 or 16h5, or an ArUco one: {})", ArucoDictionary::names().collect::<Vec<_>>().join(", ")),
     })
+}
+
+/// Every dictionary the detector knows, by its OpenCV name: the AprilTag families, then the ArUco ones.
+pub fn dictionaries() -> Vec<&'static str> {
+    let mut names = vec!["DICT_APRILTAG_36h11", "DICT_APRILTAG_36h10", "DICT_APRILTAG_25h9", "DICT_APRILTAG_16h5"];
+    names.extend(ArucoDictionary::names());
+    names
 }
 
 /// A kornia detection's corners in aruco order (TL, TR, BR, BL of the canonical tag): the quad's own corners ignore
@@ -436,38 +444,56 @@ fn oriented_corners(detection: &kornia_apriltag::decoder::Detection) -> [[f64; 2
     out
 }
 
-/// Detects tags frame by frame, keeping kornia's decoder while the frame size stays the same.
+enum Finder {
+    /// kornia's decoder, kept while the frame size stays the same
+    AprilTag { kind: TagFamilyKind, decoder: Option<(AprilTagDecoder, ImageSize)> },
+    Aruco(ArucoDetector),
+}
+
+/// Detects tags (an AprilTag family or an ArUco dictionary, by OpenCV name) frame by frame.
 pub struct TagDetector {
-    kind: TagFamilyKind,
-    decoder: Option<(AprilTagDecoder, ImageSize)>,
+    finder: Finder,
 }
 
 impl TagDetector {
     pub fn new(dictionary: &str) -> anyhow::Result<TagDetector> {
-        Ok(TagDetector { kind: family(dictionary)?, decoder: None })
+        let finder = match ArucoDictionary::named(dictionary) {
+            Some(aruco) => Finder::Aruco(ArucoDetector::new(aruco)),
+            None => Finder::AprilTag { kind: family(dictionary)?, decoder: None },
+        };
+        Ok(TagDetector { finder })
+    }
+
+    /// (marker id, corners in aruco order) of every tag in one grayscale frame.
+    pub(crate) fn markers(&mut self, gray: &[u8], width: usize, height: usize) -> anyhow::Result<Vec<(i64, [[f64; 2]; 4])>> {
+        match &mut self.finder {
+            Finder::Aruco(detector) => Ok(detector.detect(gray, width, height)?.into_iter().map(|m| (m.id as i64, m.corners)).collect()),
+            Finder::AprilTag { kind, decoder } => {
+                let size = ImageSize { width, height };
+                if decoder.as_ref().is_none_or(|(_, existing)| existing.width != width || existing.height != height) {
+                    let config = DecodeTagsConfig::new(vec![kind.clone()]);
+                    *decoder = Some((AprilTagDecoder::new(config, size).map_err(|e| anyhow::anyhow!("{e}"))?, size));
+                }
+                let (decoder, _) = decoder.as_mut().unwrap();
+                let frame = KorniaImage::<u8, 1, CpuAllocator>::new(size, gray.to_vec(), CpuAllocator).map_err(|e| anyhow::anyhow!("{e}"))?;
+                let found = decoder.decode(&frame).map_err(|e| anyhow::anyhow!("{e}"))?;
+                decoder.clear();
+                Ok(found.iter().map(|tag| (tag.id as i64, oriented_corners(tag))).collect())
+            }
+        }
     }
 
     /// Every tag in one grayscale frame, posed. `speed` = the camera's (m/s, °/s) or (-1, -1).
     pub fn detect(&mut self, ts: f64, gray: &[u8], width: usize, height: usize, camera: &CameraModel, marker_length: f64, speed: (f64, f64)) -> anyhow::Result<Vec<Detection>> {
-        let size = ImageSize { width, height };
-        if self.decoder.as_ref().is_none_or(|(_, existing)| existing.width != width || existing.height != height) {
-            let config = DecodeTagsConfig::new(vec![self.kind.clone()]);
-            self.decoder = Some((AprilTagDecoder::new(config, size).map_err(|e| anyhow::anyhow!("{e}"))?, size));
-        }
-        let (decoder, _) = self.decoder.as_mut().unwrap();
-        let frame = KorniaImage::<u8, 1, CpuAllocator>::new(size, gray.to_vec(), CpuAllocator).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let found = decoder.decode(&frame).map_err(|e| anyhow::anyhow!("{e}"))?;
-        decoder.clear();
         let mut detections = Vec::new();
-        for tag in &found {
-            let corners = oriented_corners(tag);
+        for (marker_id, corners) in self.markers(gray, width, height)? {
             let Some((rotation, translation, reproj_px)) = solve_square_pnp(camera, &corners, marker_length) else { continue };
             let q = UnitQuaternion::from_matrix(&rotation);
             let t_cam_marker = [translation.x, translation.y, translation.z, q.i, q.j, q.k, q.w];
             let (distance_m, view_angle_deg) = view_quality(&t_cam_marker);
             detections.push(Detection {
                 ts,
-                marker_id: tag.id as i64,
+                marker_id,
                 t_cam_marker,
                 sharpness: tag_sharpness(gray, width, height, &corners),
                 reproj_px,
@@ -648,6 +674,11 @@ pub mod tests {
     /// the tag), rendered by casting each pixel's ray onto the tag plane.
     pub fn render_tag(camera: &CameraModel, width: usize, height: usize, id: usize, length: f64, rotation: &Matrix3<f64>, translation: &Vector3<f64>) -> Vec<u8> {
         let family = TagFamily::tag36_h11();
+        render_marker(camera, width, height, length, rotation, translation, |x, y| tag_intensity(&family, id, x, y))
+    }
+
+    /// A gray frame with a marker drawn by `intensity` (tag coordinates as in `tag_intensity`) at camera ← marker.
+    pub fn render_marker(camera: &CameraModel, width: usize, height: usize, length: f64, rotation: &Matrix3<f64>, translation: &Vector3<f64>, intensity: impl Fn(f64, f64) -> Option<u8>) -> Vec<u8> {
         let normal = rotation.column(2).into_owned();
         let mut gray = vec![128u8; width * height];
         for row in 0..height {
@@ -661,7 +692,7 @@ pub mod tests {
                 let local = rotation.transpose() * (ray * along - translation);
                 // tag coordinates: ±1 at the black border's outer edge, y down
                 let (tx, ty) = (local.x / (length / 2.0), -local.y / (length / 2.0));
-                if let Some(value) = tag_intensity(&family, id, tx, ty) {
+                if let Some(value) = intensity(tx, ty) {
                     gray[row * width + column] = value;
                 }
             }

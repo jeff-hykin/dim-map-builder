@@ -12,6 +12,8 @@ arrayvec = "0.7"
 kiddo = "5"
 kornia-apriltag = "0.1.10"
 kornia-image = "0.1.14"
+# kornia-apriltag's resize, for the ArUco detector's quads
+kornia-imgproc = "0.1.14"
 nalgebra = "0.33"
 png = "0.17"
 rayon = "1"

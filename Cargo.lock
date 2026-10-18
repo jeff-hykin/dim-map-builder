@@ -2930,6 +2930,7 @@ dependencies = [
  "kiddo",
  "kornia-apriltag",
  "kornia-image",
+ "kornia-imgproc",
  "nalgebra 0.33.3",
  "png 0.17.16",
  "rayon",

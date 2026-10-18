@@ -84,7 +84,7 @@ pub fn pick_camera(recording: &Recording, wanted: &str) -> Result<String> {
     }
     let mut ranked = images.clone();
     ranked.sort_by_key(|s| (!s.name.contains("color"), s.name.contains("depth"), std::cmp::Reverse(s.count)));
-    ranked.first().map(|s| s.name.clone()).context("this recording has no images to find AprilTags in")
+    ranked.first().map(|s| s.name.clone()).context("this recording has no images to find markers in")
 }
 
 /// The CameraInfo for `camera`: (stream, intrinsics).
@@ -190,7 +190,7 @@ pub fn detect(recording: &Recording, options: &TagOptions, progress: &mut dyn Fn
         batch.push((ts, image));
         if batch.len() >= 64 {
             process(&mut batch, &mut result)?;
-            progress(Progress { overall: None, stage: format!("Finding AprilTags in {camera_stream}"), stage_index: 1, stage_count: 2, done: index, total, note: format!("{} tags in {} images", result.raw.len(), result.images) });
+            progress(Progress { overall: None, stage: format!("Finding markers in {camera_stream}"), stage_index: 1, stage_count: 2, done: index, total, note: format!("{} tags in {} images", result.raw.len(), result.images) });
             if cancel.load(Ordering::Relaxed) {
                 return Err(anyhow::anyhow!(Cancelled));
             }
@@ -211,7 +211,7 @@ pub fn detect(recording: &Recording, options: &TagOptions, progress: &mut dyn Fn
     let (grouped, report) = group(&result.raw, &options.gates, &options.grouping, &options.exclude);
     result.grouped = grouped;
     result.report = report;
-    progress(Progress { overall: None, stage: format!("Finding AprilTags in {camera_stream}"), stage_index: 1, stage_count: 2, done: total, total, note: format!("{} raw, {} grouped", result.raw.len(), result.grouped.len()) });
+    progress(Progress { overall: None, stage: format!("Finding markers in {camera_stream}"), stage_index: 1, stage_count: 2, done: total, total, note: format!("{} raw, {} grouped", result.raw.len(), result.grouped.len()) });
     Ok(result)
 }
 
@@ -307,11 +307,17 @@ pub fn read(recording: &Recording, stream: &str) -> Result<Option<(Vec<Detection
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::apriltag::tests::{render_tag, test_camera};
+    use crate::apriltag::tests::{render_marker, render_tag, test_camera};
+    use crate::aruco::tests::aruco_intensity;
     use nalgebra::{Rotation3, Vector3};
 
     /// a camera driving past tag 5 twice (two visits), images as raw mono8, the camera placed by tf
     pub fn tagged_recording(path: &Path) {
+        tagged_recording_with(path, |camera, translation, facing| render_tag(camera, 640, 480, 5, 0.1, facing, translation));
+    }
+
+    /// `tagged_recording` with each frame drawn by `render` (camera, the tag's translation, its rotation)
+    pub fn tagged_recording_with(path: &Path, render: impl Fn(&crate::apriltag::CameraModel, &Vector3<f64>, &nalgebra::Matrix3<f64>) -> Vec<u8>) {
         let camera = test_camera();
         let facing = *Rotation3::from_euler_angles(std::f64::consts::PI, 0.0, 0.0).matrix();
         let mut images = Vec::new();
@@ -320,7 +326,7 @@ pub mod tests {
             for k in 0..6 {
                 let ts = start + k as f64 * 0.2;
                 let translation = Vector3::new(0.02 * k as f64 - 0.05, 0.01 * visit as f64, 0.5);
-                let gray = render_tag(&camera, 640, 480, 5, 0.1, &facing, &translation);
+                let gray = render(&camera, &translation, &facing);
                 images.push((ts, lcm::encode_image(&lcm::Image { header: Header::at(ts, "camera_optical"), height: 480, width: 640, encoding: "mono8".into(), step: 640, data: gray })));
                 let edge = lcm::TfEdge { header: Header::at(ts, "odom"), child: "camera_optical".into(), translation: [0.02 * k as f64, 0.0, 0.0], rotation: [0.0, 0.0, 0.0, 1.0] };
                 tfs.push((ts, lcm::encode_tf(&[edge])));
@@ -362,5 +368,24 @@ pub mod tests {
         let (raw, _) = read(&recording, RAW_STREAM).unwrap().unwrap();
         assert_eq!(raw.len(), 12);
         assert!((raw[4].reproj_px - result.raw[4].reproj_px).abs() < 1e-9);
+    }
+
+    #[test]
+    fn finds_writes_and_reads_back_aruco_markers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.db");
+        let dictionary = crate::aruco::ArucoDictionary::named("DICT_5X5_250").unwrap();
+        tagged_recording_with(&path, |camera, translation, facing| render_marker(camera, 640, 480, 0.1, facing, translation, |x, y| aruco_intensity(&dictionary, 123, x, y)));
+        let recording = Recording::open(&path).unwrap();
+        let options = TagOptions { dictionary: "DICT_5X5_250".into(), ..TagOptions::default() };
+        let result = detect(&recording, &options, &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        assert_eq!((result.images, result.raw.len()), (12, 12), "{:?}", result.notes);
+        assert!(result.raw.iter().all(|d| d.marker_id == 123 && (d.t_cam_marker[2] - 0.5).abs() < 0.01), "{:?}", result.raw);
+        assert_eq!(result.grouped.len(), 2, "one per visit: {:?}", result.report);
+        drop(recording);
+        write(&path, &result, &options, 1.0).unwrap();
+        let recording = Recording::open(&path).unwrap();
+        let (grouped, frame) = read(&recording, GROUPED_STREAM).unwrap().unwrap();
+        assert_eq!((grouped.len(), frame.as_str(), grouped[0].marker_id, grouped[0].observations), (2, "camera_optical", 123, 6));
     }
 }
