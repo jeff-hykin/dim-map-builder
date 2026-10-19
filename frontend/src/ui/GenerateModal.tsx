@@ -165,7 +165,10 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const [tfOptions, setTfOptions] = useState<Options | null>(null)
     const [globalOptions, setGlobalOptions] = useState<Options | null>(null)
     const [classic, setClassic] = useState<Options | null>(null)
-    const [confirming, setConfirming] = useState(false)
+    /** a press that would replace the current map, waiting for a yes: Generate's, or the recorded map's */
+    const [confirming, setConfirming] = useState<"generate" | "recorded" | null>(null)
+    /** with a recorded global_map the steps start x-ed out (it is the map); "Generate from the scans instead" shows them */
+    const [showSteps, setShowSteps] = useState(!session?.recordedMap)
     const job = session?.job && session.job.kind !== "save" ? session.job : null
     const running = job?.state === "running"
     // the preview reads the tf first: past that, the step list can be read
@@ -201,8 +204,11 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 return fresh
             })
             .catch((error) => setProblem(String(error.message ?? error)))
+    // the steps' status is read once they show (a big .mcap's tf is read in a job first: not while the recorded map
+    // is the offer, so pressing it isn't held up)
+    const stepsWanted = showSteps || !session?.recordedMap
     useEffect(() => {
-        if (!session) {
+        if (!session || !stepsWanted) {
             return
         }
         api.buildDefaults().then((base) => {
@@ -210,10 +216,10 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
             setClassic(tidy({ ...base, ...(session.buildOptions ?? {}), ...(session.postProcess && !session.buildOptions ? { voxelSize: LITE_RECORD_VOXEL } : {}) }))
         })
         load()
-    }, [session?.id])
+    }, [session?.id, stepsWanted])
     // a step finished (here or from the agent): what the recording has now
     useEffect(() => {
-        if (job && (job.state !== "running" || (!status && !readingTf))) {
+        if (stepsWanted && job && (job.state !== "running" || (!status && !readingTf))) {
             load()
         }
     }, [jobState])
@@ -241,17 +247,27 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     // the correction gates the tags the way step 1 does
     const runTf = () => run(api.generateTf(session.id, { ...tfOptions, gates: tagOptions?.gates, sensorFrame: cloud?.isRoot ? tfOptions?.sensorFrame : "", tags: tagOptions }))
     const runGlobal = () => {
-        if (built && !confirming) {
-            setConfirming(true)
+        if (built && confirming !== "generate") {
+            setConfirming("generate")
             return
         }
-        setConfirming(false)
+        setConfirming(null)
         if (lite) {
             run(api.build(session.id, classic ?? {}))
         } else {
             run(api.generateGlobal(session.id, { ...globalOptions, tf: { ...tfOptions, gates: tagOptions?.gates, sensorFrame: cloud?.isRoot ? tfOptions?.sensorFrame : "" }, tags: tagOptions }))
         }
     }
+    const recorded = session.recordedMap
+    const useRecorded = () => {
+        if (built && confirming !== "recorded") {
+            setConfirming("recorded")
+            return
+        }
+        setConfirming(null)
+        run(api.useRecordedMap(session.id))
+    }
+    const stepsShown = stepsWanted
     const a = session.annotations
     const annotationCount = a.boxes.length + a.planes.length + a.points.length + a.planPoints.length + a.areas.length + (a.prisms?.length ?? 0)
 
@@ -290,17 +306,49 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                             <Text small muted>
                                 {built && session.build ? `current: ${session.totalVoxels.toLocaleString()} voxels at ${(session.build.voxelSize * 100).toFixed(0)} cm, built in ${duration(session.build.seconds)}` : ""}
                             </Text>
-                            <Button variant="primary" disabled={running || !ready} data-action="build" onClick={runGlobal}>
-                                {lite ? (built ? "Regenerate…" : "Generate") : built ? "Regenerate corrected map…" : "Generate corrected map"}
-                            </Button>
+                            {stepsShown
+                                ? (
+                                    <Button variant="primary" disabled={running || !ready} data-action="build" onClick={runGlobal}>
+                                        {lite ? (built ? "Regenerate…" : "Generate") : built ? "Regenerate corrected map…" : "Generate corrected map"}
+                                    </Button>
+                                )
+                                : (
+                                    <Button variant="primary" disabled={running} data-action="use-recorded-map" onClick={useRecorded}>
+                                        {`Use ${recorded}${built ? "…" : ""}`}
+                                    </Button>
+                                )}
                         </Row>
                     )
             }
         >
             <Column gap={10}>
+                {recorded && (
+                    <Card
+                        padded
+                        data-recorded-map={recorded}
+                        title={`This recording already has a map: ${recorded}`}
+                        description={`Its last message is used as the aggregated scan, so there's nothing to generate (and nothing is written into the recording). A voxel map is kept as it is.`}
+                        style={{ borderColor: "color-mix(in srgb, var(--ok) 55%, transparent)" }}
+                        actions={
+                            stepsShown && (
+                                <Button size="sm" disabled={running} onClick={useRecorded} data-action="use-recorded-map">
+                                    {`Use ${recorded}${built ? "…" : ""}`}
+                                </Button>
+                            )
+                        }
+                    >
+                        <Row wrap gap={8}>
+                            {stepsShown
+                                ? <Button size="sm" icon="close" onClick={() => setShowSteps(false)} data-action="hide-steps">Skip generating (hide the steps)</Button>
+                                : <Button size="sm" variant="ghost" onClick={() => setShowSteps(true)} data-action="show-steps">Generate from the scans instead…</Button>}
+                        </Row>
+                    </Card>
+                )}
+                {stepsShown && (
                 <Text small muted>
                     Everything is written into the recording itself ({status?.format ?? "…"}): run the whole thing, or any one step below. A step that needs an earlier one the recording doesn't have yet runs it first.
                 </Text>
+                )}
                 {problem && <Alert tone="danger" title="Couldn't read the recording.">{problem}</Alert>}
                 {lite && (
                     <Alert tone="info" title="Not post-processed yet." data-post-process>
@@ -309,8 +357,8 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                     </Alert>
                 )}
                 {!session.writable && !lite && <Alert tone="warn" title="Read-only folder.">The steps write into the recording, and it's in a read-only folder: move it into the recordings folder first.</Alert>}
-                {!ready && !problem && <Text small muted>Reading the recording…</Text>}
-                {ready && !lite && (
+                {stepsShown && !ready && !problem && <Text small muted>Reading the recording…</Text>}
+                {stepsShown && ready && !lite && (
                     <>
                         <StepCard number={1} step="tags" title="Fiducial markers (AprilTag / ArUco)" status={tagStatus} running={running} disabled={!!status.tags.problem || (!tagOptions.raw && !tagOptions.grouped)} run={runTags}>
                             {status.tags.problem && <Alert tone="warn" title="Can't find tags here.">{status.tags.problem}</Alert>}
@@ -447,7 +495,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                         </StepCard>
                     </>
                 )}
-                {ready && lite && classic && (
+                {stepsShown && ready && lite && classic && (
                     <Field inline label="voxel size">
                         <NumberInput size="sm" min={0.01} max={0.5} step={0.01} unit="m" value={classic.voxelSize} onChange={(voxelSize: number) => setClassic({ ...classic, voxelSize })} data-option="voxelSize" style={{ width: 90 }} />
                     </Field>
@@ -455,14 +503,14 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 {confirming && (
                     <Alert
                         tone="warn"
-                        title="Regenerate over the current map?"
+                        title={confirming === "recorded" ? `Replace the current map with ${recorded}?` : "Regenerate over the current map?"}
                         data-regen-warning
                         actions={
                             <>
-                                <Button size="sm" variant="danger" onClick={runGlobal} data-action="confirm-regenerate">
-                                    Yes, regenerate
+                                <Button size="sm" variant="danger" onClick={confirming === "recorded" ? useRecorded : runGlobal} data-action="confirm-regenerate">
+                                    {confirming === "recorded" ? "Yes, replace it" : "Yes, regenerate"}
                                 </Button>
-                                <Button size="sm" onClick={() => setConfirming(false)}>
+                                <Button size="sm" onClick={() => setConfirming(null)}>
                                     Keep the current map
                                 </Button>
                             </>

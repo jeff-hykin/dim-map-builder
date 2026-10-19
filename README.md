@@ -33,6 +33,10 @@ everything else is optional and in any order.
      `global_map_aggregated` (one cloud at its start) and beside it as `<name>_global_map_aggregated.pc2.lcm`; it becomes
      the map in the editor. Optionally an `.rrd` beside the recording too: the map, the paths, each AprilTag drawn as its
      own pattern with its id, and the streams picked at the rates picked (color images at 2 Hz by default).
+- **Already has a map** (a `global_map` PointCloud2: dimos's `global_map` stream, `/global_map` or `<ns>/global_map`):
+  Generate offers it first, with the steps x-ed out: **Use /global_map** makes its last message the map (the aggregated
+  scan; a voxel map keeps its points and its spacing is the voxel size, a denser cloud is thinned to 5 cm). Nothing is
+  written into the recording. "Generate from the scans instead" brings the steps back.
 - **Drop a recording** (`.db` / `.mcap`) on the page to open it with Generate up: one Desktop already has opens in place;
   any other is streamed into Desktop's recordings folder first (a page is handed a dropped file's bytes, not its path).
 - **Not post-processed yet** (a lidar + IMU and no odometry, e.g. a raw [lite_record](https://github.com/jeff-hykin/lite_record)
@@ -56,7 +60,8 @@ everything else is optional and in any order.
   up to the slice's top, the floor itself stays; a lone speck goes in one click; nothing is ever added), **Draw** / **Line** (voxels from the floor up to a height), **Straighten wall** (drag along
   a noisy wall: the wall in the band becomes one clean slab of its own thickness; nothing outside the band changes), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
   **named points and areas** (no-go zones), **3D boxes, planes and points**, **Clean up** (floating specks, outliers,
-  floor, walls, crop, level), **Saved views**. All undoable.
+  floor, walls, crop, level), **Saved views**. All undoable. On a phone or tablet one finger uses the picked tool, two
+  fingers pan and pinch zooms (the 3D view: one finger turns, two pan and zoom), and a double tap closes a polygon.
 - **Save** into the recording, in place: the map, annotations and views become `map/*` streams in the same file
   ([docs/schema.md](docs/schema.md)), ready for a navigation blueprint to read.
 - **Share** (top bar) → **as HTML**: one self-contained `.html` anyone can open offline, no Desktop: the voxels the 3D
@@ -106,7 +111,7 @@ One compiled binary at runtime: no Python, no dimos needed to build or edit maps
 ## Develop
 
     cargo test --workspace                      # all the non-UI logic and every endpoint
-    deno test frontend/src/share/               # the shared map's packing
+    deno test frontend/src/share/ frontend/src/core/  # the shared map's packing, the 2D view's touch gestures
     deno task check-endpoints [--write]         # dimos.yaml's agent: = the served agent.json
     cargo run -p dimos-app-server -- --port 7190 --frontend frontend/dist
     (cd frontend && npm ci && npm run dev)      # the page, against a running Desktop (DESKTOP_URL)

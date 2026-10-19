@@ -33,6 +33,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | `POST api/sessions/{id}/generate/tags` | step 1, fiducial markers from images (a job): `{ raw, grouped, cameraStream, markerLength, dictionary, exclude, gates, grouping, ... }`; `dictionary` is an OpenCV name, an AprilTag family (`DICT_APRILTAG_36h11`, the default, `_36h10`, `_25h9`, `_16h5`) or an ArUco dictionary (`DICT_4X4_50` .. `DICT_7X7_1000`, `DICT_ARUCO_ORIGINAL`, `DICT_ARUCO_MIP_36h12`) |
 | `POST api/sessions/{id}/generate/tf` | step 2, the corrected tf (a job; runs step 1 first when it needs tags the recording lacks): `{ cloudStream, sensorFrame, grandparent, useTags, excludeTags, quality: "fast" \| "high", stitch, tags }` |
 | `POST api/sessions/{id}/generate/global-map` | step 3, the global map (a job; runs step 2 first when the recording has no correction): `{ useCorrectedTf, build, decimation, rrd, tf, tags }` |
+| `POST api/sessions/{id}/generate/recorded-map` | skip Generate: the newest message of the recording's own `global_map` cloud (session `recordedMap`) becomes the map (a job; nothing written into the recording): `{ stream, voxelSize }` |
 | `POST api/sessions/{id}/op` | `{ op, region, params, preview }`: floating, outliers, floor, walls, keepWalls, cropOutside, deleteInside, cropHeight |
 | `POST api/sessions/{id}/transform` | `{ kind: "rotate", degrees }` / `{ kind: "level" }` / `{ kind: "set", transform }` |
 | `GET api/sessions/{id}/floor` | the local floor per storey |

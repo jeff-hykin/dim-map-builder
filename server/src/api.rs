@@ -98,6 +98,7 @@ pub fn summary(app: &App, workspace: &Workspace) -> Value {
         object.insert("bounds".into(), json!(workspace.bounds()));
         object.insert("job".into(), json!(app.job(&session.id)));
         object.insert("postProcess".into(), json!(workspace.post_process));
+        object.insert("recordedMap".into(), json!(workspace.recorded_map));
         let history = &session.history;
         object.insert("history".into(), json!(history[history.len().saturating_sub(30)..]));
     }
@@ -147,7 +148,7 @@ pub fn routes() -> Routes<Arc<App>> {
     };
     Routes::new()
         // the page and what's open
-        .endpoint("GET", "api/status", "The open map, briefly: session id, recording, stage (raw = not built yet / map), postProcess (a lidar + IMU recording with no odometry: why Generate runs lite_record's post_process first), voxel count, bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.", json!({ "session": s("session id (default: the recording open in the page)") }), status)
+        .endpoint("GET", "api/status", "The open map, briefly: session id, recording, stage (raw = not built yet / map), postProcess (a lidar + IMU recording with no odometry: why Generate runs lite_record's post_process first), recordedMap (the recording's own global_map stream, which POST .../generate/recorded-map makes the map without generating), voxel count, bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.", json!({ "session": s("session id (default: the recording open in the page)") }), status)
         .when("you need a quick summary of the open map before working on it")
         .role("context")
         .endpoint("GET", "api/state", "What the page loads: { active (the open session id, or null), session (its full state: annotations, plans, job, history...), last (when nothing is open: the session open before a restart, offered, not loaded), recordingsDir (Desktop's recordings folder) }. Only a recording opened since the server started is open.", json!({}), state)
@@ -182,6 +183,8 @@ pub fn routes() -> Routes<Arc<App>> {
         .when("you need a loop-closure-corrected tf tree written into a recording")
         .endpoint("POST", "api/sessions/{id}/generate/global-map", "Step 3, the global map, in the background: built through the corrected tf (useCorrectedTf, default true: runs step 2 first when the recording has none) with ray tracing, decimated, written into the recording as global_map_aggregated (one cloud at its start) and beside it as <name>_global_map_aggregated.pc2.lcm; it becomes the map in the editor. Options: useCorrectedTf, build {voxelSize, rayTracing, ray {...}, ...}, decimation {voxel, removeOutliers, neighbors, stdRatio}, rrd {enabled, streams [{name, enabled, hz}], map, tags, trajectory} (an .rrd beside the recording).", with_id(json!({ "useCorrectedTf": b("default true"), "build": json!({ "type": "object" }), "decimation": json!({ "type": "object" }), "rrd": json!({ "type": "object" }) })), generate_global)
         .when("you need the corrected global map built and written into a recording")
+        .endpoint("POST", "api/sessions/{id}/generate/recorded-map", "Skip Generate: the newest message of the recording's own global_map PointCloud2 (status recordedMap: dimos's global_map stream, /global_map or <namespace>/global_map) becomes the map, in its own frame, in the background. A voxel map keeps its points (its spacing is the voxel size); a denser cloud is thinned to 5 cm. Nothing is written into the recording. Options: stream (default: recordedMap), voxelSize (m; thin to it).", with_id(json!({ "stream": s("the cloud stream to take the newest message of (default: the recording's global_map)"), "voxelSize": n("thin the map to this voxel, meters (default: keep a voxel map as it is)") })), generate_recorded)
+        .when("the recording already has a global_map and you want it as the map without generating one")
         .endpoint("POST", "api/sessions/{id}/op", "Clean up or crop (undoable). op: floating (small disconnected clusters; params.minVoxels, default 30), outliers (statistical; params.neighbors default 20, params.stdRatio default 2), floor (the floor surface; params.thickness), walls (vertical surfaces; params.minHeight, default 0.3), keepWalls (everything but walls), cropOutside (keep only a box region), deleteInside (remove a box region), cropHeight (keep params.zMin..params.zMax). Returns { label, changed (voxels removed), remaining }; preview=true only counts (and adds preview: the points it would remove).", with_id(json!({ "op": required(s("floating | outliers | floor | walls | keepWalls | cropOutside | deleteInside | cropHeight")), "region": region.clone(), "params": json!({ "type": "object", "description": "the op's tunables: minVoxels, neighbors, stdRatio, thickness, minHeight, zMin, zMax (see above)" }), "preview": b("only count what it would remove, change nothing") })), op)
         .when("you need to remove noise, floor, walls or a region from the map")
         .endpoint("POST", "api/sessions/{id}/transform", "Orient the map (undoable; annotations move with it): kind=rotate spins it about +z through its center by degrees; kind=level tilts it so the main floor is flat at z = 0; kind=set sets the transform {translation, rotation (x,y,z,w)}. Returns { ok: true }.", with_id(json!({ "kind": required(s("rotate | level | set")), "degrees": n("for rotate: degrees about +z"), "transform": json!({ "type": "object", "description": "for set: {translation [x, y, z], rotation [x, y, z, w]}" }) })), transform)
@@ -311,6 +314,7 @@ async fn status(State(app): State<Arc<App>>, Query(args): Args) -> Result<Json<V
         "plans": summary["plans"].as_array().map_or(0, |a| a.len()),
         "job": summary["job"],
         "postProcess": summary["postProcess"],
+        "recordedMap": summary["recordedMap"],
         "canUndo": summary["undoLabel"],
         "unsaved": summary["unsaved"],
         "recent": summary["history"],
@@ -540,6 +544,13 @@ async fn generate_global(State(app): State<Arc<App>>, Path(id): Path<String>, Bo
     let (id, _) = session(&app, &id)?;
     let options = merged(mapping::global::GlobalOptions::default(), &body).context("global map options")?;
     Ok(Json(json!({ "job": app.generate_global(&id, options)? })))
+}
+
+async fn generate_recorded(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): Body) -> Result<Json<Value>> {
+    let (id, _) = session(&app, &id)?;
+    let stream = body["stream"].as_str().map(String::from);
+    let voxel = body["voxelSize"].as_f64().map(|v| v as f32);
+    Ok(Json(json!({ "job": app.use_recorded_map(&id, stream, voxel)? })))
 }
 
 async fn cancel(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {

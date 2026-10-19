@@ -151,7 +151,7 @@ export interface Progress {
 export interface Job {
     id: number
     session: string
-    kind: "open" | "read" | "build" | "preview" | "save" | "tags" | "tf" | "globalMap"
+    kind: "open" | "read" | "build" | "preview" | "save" | "tags" | "tf" | "globalMap" | "recordedMap"
     state: "running" | "done" | "failed" | "cancelled"
     progress: Progress | null
     fraction: number
@@ -220,6 +220,8 @@ export interface Session {
     job: Job | null
     /** why Generate runs lite_record's post_process over the recording first (a raw lite_record recording), or null */
     postProcess: string | null
+    /** the recording's own global_map cloud stream (its newest message can be the map, skipping Generate), or null */
+    recordedMap: string | null
 }
 
 export type Region = { kind: "all" } | { kind: "view"; matrix: number[] } | ({ kind: "box" } & Box3)
@@ -443,6 +445,7 @@ export const api = {
     generateTags: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/tags`, json(options)),
     generateTf: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/tf`, json(options)),
     generateGlobal: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/global-map`, json(options)),
+    useRecordedMap: (id: string, options: { stream?: string; voxelSize?: number } = {}) => call<{ job: Job }>(`api/sessions/${id}/generate/recorded-map`, json(options)),
     op: (id: string, op: string, region: Region, params: Record<string, unknown> = {}, preview = false) =>
         call<OpResult>(`api/sessions/${id}/op`, json({ op, region, params, preview })),
     modify: (id: string, body: Record<string, unknown>) => call<OpResult>(`api/sessions/${id}/modify`, json(body)),

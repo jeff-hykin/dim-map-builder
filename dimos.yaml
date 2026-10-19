@@ -45,8 +45,10 @@ provides:
             when: you need a quick summary of the open map before working on it
             description: >-
                 The open map, briefly: session id, recording, stage (raw = not built yet / map), postProcess (a lidar +
-                IMU recording with no odometry: why Generate runs lite_record's post_process first), voxel count,
-                bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.
+                IMU recording with no odometry: why Generate runs lite_record's post_process first), recordedMap (the
+                recording's own global_map stream, which POST .../generate/recorded-map makes the map without
+                generating), voxel count, bounds, floors, annotation counts, running job, what can be undone, unsaved
+                edits, recent history.
             params:
                 session:
                     type: string
@@ -374,6 +376,27 @@ provides:
                     type: object
                 rrd:
                     type: object
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
+        -
+            method: POST
+            path: 'api/sessions/{id}/generate/recorded-map'
+            when: the recording already has a global_map and you want it as the map without generating one
+            description: >-
+                Skip Generate: the newest message of the recording's own global_map PointCloud2 (status recordedMap:
+                dimos's global_map stream, /global_map or <namespace>/global_map) becomes the map, in its own frame, in
+                the background. A voxel map keeps its points (its spacing is the voxel size); a denser cloud is thinned
+                to 5 cm. Nothing is written into the recording. Options: stream (default: recordedMap), voxelSize (m;
+                thin to it).
+            params:
+                stream:
+                    type: string
+                    description: 'the cloud stream to take the newest message of (default: the recording''s global_map)'
+                voxelSize:
+                    type: number
+                    description: 'thin the map to this voxel, meters (default: keep a voxel map as it is)'
                 id:
                     type: string
                     required: true

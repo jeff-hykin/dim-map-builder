@@ -123,13 +123,14 @@ impl App {
                     ..Default::default()
                 };
                 let unindexed = dimos_recording::format_of(&path)? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(&path);
-                let (session, map, post_process) = if unindexed { (fresh.clone(), None, None) } else { Self::read_for_open(&path, fresh.clone())? };
+                let (session, map, post_process, recorded_map) = if unindexed { (fresh.clone(), None, None, None) } else { Self::read_for_open(&path, fresh.clone())? };
                 self.store.save(&session)?;
                 if let Some(map) = &map {
                     self.store.save_map(&id, map)?;
                 }
                 let mut workspace = Workspace::new(session, map);
                 workspace.post_process = post_process;
+                workspace.recorded_map = recorded_map;
                 let workspace = Arc::new(Mutex::new(workspace));
                 self.workspaces.lock().unwrap().insert(id.clone(), workspace.clone());
                 if unindexed {
@@ -143,20 +144,31 @@ impl App {
         Ok(workspace)
     }
 
-    /// What opening reads from the recording: an earlier save to restore (else `fresh`), and whether it needs
-    /// lite_record's post_process.
-    fn read_for_open(path: &std::path::Path, fresh: Session) -> Result<(Session, Option<crate::session::MapData>, Option<String>)> {
+    /// What opening reads from the recording: an earlier save to restore (else `fresh`), whether it needs
+    /// lite_record's post_process, and its own `global_map` stream if it has one.
+    fn read_for_open(path: &std::path::Path, fresh: Session) -> Result<(Session, Option<crate::session::MapData>, Option<String>, Option<String>)> {
         let recording = Recording::open(path)?;
         let post_process = crate::lite_record::pending_with(&recording.stream_list()?, |s| recording.has_messages(&s.name).unwrap_or(false));
+        let recorded_map = mapping::recorded::find(&recording)?;
         Ok(match persist::load(&recording, fresh.clone()) {
-            Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map), post_process),
-            Ok(None) => (fresh, None, post_process),
+            Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map), post_process, recorded_map),
+            Ok(None) => (fresh, None, post_process, recorded_map),
             Err(error) => {
                 let mut session = fresh;
                 session.history.push(format!("Couldn't restore the saved map: {error:#}"));
-                (session, None, post_process)
+                (session, None, post_process, recorded_map)
             }
         })
+    }
+
+    /// The recording's own `global_map` stream, for a session restored from disk (None for an .mcap with no index:
+    /// listing its streams would read all of it).
+    fn recorded_map_of(path: &std::path::Path) -> Option<String> {
+        let unindexed = dimos_recording::format_of(path).ok()? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(path);
+        if unindexed || !path.is_file() {
+            return None;
+        }
+        mapping::recorded::find(&Recording::open(path).ok()?).ok().flatten()
     }
 
     /// An .mcap with no summary: walk it once (bytes read / total, ETA, cancel), then restore an earlier save into the
@@ -173,7 +185,7 @@ impl App {
                 return Err(if cancel.load(Ordering::Relaxed) { anyhow::anyhow!(Cancelled) } else { error });
             }
             drop(file);
-            let (session, map, post_process) = Self::read_for_open(&path, fresh)?;
+            let (session, map, post_process, recorded_map) = Self::read_for_open(&path, fresh)?;
             let shared = app.require(&session_id)?;
             let mut ws = shared.lock().unwrap();
             if ws.discarded {
@@ -187,6 +199,7 @@ impl App {
                 *ws = Workspace::new(Session { view, ..session }, map);
             }
             ws.post_process = post_process;
+            ws.recorded_map = recorded_map;
             app.store.save(&ws.session)?;
             app.emit(json!({ "type": "session", "id": session_id, "revision": ws.session.revision }));
             Ok(())
@@ -205,7 +218,10 @@ impl App {
             session.stage = "raw".into();
             session.history.push("The built map's file was missing: build the map again".into());
         }
-        let workspace = Arc::new(Mutex::new(Workspace::new(session, map)));
+        let recorded_map = Self::recorded_map_of(std::path::Path::new(&session.recording_path));
+        let mut workspace = Workspace::new(session, map);
+        workspace.recorded_map = recorded_map;
+        let workspace = Arc::new(Mutex::new(workspace));
         self.workspaces.lock().unwrap().insert(id.into(), workspace.clone());
         Ok(Some(workspace))
     }
@@ -376,9 +392,12 @@ impl App {
                 shared.lock().unwrap().session.history.push(format!("Post-processing with lite_record ({reason})"));
                 let output = crate::lite_record::post_process(&binary, std::path::Path::new(&path), report, cancel)?;
                 post_notes = crate::lite_record::summary_lines(&output);
-                let still = crate::lite_record::pending(&Recording::open(std::path::Path::new(&path))?.streams()?);
+                let processed = Recording::open(std::path::Path::new(&path))?;
+                let still = crate::lite_record::pending(&processed.streams()?);
+                let recorded_map = mapping::recorded::find(&processed)?;
                 let mut ws = shared.lock().unwrap();
                 ws.post_process = still;
+                ws.recorded_map = recorded_map;
                 ws.session.history.push(format!("lite_record post-processed {path}"));
                 ws.session.history.extend(post_notes.iter().cloned());
                 app.store.save(&ws.session)?;
@@ -393,6 +412,29 @@ impl App {
                 return Err(anyhow::anyhow!(Cancelled));
             }
             app.install_map(&session_id, result, options, post_notes, started)
+        })
+    }
+
+    /// The recording's own `global_map` (its newest message) becomes the session's map in place of Generate:
+    /// `stream` (default: the one found when it was opened), thinned to `voxel` when given (mapping::recorded::read).
+    /// Nothing is written into the recording, so a read-only one works too.
+    pub fn use_recorded_map(self: &Arc<Self>, id: &str, stream: Option<String>, voxel: Option<f32>) -> Result<Job> {
+        let shared = self.require(id)?;
+        let stream = match stream.filter(|s| !s.is_empty()) {
+            Some(stream) => stream,
+            None => shared.lock().unwrap().recorded_map.clone().context("this recording has no global_map stream: generate the map instead")?,
+        };
+        let session_id = id.to_string();
+        self.start_job(id, "recordedMap", move |app, report, cancel| {
+            let started = now_seconds();
+            let path = app.require(&session_id)?.lock().unwrap().session.recording_path.clone();
+            report(Progress { overall: Some(0.1), stage: format!("Reading the newest message on {stream}"), stage_index: 0, stage_count: 1, done: 0, total: 1, note: String::new() });
+            let result = mapping::recorded::read(&Recording::open(std::path::Path::new(&path))?, &stream, voxel)?;
+            if cancel.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!(Cancelled));
+            }
+            let options = BuildOptions { cloud_stream: stream.clone(), world_frame: result.world_frame.clone(), voxel_size: result.voxel_size, ..Default::default() };
+            app.install_map(&session_id, result, options, vec![format!("the map is {stream}'s newest message, not generated")], started)
         })
     }
 
@@ -582,6 +624,45 @@ mod tests {
         drop(ws);
         // the same file again (another session's open, or after a restart): walked already, nothing to wait for
         assert!(dimos_recording::mcap_index::is_indexed(&path));
+    }
+
+    /// a recording with its own global_map says so when opened, and its newest message becomes the map with no
+    /// Generate (read-only is fine: nothing is written into it); one without has no shortcut
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_recorded_global_map_is_the_map_without_generating() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.mcap");
+        let cloud = |at: f64, points: &[[f32; 3]]| dimos_recording::lcm::encode_xyz_cloud(&dimos_recording::lcm::Header::at(at, "world"), points, None);
+        let grid: Vec<[f32; 3]> = (0..400).map(|i| [(i % 20) as f32 * 0.05, (i / 20) as f32 * 0.05, 0.0]).collect();
+        let pc2 = dimos_recording::lcm::POINT_CLOUD2_TYPE;
+        dimos_recording::mcap_io::write_fixture(&path, &[("/lidar", "lcm", pc2, 1.0, cloud(1.0, &[[9.0, 9.0, 9.0]])), ("/global_map", "lcm", pc2, 1.0, cloud(1.0, &grid[..10])), ("/global_map", "lcm", pc2, 2.0, cloud(2.0, &grid))]);
+        let before = std::fs::read(&path).unwrap();
+        let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let held = app.open("", &path.display().to_string(), "r", false).unwrap();
+        let id = held.lock().unwrap().session.id.clone();
+        assert_eq!(held.lock().unwrap().recorded_map.as_deref(), Some("/global_map"));
+        app.use_recorded_map(&id, None, None).unwrap();
+        let started = std::time::Instant::now();
+        while app.job(&id).unwrap().state == "running" {
+            assert!(started.elapsed() < Duration::from_secs(20));
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let job = app.job(&id).unwrap();
+        assert_eq!((job.kind.as_str(), job.state.as_str()), ("recordedMap", "done"), "{:?}", job.error);
+        let ws = held.lock().unwrap();
+        assert_eq!(ws.session.stage, "map");
+        let map = ws.map.as_ref().unwrap();
+        assert_eq!((map.points.len(), map.voxel_size), (400, 0.05), "the newest message, kept on its grid");
+        assert_eq!(ws.session.build.as_ref().unwrap().world_frame, "world");
+        drop(ws);
+        assert_eq!(std::fs::read(&path).unwrap(), before, "the recording is untouched");
+
+        let plain = dir.path().join("plain.mcap");
+        dimos_recording::mcap_io::write_fixture(&plain, &[("/lidar", "lcm", pc2, 1.0, cloud(1.0, &[[9.0, 9.0, 9.0]]))]);
+        let held = app.open("", &plain.display().to_string(), "plain", true).unwrap();
+        let id = held.lock().unwrap().session.id.clone();
+        assert!(held.lock().unwrap().recorded_map.is_none());
+        assert!(app.use_recorded_map(&id, None, None).unwrap_err().to_string().contains("no global_map"));
     }
 
     /// a finished .mcap (or a .db) opens with no job: its summary says what's in it

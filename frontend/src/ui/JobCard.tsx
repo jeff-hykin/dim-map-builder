@@ -23,6 +23,7 @@ const TITLES: Record<string, string> = {
     tags: "Finding fiducial markers",
     tf: "Correcting the tf tree",
     globalMap: "Generating the global map",
+    recordedMap: "Reading the recording's global_map",
 }
 
 export function JobCard({ job, onCancel, style }: { job: Job; onCancel?: () => void; style?: CSSProperties }) {

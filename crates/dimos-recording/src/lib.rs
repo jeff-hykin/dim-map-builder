@@ -334,6 +334,37 @@ impl Recording {
         Ok(edges)
     }
 
+    /// The newest point cloud on `stream` (by log time), decoded; None when it has none. Only the newest payload is
+    /// decoded (a recorded map can be large and logged many times).
+    pub fn latest_cloud(&self, stream: &str) -> Result<Option<Cloud>> {
+        let newest = match &self.backend {
+            Backend::Db(connection, streams, _) => {
+                let info = streams.iter().find(|s| s.name == stream).with_context(|| format!("no stream {stream}"))?;
+                db::latest(connection, stream)?.map(|(ts, payload)| (ts, "lcm".to_string(), info.kind.clone(), payload))
+            }
+            Backend::Mcap(file) => {
+                let mut newest: Option<(f64, String, String, Vec<u8>)> = None;
+                file.for_each(stream, |ts, encoding, kind, payload| {
+                    if newest.as_ref().is_none_or(|(at, ..)| ts >= *at) {
+                        newest = Some((ts, encoding.to_string(), kind.to_string(), payload.to_vec()));
+                    }
+                    Ok(true)
+                })?;
+                newest
+            }
+        };
+        let Some((ts, encoding, kind, payload)) = newest else { return Ok(None) };
+        match decode(&encoding, &kind, &payload).with_context(|| format!("the newest message on {stream}"))? {
+            Some(Message::Cloud(mut cloud)) => {
+                if cloud.ts == 0.0 {
+                    cloud.ts = ts;
+                }
+                Ok(Some(cloud))
+            }
+            _ => bail!("{stream} isn't a point cloud ({kind})"),
+        }
+    }
+
     /// The newest raw payload of a stream / topic (for state the Map Editor saved earlier).
     pub fn latest(&self, stream: &str) -> Result<Option<(f64, Vec<u8>)>> {
         match &self.backend {
@@ -398,5 +429,32 @@ mod tests {
         }
         assert_eq!(clouds, vec![vec![[1.0, 2.0, 3.0]], vec![[4.0, 5.0, 6.0]]]);
         assert_eq!(recording.tf_edges().unwrap()[0].child, "base_link");
+    }
+
+    /// latest_cloud decodes only the newest message, in an .mcap (cdr) and a .db (lcm) alike
+    #[test]
+    fn latest_cloud_is_the_newest_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("map.mcap");
+        mcap_io::write_fixture(
+            &path,
+            &[
+                ("/global_map", "cdr", "sensor_msgs/msg/PointCloud2", 3.0, cdr::tests::cloud_cdr(3, "world", &[[3.0, 0.0, 0.0], [3.0, 1.0, 0.0]])),
+                ("/global_map", "cdr", "sensor_msgs/msg/PointCloud2", 1.0, cdr::tests::cloud_cdr(1, "world", &[[1.0, 0.0, 0.0]])),
+                ("/tf", "cdr", "tf2_msgs/msg/TFMessage", 4.0, cdr::tests::tf_cdr(4, "odom", "base_link", [1.0, 0.0, 0.0])),
+            ],
+        );
+        let recording = Recording::open(&path).unwrap();
+        let cloud = recording.latest_cloud("/global_map").unwrap().unwrap();
+        assert_eq!((cloud.frame_id.as_str(), cloud.points), ("world", vec![[3.0, 0.0, 0.0], [3.0, 1.0, 0.0]]));
+        assert!(recording.latest_cloud("/tf").is_err(), "not a cloud");
+
+        let path = dir.path().join("map.db");
+        let mut connection = db::Connection::open(&path).unwrap();
+        let cloud = |x: f32| lcm::encode_xyz_cloud(&lcm::Header::at(x as f64, "world"), &[[x, 0.0, 0.0]], None);
+        db::write_stream(&mut connection, "global_map", "sensor_msgs.PointCloud2", &[(2.0, cloud(2.0)), (5.0, cloud(5.0)), (1.0, cloud(1.0))]).unwrap();
+        drop(connection);
+        let recording = Recording::open(&path).unwrap();
+        assert_eq!(recording.latest_cloud("global_map").unwrap().unwrap().points, vec![[5.0, 0.0, 0.0]]);
     }
 }

@@ -15,6 +15,7 @@ pub mod graph;
 pub mod icp;
 pub mod pgo;
 pub mod pipeline;
+pub mod recorded;
 pub mod rrd;
 pub mod tags;
 pub mod tf;
