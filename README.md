@@ -34,9 +34,9 @@ everything else is optional and in any order.
      the map in the editor. Optionally an `.rrd` beside the recording too: the map, the paths, each AprilTag drawn as its
      own pattern with its id, and the streams picked at the rates picked (color images at 2 Hz by default).
 - **Already has a map** (a `global_map` PointCloud2: dimos's `global_map` stream, `/global_map` or `<ns>/global_map`):
-  Generate offers it first, with the steps x-ed out: **Use /global_map** makes its last message the map (the aggregated
+  Generate offers it first (the highlighted button): **Use /global_map** makes its last message the map (the aggregated
   scan; a voxel map keeps its points and its spacing is the voxel size, a denser cloud is thinned to 5 cm). Nothing is
-  written into the recording. "Generate from the scans instead" brings the steps back.
+  written into the recording. Generate's steps and settings are under **Details** (closed: the defaults are the usual path).
 - **Drop a recording** (`.db` / `.mcap`) on the page to open it with Generate up: one Desktop already has opens in place;
   any other is streamed into Desktop's recordings folder first (a page is handed a dropped file's bytes, not its path).
 - **Not post-processed yet** (a lidar + IMU and no odometry, e.g. a raw [lite_record](https://github.com/jeff-hykin/lite_record)

@@ -168,8 +168,10 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const [classic, setClassic] = useState<Options | null>(null)
     /** a press that would replace the current map, waiting for a yes: Generate's, or the recorded map's */
     const [confirming, setConfirming] = useState<"generate" | "recorded" | null>(null)
-    /** with a recorded global_map the steps start x-ed out (it is the map); "Generate from the scans instead" shows them */
+    /** with a recorded global_map the steps aren't read until Details opens (it is the map) */
     const [showSteps, setShowSteps] = useState(!session?.recordedMap)
+    /** the steps and their settings: closed, since Generate's defaults are the usual path */
+    const [detailsOpen, setDetailsOpen] = useState(false)
     const job = session?.job && session.job.kind !== "save" ? session.job : null
     const running = job?.state === "running"
     // the preview reads the tf first: past that, the step list can be read
@@ -307,17 +309,11 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                             <Text small muted>
                                 {built && session.build ? `current: ${session.totalVoxels.toLocaleString()} voxels at ${(session.build.voxelSize * 100).toFixed(0)} cm, built in ${duration(session.build.seconds)}` : ""}
                             </Text>
-                            {stepsShown
-                                ? (
-                                    <Button variant="primary" disabled={running || !ready || !session.writable} data-action="build" onClick={runGlobal}>
-                                        {lite ? (built ? "Regenerate…" : "Generate") : built ? "Regenerate corrected map…" : "Generate corrected map"}
-                                    </Button>
-                                )
-                                : (
-                                    <Button variant="primary" disabled={running} data-action="use-recorded-map" onClick={useRecorded}>
-                                        {`Use ${recorded}${built ? "…" : ""}`}
-                                    </Button>
-                                )}
+                            {stepsShown && (
+                                <Button variant={recorded ? undefined : "primary"} disabled={running || !ready || !session.writable} data-action="build" onClick={runGlobal}>
+                                    {lite ? (built ? "Regenerate…" : "Generate") : built ? "Regenerate corrected map…" : "Generate corrected map"}
+                                </Button>
+                            )}
                         </Row>
                     )
             }
@@ -331,32 +327,31 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                         description={`Its last message is used as the aggregated scan, so there's nothing to generate (and nothing is written into the recording). A voxel map is kept as it is.`}
                         style={{ borderColor: "color-mix(in srgb, var(--ok) 55%, transparent)" }}
                         actions={
-                            stepsShown && (
-                                <Button size="sm" disabled={running} onClick={useRecorded} data-action="use-recorded-map">
-                                    {`Use ${recorded}${built ? "…" : ""}`}
-                                </Button>
-                            )
+                            <Button variant="primary" disabled={running} onClick={useRecorded} data-action="use-recorded-map">
+                                {`Use ${recorded}${built ? "…" : ""}`}
+                            </Button>
                         }
-                    >
-                        <Row wrap gap={8}>
-                            {stepsShown
-                                ? <Button size="sm" icon="close" onClick={() => setShowSteps(false)} data-action="hide-steps">Skip generating (hide the steps)</Button>
-                                : <Button size="sm" variant="ghost" onClick={() => setShowSteps(true)} data-action="show-steps">Generate from the scans instead…</Button>}
-                        </Row>
-                    </Card>
-                )}
-                {stepsShown && (
-                <Text small muted>
-                    Everything is written into the recording itself ({status?.format ?? "…"}): run the whole thing, or any one step below. A step that needs an earlier one the recording doesn't have yet runs it first.
-                </Text>
+                    />
                 )}
                 {problem && <Alert tone="danger" title="Couldn't read the recording.">{problem}</Alert>}
+                {/* it only matters for generating: with a recorded map, inside Details */}
+                {!session.writable && !recorded && <ReadOnlyAlert session={session} doing={lite ? "Post-processing" : "Every step"} />}
                 {lite && (
                     <Alert tone="info" title="Not post-processed yet." data-post-process>
                         Generate first runs lite_record's post-processing on it (its Post process button): odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording in place. Then the map is built from the corrected scans; the steps below work once it has its frame tree.
                     </Alert>
                 )}
-                {!session.writable && <ReadOnlyAlert session={session} doing={lite ? "Post-processing" : "Every step"} />}
+                <Panel collapsible open={detailsOpen} onOpenChange={(open: boolean) => {
+                    setDetailsOpen(open)
+                    if (open) {
+                        setShowSteps(true)
+                    }
+                }} title={recorded ? "Details · generate from the scans instead" : "Details · steps and settings"} data-details>
+                <Column gap={10}>
+                {!session.writable && recorded && <ReadOnlyAlert session={session} doing={lite ? "Post-processing" : "Every step"} />}
+                <Text small muted>
+                    Everything is written into the recording itself ({status?.format ?? "…"}): run the whole thing, or any one step below. A step that needs an earlier one the recording doesn't have yet runs it first.
+                </Text>
                 {stepsShown && !ready && !problem && <Text small muted>Reading the recording…</Text>}
                 {stepsShown && ready && !lite && (
                     <>
@@ -500,6 +495,8 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                         <NumberInput size="sm" min={0.01} max={0.5} step={0.01} unit="m" value={classic.voxelSize} onChange={(voxelSize: number) => setClassic({ ...classic, voxelSize })} data-option="voxelSize" style={{ width: 90 }} />
                     </Field>
                 )}
+                </Column>
+                </Panel>
                 {confirming && (
                     <Alert
                         tone="warn"
