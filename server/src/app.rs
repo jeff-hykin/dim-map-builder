@@ -171,6 +171,16 @@ impl App {
         mapping::recorded::find(&Recording::open(path).ok()?).ok().flatten()
     }
 
+    /// Whether a restored session's recording still needs lite_record's post_process (as `read_for_open` decides).
+    fn post_process_of(path: &std::path::Path) -> Option<String> {
+        let unindexed = dimos_recording::format_of(path).ok()? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(path);
+        if unindexed || !path.is_file() {
+            return None;
+        }
+        let recording = Recording::open(path).ok()?;
+        crate::lite_record::pending_with(&recording.stream_list().ok()?, |s| recording.has_messages(&s.name).unwrap_or(false))
+    }
+
     /// An .mcap with no summary: walk it once (bytes read / total, ETA, cancel), then restore an earlier save into the
     /// session if nothing was done to it meanwhile.
     fn start_open_job(self: &Arc<Self>, id: &str, path: PathBuf, fresh: Session) -> Result<Job> {
@@ -218,9 +228,11 @@ impl App {
             session.stage = "raw".into();
             session.history.push("The built map's file was missing: build the map again".into());
         }
-        let recorded_map = Self::recorded_map_of(std::path::Path::new(&session.recording_path));
+        let path = std::path::Path::new(&session.recording_path);
+        let (recorded_map, post_process) = (Self::recorded_map_of(path), Self::post_process_of(path));
         let mut workspace = Workspace::new(session, map);
         workspace.recorded_map = recorded_map;
+        workspace.post_process = post_process;
         let workspace = Arc::new(Mutex::new(workspace));
         self.workspaces.lock().unwrap().insert(id.into(), workspace.clone());
         Ok(Some(workspace))
@@ -590,6 +602,22 @@ mod tests {
         assert!(app.store.last_open().is_none());
         assert!(app.mutate(&id, |w| w.add_point("x", [0.0; 3], "user")).is_err());
         assert!(app.store.load(&id).unwrap().is_none());
+    }
+
+    /// a raw lidar + IMU recording still offers lite_record's post_process after a restart restores its session
+    #[test]
+    fn a_restored_session_still_needs_post_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let recording = dir.path().join("r.db");
+        let mut db = dimos_recording::db::Connection::open(&recording).unwrap();
+        dimos_recording::db::write_stream(&mut db, "rig/lidar", "sensor_msgs.PointCloud2", &[]).unwrap();
+        dimos_recording::db::write_stream(&mut db, "rig/imu", "sensor_msgs.Imu", &[]).unwrap();
+        drop(db);
+        let opened = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let id = opened.open("r.db", &recording.display().to_string(), "r", true).unwrap().lock().unwrap().session.id.clone();
+        assert!(opened.require(&id).unwrap().lock().unwrap().post_process.is_some());
+        let restarted = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        assert!(restarted.require(&id).unwrap().lock().unwrap().post_process.is_some());
     }
 
     /// an .mcap with no summary isn't read while opening: open returns, an open job reads it and restores its save
