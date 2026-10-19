@@ -254,6 +254,22 @@ export const recordings = {
     metadata: (id: string) => call<RecordingMetadata>(`../../recordings/${id.split("/").map(encodeURIComponent).join("/")}`),
 }
 
+export interface BrowseEntry {
+    name: string
+    path: string
+    isDir: boolean
+    size: number
+    modified: number
+    /** it and its folder take writes (the Generate steps and Save write into the recording) */
+    writable: boolean
+}
+
+/** any folder on this machine (GET api/browse): a browser can't hand over a file's path, so the server lists them */
+export const files = {
+    /** `dir` empty = $HOME; a recording's path lists its folder with it `selected` */
+    browse: (dir = "") => call<{ dir: string; parent: string | null; home: string; selected: string | null; entries: BrowseEntry[] }>(`api/browse?dir=${encodeURIComponent(dir)}`),
+}
+
 /** Dimensional cloud login (Desktop's dimos server, docs/api.md in dimos-desktop) */
 export interface CloudAccount {
     loggedIn: boolean

@@ -18,6 +18,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | Method + path | What |
 | --- | --- |
 | `PUT api/import?path=` (plumbing) | a dropped recording's bytes, streamed into a free path Desktop's `POST /recordings/new` handed out |
+| `GET api/browse?dir=` (plumbing) | the Open panel's file browser: a folder's subfolders and .db / .mcap files (name, path, isDir, size, modified, writable), `$HOME` by default; a recording's path lists its folder with it `selected` |
 | `GET api/status` (context) | the open map briefly: recording, stage, voxels, bounds, floors, annotation counts, job, unsaved, recent history |
 | `GET api/state` | what the page loads: `{ active, session, last, recordingsDir }` (only a recording opened since the server started is open; `last` is the one before, offered on the empty page) |
 | `POST api/open` | `{ path, name?, id?, writable? }`: open a recording; every page follows (`opened` event). Returns at once: only the index is read (an `.mcap`'s summary, a `.db`'s stream list); an `.mcap` without a summary is read in an `open` job |

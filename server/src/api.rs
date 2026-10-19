@@ -228,6 +228,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .plumbing("GET", "api/sessions/{id}/preview.bin", preview)
         .plumbing("PUT", "api/sessions/{id}/view", report_view)
         .plumbing("POST", "api/captures/{request}", capture)
+        .plumbing("GET", "api/browse", browse)
         .plumbing("GET", "agent.json", || async { Json(routes().manifest(WHEN, DESCRIPTION)) })
 }
 
@@ -273,6 +274,63 @@ async fn import(State(app): State<Arc<App>>, Query(args): Args, body: axum::body
     }
     std::fs::rename(&partial, &path).context("finishing the file")?;
     Ok(Json(json!({ "path": path, "size": size })))
+}
+
+/// `GET api/browse?dir=<path>`: a folder's subfolders and recordings (.db / .mcap), for the page's "Browse files"
+/// (a browser can't hand over a file's path). `dir` defaults to $HOME and takes `~`; a recording's path lists its folder
+/// with it `selected`. Page plumbing: an agent opens a path with POST api/open.
+async fn browse(Query(args): Args) -> Result<Json<Value>> {
+    let dir = args.get("dir").cloned().unwrap_or_default();
+    Ok(Json(blocking(move || browse_dir(&dir)).await?))
+}
+
+fn browse_dir(dir: &str) -> anyhow::Result<Value> {
+    use std::path::PathBuf;
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
+    let path = match dir.trim() {
+        "" | "~" => home.clone(),
+        typed => typed.strip_prefix("~/").map_or_else(|| PathBuf::from(typed), |rest| home.join(rest)),
+    };
+    anyhow::ensure!(path.is_absolute(), "{} isn't an absolute path", path.display());
+    let (folder, selected) = if path.is_file() {
+        dimos_recording::format_of(&path)?;
+        (path.parent().map(PathBuf::from).unwrap_or_default(), path.file_name().map(|n| n.to_string_lossy().to_string()))
+    } else {
+        (path.clone(), None)
+    };
+    let folder = std::fs::canonicalize(&folder).with_context(|| format!("no such folder: {}", folder.display()))?;
+    let mut entries: Vec<Value> = std::fs::read_dir(&folder)
+        .with_context(|| format!("can't read {}", folder.display()))?
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let path = entry.path();
+            // follows a symlink: a linked folder is a folder
+            let meta = std::fs::metadata(&path).ok()?;
+            let is_dir = meta.is_dir();
+            if name.starts_with('.') || (!is_dir && dimos_recording::format_of(&path).is_err()) {
+                return None;
+            }
+            let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0.0, |d| d.as_secs_f64());
+            // the Generate steps write into the recording (and beside it): its folder must take writes too
+            let writable = can_write(&path) && (is_dir || can_write(&folder));
+            Some(json!({ "name": name, "path": path, "isDir": is_dir, "size": if is_dir { 0 } else { meta.len() }, "modified": modified, "writable": writable }))
+        })
+        .collect();
+    // folders by name, then recordings newest first
+    entries.sort_by(|a, b| {
+        let is_dir = |e: &Value| e["isDir"].as_bool().unwrap_or(false);
+        let name = |e: &Value| e["name"].as_str().unwrap_or("").to_lowercase();
+        let modified = |e: &Value| e["modified"].as_f64().unwrap_or(0.0);
+        is_dir(b).cmp(&is_dir(a)).then_with(|| if is_dir(a) { name(a).cmp(&name(b)) } else { modified(b).total_cmp(&modified(a)) })
+    });
+    Ok(json!({ "dir": folder, "parent": folder.parent(), "home": home, "selected": selected, "entries": entries }))
+}
+
+/// whether this process may write `path` (its permissions for this user, not just the mode bits)
+fn can_write(path: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(path.as_os_str().as_bytes()).is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
 }
 
 fn bool_arg(args: &HashMap<String, String>, name: &str, default: bool) -> bool {
@@ -1041,6 +1099,41 @@ mod tests {
         let (_, state) = call(&router, "GET", "/api/state", None).await;
         assert!(state["active"].is_null() && state["session"].is_null(), "{state}");
         assert_eq!(state["last"]["path"], dir.path().join("r.db").display().to_string());
+    }
+
+    #[tokio::test]
+    async fn browse_lists_folders_and_recordings_anywhere_and_opens_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_, router, dir) = app();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join("sub")).unwrap();
+        let path = recording(&elsewhere);
+        std::fs::write(elsewhere.join("notes.txt"), "").unwrap();
+        std::fs::write(elsewhere.join(".hidden.db"), "").unwrap();
+        let query = |p: &std::path::Path| format!("/api/browse?dir={}", p.display().to_string().replace(' ', "%20"));
+        let (status, listed) = call(&router, "GET", &query(&elsewhere), None).await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        let names: Vec<_> = listed["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["sub", "r.db"], "folders first, recordings only, no dotfiles");
+        assert_eq!(listed["parent"], std::fs::canonicalize(dir.path()).unwrap().display().to_string());
+        let file = &listed["entries"][1];
+        assert!(file["writable"].as_bool().unwrap() && !file["isDir"].as_bool().unwrap() && file["size"].as_u64().unwrap() > 0);
+        // a recording's own path lists its folder, with it selected; a read-only folder's recording says so
+        let (_, listed) = call(&router, "GET", &query(std::path::Path::new(&path)), None).await;
+        assert_eq!(listed["selected"], "r.db");
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let (_, locked) = call(&router, "GET", &query(&elsewhere), None).await;
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(locked["entries"][1]["writable"], false, "{locked}");
+        assert_eq!(call(&router, "GET", &query(&elsewhere.join("nope")), None).await.0, StatusCode::NOT_FOUND);
+        assert_eq!(call(&router, "GET", "/api/browse?dir=relative", None).await.0, StatusCode::BAD_REQUEST);
+        assert_eq!(call(&router, "GET", &query(&elsewhere.join("notes.txt")), None).await.0, StatusCode::BAD_REQUEST);
+        assert_eq!(call(&router, "GET", "/api/browse", None).await.0, StatusCode::OK, "$HOME");
+        // outside the recordings folder: opened by its path, which is its id
+        let (status, opened) = call(&router, "POST", "/api/open", Some(json!({ "path": path, "id": path, "name": "r.db", "writable": true }))).await;
+        assert_eq!(status, StatusCode::OK, "{opened}");
+        assert_eq!(opened["recordingPath"], path);
+        assert_eq!(opened["writable"], true);
     }
 
     #[tokio::test]

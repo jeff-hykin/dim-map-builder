@@ -21,6 +21,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "fs", "io-util"] }
 http-body-util = "0.1"
+libc = "0.2"
 tower-http = { version = "0.6", features = ["fs", "limit"] }
 
 [dev-dependencies]

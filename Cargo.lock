@@ -1326,6 +1326,7 @@ dependencies = [
  "clap",
  "dimos-recording",
  "http-body-util",
+ "libc",
  "mapping",
  "nalgebra 0.33.3",
  "serde",

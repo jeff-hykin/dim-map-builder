@@ -28,6 +28,7 @@ provides:
         - api/sessions/*
         - api/ui/*
         - api/events/*
+        - GET api/browse # the Open panel's file browser: lists any folder on this machine
     when: 'you need to build, clean or annotate a 3D map from a recording'
     description: >-
         Map Editor: build, clean, annotate and save a 3D voxel map of a robot's recording, in the 'map' frame: meters,
