@@ -32,7 +32,7 @@ export function PlacesPanel({ context }: { context: Context }) {
                 />
                 {tool.tool === "area" && <Select size="sm" value={tool.kind} onChange={(kind: string) => planTool.update({ kind })} options={KINDS} />}
             </Row>
-            <Text small muted>{tool.tool === "point" ? "Click the 2D view to place it." : "Click corners; Enter or double-click closes the area, Esc cancels, Backspace drops the last corner."}</Text>
+            <Text small muted>{tool.tool === "point" ? "Click the 2D view to place it." : "Click corners; Enter or a double-click (double tap) closes the area, Esc cancels, Backspace drops the last corner."}</Text>
             <Heading level={3}>Named points ({points.length})</Heading>
             <List>
                 {points.map((p) => (

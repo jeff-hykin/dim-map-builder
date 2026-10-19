@@ -1,7 +1,8 @@
 // The 2D view: a top-down slice of the current voxels with the named points and areas, the polygon annotations, and
-// the paint tools' strokes. As the main view it pans (right/middle drag, or the
-// pan tool) and zooms (wheel), and its camera is kept with the session; as the minimap it frames the map, shows where
-// the 3D camera is and what it sees, and a click or drag there moves the 3D camera.
+// the paint tools' strokes. As the main view it pans (right/middle drag, two fingers, or a left drag / one finger with
+// nothing picked) and zooms (wheel, pinch); a left drag or one finger uses the picked tool. Its camera is kept with
+// the session; as the minimap it frames the map, shows where the 3D camera is and what it sees, and a click or drag
+// there moves the 3D camera.
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type PrismAnnotation, type SavedView, type Slice } from "../core/api.ts"
 import { Store, useStore } from "../core/store.ts"
@@ -11,6 +12,7 @@ import { gradientCss } from "dimos-react/three"
 import { ANNOTATION_COLORS } from "../core/colors.ts"
 import type { Context, View2d } from "./context.ts"
 import { modifyTool, planTool, polygonTool } from "./tools.ts"
+import { classifyPress, DoubleTap, pinchView, type PressKind, Touches, zoomAt } from "../core/gestures.ts"
 
 const AREA_COLORS: Record<string, string> = { "no-go": ANNOTATION_COLORS.removal, zone: ANNOTATION_COLORS.agent, slow: ANNOTATION_COLORS.selected }
 const PRISM_COLOR = ANNOTATION_COLORS.user
@@ -105,6 +107,14 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
     const press = useRef<{ x: number; y: number } | null>(null)
     const panning = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null)
     const dragVertex = useRef<{ id: string; index: number; polygon: [number, number][] } | null>(null)
+    /** the pointer pressing (the mouse, or the first finger) and what its press does */
+    const primary = useRef<number | null>(null)
+    const pressKind = useRef<PressKind>("tool")
+    /** the fingers down, a pinch in progress (the camera and the two fingers when it began), double taps */
+    const touches = useMemo(() => new Touches(), [])
+    const pinch = useRef<{ start: View2d; a: [number, number]; b: [number, number] } | null>(null)
+    const doubleTap = useMemo(() => new DoubleTap(), [])
+    const lastPointer = useRef("mouse")
     const [, redraw] = useState(0)
     /** the latest render's painter; pointer moves repaint through it once per frame, without a React render */
     const paint = useRef<() => void>(() => {})
@@ -605,30 +615,62 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 await current().refresh()
             }
         }
-        const down = (event: MouseEvent) => {
+        /** drops whatever the press started (a stroke, a corner drag, a pan) without applying it */
+        const cancelPress = () => {
+            press.current = null
+            panning.current = null
+            dragVertex.current = null
+            primary.current = null
+            if (stroke.current) {
+                stroke.current = null
+                requestPaint()
+            }
+        }
+        // pointer events, not mouse events: a finger drag sends no mousemove (only a tap gets mouse events, afterwards)
+        const down = (event: PointerEvent) => {
             const [x, y] = local(event)
+            lastPointer.current = event.pointerType
+            const kind = classifyPress(event.pointerType, event.button, touches.count)
+            if (event.pointerType === "touch") {
+                touches.down(event.pointerId, [x, y])
+            }
+            if (kind === "ignore") {
+                return
+            }
+            if (kind === "pinch") {
+                // a second finger: what the first one started is dropped, and the two pan and zoom the view
+                cancelPress()
+                const pair = touches.pair()
+                if (!minimap && pair && view.current) {
+                    pinch.current = { start: { ...view.current }, a: pair[0], b: pair[1] }
+                }
+                return
+            }
+            primary.current = event.pointerId
+            pressKind.current = kind
             const at = toWorld(x, y)
             press.current = { x, y }
-            if (minimap && event.button === 0) {
+            if (minimap && kind === "tool") {
                 scene.moveTargetTo(at[0], at[1])
                 panning.current = null
                 return
             }
             const which = tool()
-            if (event.button !== 0 || (which === "select" && !selectedPrism)) {
+            if (kind === "pan" || (which === "select" && !selectedPrism)) {
                 panning.current = { x, y, cx: view.current!.cx, cy: view.current!.cy }
             }
-            if (event.button !== 0) {
+            if (kind !== "tool") {
                 return
             }
             if (["erase", "brush", "line", "straighten"].includes(which)) {
                 stroke.current = { tool: which, path: [at] }
                 requestPaint()
             } else if (which === "select" && selectedPrism) {
-                // grab a corner of the selected polygon, else pan
+                // grab a corner of the selected polygon (a finger gets a bigger target), else pan
+                const reach = event.pointerType === "touch" ? 22 : 9
                 const hit = selectedPrism.polygon.findIndex(([px, py]) => {
                     const [sx, sy] = toScreen(px, py)
-                    return Math.hypot(sx - x, sy - y) < 9
+                    return Math.hypot(sx - x, sy - y) < reach
                 })
                 if (hit >= 0) {
                     dragVertex.current = { id: selectedPrism.id, index: hit, polygon: selectedPrism.polygon.map((c) => [...c] as [number, number]) }
@@ -637,22 +679,34 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 }
             }
         }
-        const move = (event: MouseEvent) => {
+        const move = (event: PointerEvent) => {
             const [x, y] = local(event)
+            if (touches.move(event.pointerId, [x, y]) && pinch.current) {
+                const pair = touches.pair()
+                if (pair) {
+                    const { width, height } = size()
+                    autoFit.current = false
+                    view.current = pinchView(pinch.current.start, pinch.current.a, pinch.current.b, pair[0], pair[1], width, height)
+                    requestPaint()
+                    persist()
+                }
+                return
+            }
+            const pressed = primary.current === event.pointerId
             if (minimap) {
-                if (press.current && event.buttons & 1) {
+                if (pressed && press.current && pressKind.current === "tool") {
                     const at = toWorld(x, y)
                     scene.moveTargetTo(at[0], at[1])
                 }
                 return
             }
             const at = toWorld(x, y)
-            if (dragVertex.current && event.buttons & 1) {
+            if (pressed && dragVertex.current) {
                 dragVertex.current.polygon[dragVertex.current.index] = at
                 requestPaint()
                 return
             }
-            if (stroke.current && event.buttons & 1) {
+            if (pressed && stroke.current) {
                 const path = stroke.current.path
                 if (stroke.current.tool === "line" || stroke.current.tool === "straighten") {
                     stroke.current.path = [path[0], at]
@@ -666,28 +720,40 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 requestPaint()
                 return
             }
-            if (panning.current && event.buttons) {
+            if (pressed && panning.current) {
                 autoFit.current = false
                 const v = view.current!
                 v.cx = panning.current.cx - (x - panning.current.x) / v.pixelsPerMeter
                 v.cy = panning.current.cy + (y - panning.current.y) / v.pixelsPerMeter
                 requestPaint()
                 persist()
-            } else if (planTool.get().tool === "area" && current().ui.tool === "places") {
-                planTool.update({ hover: at })
-            } else if (current().ui.tool === "polygon") {
-                polygonTool.update({ hover: at })
+            } else if (pressed || (primary.current === null && event.pointerType === "mouse")) {
+                if (planTool.get().tool === "area" && current().ui.tool === "places") {
+                    planTool.update({ hover: at })
+                } else if (current().ui.tool === "polygon") {
+                    polygonTool.update({ hover: at })
+                }
             }
         }
-        const up = (event: MouseEvent) => {
-            if (!press.current) {
+        const up = (event: PointerEvent) => {
+            touches.up(event.pointerId)
+            if (pinch.current) {
+                // the fingers lifting after a pinch do nothing
+                if (touches.count < 2) {
+                    pinch.current = null
+                }
+                return
+            }
+            if (event.pointerId !== primary.current || !press.current) {
                 return
             }
             const [x, y] = local(event)
             const moved = Math.hypot(x - press.current.x, y - press.current.y)
+            const kind = pressKind.current
             press.current = null
             panning.current = null
-            if (minimap || event.button !== 0) {
+            primary.current = null
+            if (minimap || kind !== "tool") {
                 return
             }
             if (dragVertex.current) {
@@ -705,7 +771,7 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 sendStroke(done).finally(() => redraw((n) => n + 1))
                 return
             }
-            if (moved > 5) {
+            if (moved > (event.pointerType === "touch" ? 10 : 5)) {
                 return
             }
             const at = toWorld(x, y)
@@ -720,20 +786,28 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 const hit = [...prisms].reverse().find((p) => inside(p.polygon, at[0], at[1]))
                 scene.select(hit ? { kind: "prism", id: hit.id } : null)
             }
+            // a finger's double tap closes a polygon / area, as a double-click does
+            if (event.pointerType !== "mouse" && doubleTap.tap([x, y], event.timeStamp)) {
+                finishDraft()
+            }
+        }
+        const cancel = (event: PointerEvent) => {
+            touches.up(event.pointerId)
+            if (touches.count < 2) {
+                pinch.current = null
+            }
+            if (event.pointerId === primary.current) {
+                cancelPress()
+            }
         }
         const wheel = (event: WheelEvent) => {
             event.preventDefault()
             if (minimap) {
                 return
             }
-            const [x, y] = local(event)
-            const before = toWorld(x, y)
-            const v = view.current!
+            const { width, height } = size()
             autoFit.current = false
-            v.pixelsPerMeter = Math.min(2000, Math.max(2, v.pixelsPerMeter * Math.exp(-event.deltaY * 0.0015)))
-            const after = toWorld(x, y)
-            v.cx += before[0] - after[0]
-            v.cy += before[1] - after[1]
+            view.current = zoomAt(view.current!, local(event), Math.exp(-event.deltaY * 0.0015), width, height)
             requestPaint()
             persist()
         }
@@ -763,25 +837,29 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 }
             }
         }
-        const double = () => {
+        const finishDraft = () => {
             if (current().ui.tool === "polygon") {
                 finishPolygon("prism")
             } else if (planTool.get().tool === "area" && current().ui.tool === "places") {
                 finishPolygon("plan")
             }
         }
+        // a double tap is handled above; the dblclick a browser may send after it isn't a second one
+        const double = () => lastPointer.current === "mouse" && finishDraft()
         const menu = (event: Event) => event.preventDefault()
-        element.addEventListener("mousedown", down)
-        window.addEventListener("mousemove", move)
-        window.addEventListener("mouseup", up)
+        element.addEventListener("pointerdown", down)
+        window.addEventListener("pointermove", move)
+        window.addEventListener("pointerup", up)
+        window.addEventListener("pointercancel", cancel)
         element.addEventListener("wheel", wheel, { passive: false })
         element.addEventListener("dblclick", double)
         element.addEventListener("contextmenu", menu)
         window.addEventListener("keydown", key, true)
         return () => {
-            element.removeEventListener("mousedown", down)
-            window.removeEventListener("mousemove", move)
-            window.removeEventListener("mouseup", up)
+            element.removeEventListener("pointerdown", down)
+            window.removeEventListener("pointermove", move)
+            window.removeEventListener("pointerup", up)
+            window.removeEventListener("pointercancel", cancel)
             element.removeEventListener("wheel", wheel)
             element.removeEventListener("dblclick", double)
             element.removeEventListener("contextmenu", menu)

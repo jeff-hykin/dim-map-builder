@@ -76,7 +76,7 @@ export function ModifyPanel({ context }: { context: Context }) {
                 </Row>
             )}
             <Text small muted>
-                On {floor && floor.storeys.length > 1 ? `floor ${Math.min(ui.planFloor, floor.storeys.length - 1) + 1} of ${floor.storeys.length}` : "the floor"}. Right-drag pans. Every stroke is one undoable edit (⌘Z).
+                On {floor && floor.storeys.length > 1 ? `floor ${Math.min(ui.planFloor, floor.storeys.length - 1) + 1} of ${floor.storeys.length}` : "the floor"}. One finger or a left drag uses the tool; two fingers or a right-drag pan, pinch or the wheel zooms. Every stroke is one undoable edit (⌘Z).
             </Text>
         </Column>
     )

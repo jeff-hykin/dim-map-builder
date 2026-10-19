@@ -2,7 +2,7 @@
 // 1/4 cuts it to a height band (live, in the shader), 2/4 turns it so the walls line up with x and y (in the 2D view,
 // over a grid, the 3D camera held still; with an "auto" angle from the walls' directions), 3/4 crops x / y in that turned
 // frame (a draggable rectangle), and 4/4 saves it (map/slice) and flies back to the cropped, aligned map.
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react"
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
 import * as THREE from "three"
 import { api, type Slice } from "../core/api.ts"
 import { AngleDial, Button, Card, Column, Heading, NumberInput, RangeSlider, Row, Slider, Spacer, Stepper, Text } from "dimos-react"
@@ -178,7 +178,7 @@ export function SlicerWizard({ context, onClose, onStep }: { context: Context; o
                 {step === 2 && (
                     <Column gap={6}>
                         <Heading level={3}>2/4 · Align</Heading>
-                        <Text small muted>Turn the map until its walls run along the grid. Drag to pan, scroll to zoom.</Text>
+                        <Text small muted>Turn the map until its walls run along the grid. Drag to pan, scroll or pinch to zoom.</Text>
                         <Row>
                             <AngleDial value={draft.yaw} onChange={(yaw: number) => setDraft({ yaw })} tone="warn" title="drag around to turn" data-slicer-dial />
                             <Slider min={-45} max={45} step={0.1} value={Math.max(-45, Math.min(45, degrees))} showValue={false} onChange={(value: number) => setDraft({ yaw: (value * Math.PI) / 180 })} data-slicer="yawSlider" />
@@ -229,10 +229,14 @@ export function SlicerWizard({ context, onClose, onStep }: { context: Context; o
     )
 }
 
+/** The slicer's full-screen overlays: under the wizard's card and the orbs beside them (z-index -1 in their Hud, still
+ * over the 3D view), so the card's buttons and inputs get their taps; only the crop's own shapes take pointers. */
+const OVERLAY: CSSProperties = { position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: -1, pointerEvents: "none" }
+
 /** a screen-aligned grid over the top-down view (the camera looks straight down with +y up), to line walls up against */
 function AlignGrid() {
     return (
-        <svg data-align-grid style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 4, pointerEvents: "none" }}>
+        <svg data-align-grid style={OVERLAY}>
             <defs>
                 <pattern id="align-grid-small" width="40" height="40" patternUnits="userSpaceOnUse">
                     <path d="M 40 0 L 0 0 0 40" fill="none" style={{ stroke: "color-mix(in srgb, var(--ok) 18%, transparent)" }} strokeWidth="1" />
@@ -296,20 +300,29 @@ function CropOverlay({ context, draft, z, onChange }: { context: Context; draft:
         const up = () => {
             window.removeEventListener("pointermove", move)
             window.removeEventListener("pointerup", up)
+            window.removeEventListener("pointercancel", up)
         }
         window.addEventListener("pointermove", move)
         window.addEventListener("pointerup", up)
+        window.addEventListener("pointercancel", up)
     }
     const [sw, se, ne, nw] = corners
     const mid = (a: number[], b: number[]) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]
     const handles: [string, number[]][] = [["sw", sw], ["se", se], ["ne", ne], ["nw", nw], ["s", mid(sw, se)], ["e", mid(se, ne)], ["n", mid(ne, nw)], ["w", mid(nw, sw)]]
     return (
-        <svg ref={svg} data-crop-overlay style={{ position: "fixed", inset: 0, width: "100%", height: "100%", zIndex: 4, pointerEvents: "none" }}>
+        <svg ref={svg} data-crop-overlay style={OVERLAY}>
             <path d={`M 0 0 H 10000 V 10000 H 0 Z ${path}`} style={{ fill: "color-mix(in srgb, var(--bg) 55%, transparent)" }} fillRule="evenodd" />
-            <path d={path} strokeWidth="2" style={{ cursor: "move", fill: "color-mix(in srgb, var(--warn) 4%, transparent)", stroke: "var(--warn)", pointerEvents: "all" }} onPointerDown={drag("move")} />
-            {handles.map(([name, [x, y]]) => (
-                <rect key={name} x={x - 7} y={y - 7} width={14} height={14} rx={3} onPointerDown={drag(name)} data-crop-handle={name} style={{ fill: "var(--warn)", stroke: "var(--bg)", strokeWidth: 1.5, pointerEvents: "all", cursor: name.length === 2 ? "nwse-resize" : name === "e" || name === "w" ? "ew-resize" : "ns-resize" }} />
-            ))}
+            <path d={path} strokeWidth="2" data-crop-body style={{ cursor: "move", fill: "color-mix(in srgb, var(--warn) 4%, transparent)", stroke: "var(--warn)", pointerEvents: "all", touchAction: "none" }} onPointerDown={drag("move")} />
+            {handles.map(([name, [x, y]]) => {
+                const cursor = name.length === 2 ? "nwse-resize" : name === "e" || name === "w" ? "ew-resize" : "ns-resize"
+                // a finger-sized (36 px) invisible target around each 14 px handle
+                return (
+                    <g key={name} onPointerDown={drag(name)} data-crop-handle={name} style={{ pointerEvents: "all", touchAction: "none", cursor }}>
+                        <rect x={x - 18} y={y - 18} width={36} height={36} style={{ fill: "transparent" }} />
+                        <rect x={x - 7} y={y - 7} width={14} height={14} rx={3} style={{ fill: "var(--warn)", stroke: "var(--bg)", strokeWidth: 1.5 }} />
+                    </g>
+                )
+            })}
         </svg>
     )
 }

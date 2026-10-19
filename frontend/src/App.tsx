@@ -249,8 +249,12 @@ export function App() {
             scene.pathsOnTop(restoredUi.pathsOnTop)
             scene.setRegion(restoredUi.region)
             await refresh()
+            // a recording with its own global_map offers it in Generate: no raw preview to read meanwhile (a running
+            // job would hold the shortcut up)
             if (fresh.stage !== "map") {
                 setModal("generate")
+            }
+            if (fresh.stage !== "map" && !fresh.recordedMap) {
                 const preview = await api.preview(fresh.id).catch(() => null)
                 if (preview) {
                     scene.setRaw(preview.points, preview.path)
@@ -391,8 +395,8 @@ export function App() {
             } else if (event.type === "job" && current && event.job.session === current.id) {
                 const job = event.job as Job
                 setSession((s) => (s ? { ...s, job } : s))
-                if (job.state === "done" && (job.kind === "build" || job.kind === "globalMap")) {
-                    say(job.kind === "globalMap" ? "Global map generated and written into the recording" : "Map generated")
+                if (job.state === "done" && (job.kind === "build" || job.kind === "globalMap" || job.kind === "recordedMap")) {
+                    say(job.kind === "globalMap" ? "Global map generated and written into the recording" : job.kind === "recordedMap" ? "The recording's global_map is the map" : "Map generated")
                     setModal(null)
                     await refresh()
                     scene.frameMap()
@@ -761,8 +765,10 @@ export function App() {
                     </Row>
                     {slicing && hasMap && <SlicerWizard context={context} onClose={() => setSlicing(false)} onStep={setSlicerStep} />}
                     {hasMap && ui.paletteOpen && !slicing && (
-                        <Row align="flex-start" gap={10}>
-                            <Toolbar floating vertical aria-label="edit tools" data-palette>
+                        // the row is as tall as its tallest child: only the toolbar and the panel take taps, not the
+                        // gaps beside them (over the 2D view, where a finger draws)
+                        <Row align="flex-start" gap={10} style={{ pointerEvents: "none" }}>
+                            <Toolbar floating vertical aria-label="edit tools" data-palette style={{ pointerEvents: "auto" }}>
                                 {TOOLS.map((tool) => (
                                     <IconButton
                                         key={tool.id}
@@ -782,7 +788,9 @@ export function App() {
                                     title={toolSpec.label}
                                     actions={<IconButton icon="close" size="sm" label="Close (Esc)" onClick={() => pickTool("select")} />}
                                     data-tool-panel={ui.tool}
-                                    style={{ width: mobile ? "calc(100vw - 90px)" : 330, maxHeight: "calc(100vh - 190px - var(--dim-inset-bottom, 0px))" }}
+                                    collapsible={mobile}
+                                    persistKey={mobile ? "map-builder:tool-panel" : undefined}
+                                    style={{ pointerEvents: "auto", width: mobile ? "calc(100vw - 90px)" : 330, maxHeight: "calc(100vh - 190px - var(--dim-inset-bottom, 0px))" }}
                                 >
                                     {ui.tool === "clean" && <CleanPanel context={context} />}
                                     {ui.tool === "annotate" && <AnnotatePanel context={context} />}

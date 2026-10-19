@@ -38,7 +38,7 @@ export function PolygonPanel({ context }: { context: Context }) {
             <Field inline label="height" hint="m over the local floor">
                 <NumberInput size="sm" min={0.05} step={0.05} unit="m" value={tool.height} onChange={(height: number) => polygonTool.update({ height })} data-polygon-height style={{ width: 90 }} />
             </Field>
-            <Text small muted>Click corners in the 2D view; Enter or double-click closes it, Backspace drops the last corner, Esc cancels.</Text>
+            <Text small muted>Click corners in the 2D view; Enter or a double-click (double tap) closes it, Backspace drops the last corner, Esc cancels.</Text>
             <Heading level={3}>Polygons ({prisms.length})</Heading>
             <List>
                 {prisms.map((p) => (
