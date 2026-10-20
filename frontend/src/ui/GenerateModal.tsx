@@ -267,7 +267,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const odometryNeeded = !!status?.odometry.needed
     const withOdometry = odometryNeeded && (includeOdometry ?? true)
     const withTags = !!tfOptions?.useTags
-    const withTf = !!globalOptions?.useCorrectedTf
+    const withTf = globalOptions ? !!globalOptions.useCorrectedTf : true
     // nothing can be corrected before Point-LIO places the scans; fiducials only feed the correction
     const includeOdometryStep = (included: boolean) => {
         setIncludeOdometry(included)
@@ -423,7 +423,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                                 {(odometry?.record?.notes ?? []).map((note) => <Text key={note} small muted>{note}</Text>)}
                             </StepCard>
                         )}
-                        <StepCard step="tags" title="Add Fiducials" included={withTags} onInclude={includeTags} includeDisabled={!!status.tags.problem && status.tags.raw === 0} status={tagStatus} running={running} disabled={!!status.tags.problem || (!tagOptions.raw && !tagOptions.grouped)} run={() => runTags()}>
+                        <StepCard step="tags" title="Add april tags" included={withTags} onInclude={includeTags} includeDisabled={!!status.tags.problem && status.tags.raw === 0} status={tagStatus} running={running} disabled={!!status.tags.problem || (!tagOptions.raw && !tagOptions.grouped)} run={() => runTags()}>
                             {status.tags.problem && <Alert tone="warn" title="Can't find tags here.">{status.tags.problem}</Alert>}
                             <Row wrap gap={16}>
                                 <Checkbox value={tagOptions.raw} onChange={(raw: boolean) => setTags({ raw })} data-option="tagsRaw" label="raw tags (every glimpse: raw_april_tags)" />
@@ -453,10 +453,10 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                             </Panel>
                         </StepCard>
 
-                        <StepCard step="tf" title="Add corrected tf tree" included={withTf} onInclude={includeTf} status={tfStatus} running={running} disabled={!cloud || (cloud.isRoot && !tfOptions.sensorFrame) || (!edge && !withOdometry)} run={runTf}>
+                        <StepCard step="tf" title="Add corrected tf" included={withTf} onInclude={includeTf} status={tfStatus} running={running} disabled={!cloud || (cloud.isRoot && !tfOptions.sensorFrame) || (!edge && !withOdometry)} run={runTf}>
                             {status.tf.planProblem && !cloud && <Alert tone="warn" title="Nothing to correct yet.">{status.tf.planProblem}</Alert>}
                             <Text small muted>
-                                {withTags ? (status.tags.raw > 0 ? "With the fiducials." : "With the fiducials (Add Fiducials runs first: the recording has none yet).") : status.tags.problem ? "No fiducials here: no camera intrinsics." : "Without fiducials (check Add Fiducials to use them)."}
+                                {withTags ? (status.tags.raw > 0 ? "With the fiducials." : "With the fiducials (Add april tags runs first: the recording has none yet).") : status.tags.problem ? "No fiducials here: no camera intrinsics." : "Without fiducials (check Add april tags to use them)."}
                             </Text>
                             <Field inline label="target cloud">
                                 <Select size="sm" value={tfOptions.cloudStream} onChange={(cloudStream: string) => setTf({ cloudStream, sensorFrame: "" })} data-option="cloudStream"
@@ -515,7 +515,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
 
                         <StepCard step="globalMap" title="Global map" included={includeGlobal} onInclude={setIncludeGlobal} status={globalStatus} running={running} run={runGlobal} runLabel={built ? "Run this step…" : "Run this step"}>
                             <Text small muted>
-                                {withTf ? (status.tf.corrected ? "Through the corrected tf." : "Through the corrected tf (Add corrected tf tree runs first: the recording has none yet).") : "Through the recording's own tf (check Add corrected tf tree to correct it first)."}
+                                {withTf ? (status.tf.corrected ? "Through the corrected tf." : "Through the corrected tf (Add corrected tf runs first: the recording has none yet).") : "Through the recording's own tf (check Add corrected tf to correct it first)."}
                             </Text>
                             <Checkbox value={globalOptions.build.rayTracing} onChange={(rayTracing: boolean) => setGlobal({ build: { ...globalOptions.build, rayTracing } })} data-option="rayTracing" label="ray tracing (free space clears what moved)" />
                             <Field inline label="voxel size">

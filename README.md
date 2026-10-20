@@ -11,7 +11,7 @@ everything else is optional and in any order.
   read from the chunks that hold it. An `.mcap` cut short (no summary) is read once in the background, with progress,
   and so is a big recording's tf for the Generate steps.
 - **Generate** (the blue orb): a corrected map in one press ("Generate corrected map"), or any of the steps that make
-  it. Each step is collapsed to its title and a checkbox (Generate runs the checked ones; fiducials go with the tf
+  it. Each step is collapsed to its title and a checkbox (Generate runs the checked ones; april tags go with the tf
   correction, which needs the scans placed first); open, it has its own Run button and settings. Progress bar, ETA and
   Cancel. Every step writes into the recording in place ([docs/schema.md](docs/schema.md#what-generate-writes)), and a
   step whose input the recording doesn't have yet runs the earlier one first (it reads what's there from the file: its
