@@ -1,7 +1,7 @@
 // deno-lint-ignore-file
 // deno-fmt-ignore-file
 // @ts-nocheck
-// https://github.com/jeff-hykin/zenoh-gateway client/zenoh_gateway.ts at 48ad46b (48ad46ba229895b3074dad1fde19bab1eb1d7be7), types stripped by tools/vendor_zenoh_client.js; do not edit
+// https://github.com/jeff-hykin/zenoh-gateway client/zenoh_gateway.ts at 60b2995 (60b2995461b3f874f19038625cc477d7e07a5f26), types stripped by tools/vendor_zenoh_client.js; do not edit
 // license: ./LICENSE
 // zenoh-gateway browser client: one WebRTC data channel per subscription/publisher, see SPEC.md
 import { decompress as zstdDecompress } from "./vendor/fzstd.js";
@@ -199,7 +199,36 @@ export function decodeVideoFrameInfo(bytes) {
         sourceHeight: view.getUint32(16, true),
         quality: view.getFloat32(20, true),
         encodedBytes: view.getUint32(24, true),
+        ...(bytes.byteLength >= 44 ? { mediaTimeMs: view.getFloat64(28, true), writtenMs: view.getFloat64(36, true) } : {}),
+        ...(bytes.byteLength >= 64 && (bytes[1] & 2) !== 0 ? { rtpTimestamp: view.getUint32(44, true) } : {}),
+        ...(bytes.byteLength >= 64 ? { receivedMs: view.getFloat64(48, true), encodedMs: view.getFloat64(56, true) } : {}),
     };
+}
+const absCaptureTimeUri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time";
+/** ms from the NTP epoch (1900) to the unix epoch */
+const ntpUnixOffsetMs = 2_208_988_800_000;
+/** Asks for the abs-capture-time RTP extension, which Chrome supports but doesn't offer by default (its header extension
+ * API); it gives `VideoLatency.captureToShown`. Browsers without the API go without. */
+function offerCaptureTime(transceiver) {
+    const control = transceiver;
+    try {
+        const extensions = control.getHeaderExtensionsToNegotiate?.();
+        if (extensions?.some((extension) => extension.uri === absCaptureTimeUri && extension.direction === "stopped")) {
+            control.setHeaderExtensionsToNegotiate(extensions.map((extension) => extension.uri === absCaptureTimeUri ? { ...extension, direction: "recvonly" } : extension));
+        }
+    }
+    catch (error) {
+        console.debug("zenoh-gateway: abs-capture-time not offered", error);
+    }
+}
+/** Video frames' metadata kept for matching shown frames, per subscription. */
+const videoTimesKept = 512;
+/** Shown frames' latencies kept for `videoLatency()`. */
+const videoLatencyKept = 300;
+function spread(values) {
+    const sorted = [...values].sort((a, b) => a - b);
+    const at = (q) => sorted[Math.round((sorted.length - 1) * q)];
+    return { p50: at(0.5), p95: at(0.95) };
 }
 /** Browser -> gateway put: f64 sentAtMs (browser clock) | payload (little endian). */
 export function encodePut(payload, sentAtMs) {
@@ -352,6 +381,10 @@ export class Subscription extends Endpoint {
     #bytesSinceAck = 0;
     #ackTimer = null;
     #partials = new Map();
+    /** video: recent frames' metadata by RTP timestamp, with their sample's timestamp */
+    #videoTimes = new Map();
+    #frameLatencies = [];
+    #unmatchedFrames = 0;
     constructor(owner, id, key, options, callback) {
         super(owner, id, key);
         this.options = options;
@@ -362,6 +395,87 @@ export class Subscription extends Endpoint {
      * Changes the running subscription's options in place: same channel and track, no resubscribe; the gateway's
      * next frame uses them. Reconnects keep them too.
      */
+    /**
+     * Measures end-to-end latency on each frame `element` shows of this video subscription (requestVideoFrameCallback:
+     * Chrome, Firefox, Safari): the frame's RTP timestamp names its metadata, whose gateway times the connection's
+     * clock sync brings to this clock. Read it with `videoLatency()`; returns a function that stops measuring.
+     */
+    watchVideoLatency(element) {
+        let stopped = false;
+        let handle = 0;
+        const onFrame = (_now, frame) => {
+            if (stopped) {
+                return;
+            }
+            handle = element.requestVideoFrameCallback(onFrame);
+            const offsetMs = this.owner.clockOffsetMs;
+            if (frame.rtpTimestamp === undefined || offsetMs === null) {
+                return;
+            }
+            const entry = this.#videoTimes.get(frame.rtpTimestamp);
+            const { info, sourceMs } = entry ?? {};
+            if (info?.receivedMs === undefined || info.encodedMs === undefined || info.writtenMs === undefined || sourceMs === undefined) {
+                this.#unmatchedFrames++;
+                return;
+            }
+            // performance.now() based times to the connection's clock, and the gateway's clock to it
+            const toLocal = (perfMs) => this.owner.now() - (performance.now() - perfMs);
+            const shown = toLocal(frame.expectedDisplayTime ?? frame.presentationTime);
+            const received = frame.receiveTime === undefined ? undefined : toLocal(frame.receiveTime);
+            const written = info.writtenMs - offsetMs;
+            // the in-packet stamp, where the receiver reports it for this very frame (Chrome: NTP ms, gateway clock)
+            const source = this.#transceiver?.receiver.getSynchronizationSources()?.[0];
+            const captureMs = source?.rtpTimestamp === frame.rtpTimestamp && source.captureTimestamp !== undefined ? source.captureTimestamp - ntpUnixOffsetMs : undefined;
+            this.#frameLatencies.push({
+                shownAt: shown,
+                total: shown - (sourceMs - offsetMs),
+                toGateway: info.receivedMs - sourceMs,
+                encoding: info.encodedMs - info.receivedMs,
+                toTrack: info.writtenMs - info.encodedMs,
+                trackToShown: shown - written,
+                ...(received === undefined ? {} : { toReceived: received - written, receivedToShown: shown - received }),
+                ...(captureMs === undefined ? {} : { captureToShown: shown - (captureMs - offsetMs) }),
+            });
+            if (this.#frameLatencies.length > videoLatencyKept) {
+                this.#frameLatencies.shift();
+            }
+        };
+        handle = element.requestVideoFrameCallback(onFrame);
+        return () => {
+            stopped = true;
+            element.cancelVideoFrameCallback(handle);
+        };
+    }
+    /** End-to-end latency of the frames a watched video element showed lately (see `watchVideoLatency`): its latest 300,
+     * or those of the last `windowMs`; null before any. */
+    videoLatency(windowMs = Infinity) {
+        const since = this.owner.now() - windowMs;
+        const frames = this.#frameLatencies.filter((frame) => frame.shownAt >= since);
+        if (frames.length === 0) {
+            return null;
+        }
+        const optional = (pick) => {
+            const values = frames.map(pick).filter((value) => value !== undefined);
+            return values.length === 0 ? undefined : spread(values);
+        };
+        const toReceived = optional((frame) => frame.toReceived);
+        const receivedToShown = optional((frame) => frame.receivedToShown);
+        const captureToShown = optional((frame) => frame.captureToShown);
+        return {
+            frames: frames.length,
+            unmatched: this.#unmatchedFrames,
+            total: spread(frames.map((frame) => frame.total)),
+            stages: {
+                toGateway: spread(frames.map((frame) => frame.toGateway)),
+                encoding: spread(frames.map((frame) => frame.encoding)),
+                toTrack: spread(frames.map((frame) => frame.toTrack)),
+                trackToShown: spread(frames.map((frame) => frame.trackToShown)),
+                ...(toReceived === undefined ? {} : { toReceived }),
+                ...(receivedToShown === undefined ? {} : { receivedToShown }),
+            },
+            ...(captureToShown === undefined ? {} : { captureToShown }),
+        };
+    }
     async update(changes) {
         await this.ready();
         await this.owner._request({ op: "updateSubscription", subId: this.id, opts: changes }, pingTimeoutMs);
@@ -438,11 +552,20 @@ export class Subscription extends Endpoint {
         this.channel = channel;
         this.watchChannel(channel, acceptance);
     }
+    /** Also after it opened: another client's lease took its key, so its channel and track go. */
+    _rejected(reason) {
+        super._rejected(reason);
+        this.channel?.close();
+        this.#releaseTransceiver();
+    }
     close() {
         if (this.closed) {
             return;
         }
         super.close();
+        this.#releaseTransceiver();
+    }
+    #releaseTransceiver() {
         const peer = this.owner._peer;
         if (this.#transceiver && peer) {
             this.owner._releaseTransceiver(peer, this.#transceiver);
@@ -557,6 +680,12 @@ export class Subscription extends Endpoint {
         }
         else if (this.options.encoding !== undefined && !this.#decode(message, flags)) {
             return;
+        }
+        if (message.video?.rtpTimestamp !== undefined) {
+            this.#videoTimes.set(message.video.rtpTimestamp, { info: message.video, sourceMs: message.timestamp });
+            if (this.#videoTimes.size > videoTimesKept) {
+                this.#videoTimes.delete(this.#videoTimes.keys().next().value);
+            }
         }
         this.received++;
         this.#receivedOnChannel++;
@@ -769,19 +898,24 @@ export class Publisher extends Endpoint {
         super.close();
     }
 }
-/** An exclusive right to publish on a group of keys among this gateway's clients (SPEC "Leases"). */
 export class Lease {
     owner;
     group;
     keys;
+    subscribe;
     expiresInMs;
-    /** why it ended: "heartbeat" | "maxSeconds" | "disconnected" | "force-expired by peer N" | "released" */
+    /** why it ended: "takenOver" | "heartbeat" | "maxSeconds" | "disconnected" | "force-expired by peer N" | "released" | "renewed" */
     lost = null;
+    /** the heartbeat silence that ends it, as the gateway applies it; null: the connection's heartbeat deadline (or a
+     * gateway older than 0.5.17, which ignores `timeoutMs`) */
+    timeoutMs = null;
     #listeners = new Set();
-    constructor(owner, group, keys, expiresInMs) {
+    /** `keys`: the ones only we publish on; `subscribe`: the ones only we subscribe to */
+    constructor(owner, group, keys, subscribe, expiresInMs) {
         this.owner = owner;
         this.group = group;
         this.keys = keys;
+        this.subscribe = subscribe;
         this.expiresInMs = expiresInMs;
     }
     onLost(listener) {
@@ -859,11 +993,72 @@ export class ZenohGateway {
     /** resolves once the current peer connection is up (renegotiation needs `control`) */
     #connected = new Promise(() => { });
     #markConnected = () => { };
+    /** fails `#connected` when its attempt is lost: a renegotiation waiting on an attempt that never connected held the
+     *  queue for good, so after a reconnect that took a failed attempt or two, video subscriptions never came back */
+    #abandonConnected = () => { };
     constructor(url, options = {}) {
         this.url = url.replace(/\/+$/, "");
-        this.options = { reconnect: true, statsIntervalMs: 1000, heartbeatHz: 0, heartbeatMisses: 3, ...options };
+        this.options = { reconnect: true, freshAfterMs: 2000, statsIntervalMs: 1000, heartbeatHz: 0, heartbeatMisses: 3, ...options };
         this.now = this.options.clock ?? (() => performance.timeOrigin + performance.now());
+        if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+            document.addEventListener("visibilitychange", this.#onVisibility);
+            // the Page Lifecycle API's: a frozen page may never see a visibility change
+            document.addEventListener("freeze", this.#onAway);
+            document.addEventListener("resume", this.#onBack);
+        }
     }
+    /** the timer that starts a fresh connection once one stays "disconnected" `freshAfterMs` */
+    #freshTimer;
+    /** when the page was hidden or frozen (performance.now()), while it is */
+    #awayAt = null;
+    #onAway = () => {
+        this.#awayAt ??= performance.now();
+    };
+    /** Back from hidden or frozen: away longer than `freshAfterMs` (or not connected), it starts a fresh connection
+     *  rather than catch up. A connection kept through 40 s frozen (Chrome keeps it up below a frozen page) had heard
+     *  no acks, so the gateway had written its link off, and video took 12 s to climb back. */
+    #onBack = () => {
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+            return;
+        }
+        const awayFor = this.#awayAt === null ? 0 : performance.now() - this.#awayAt;
+        this.#awayAt = null;
+        if (!this.options.reconnect || this.#closed) {
+            return;
+        }
+        // (a connection on its way up is already fresh)
+        if (this.state === "connecting" || (this.#reconnecting && this.state !== "lost")) {
+            return;
+        }
+        if (awayFor > this.options.freshAfterMs || this.state === "lost") {
+            this.#startFresh();
+        }
+    };
+    #onVisibility = () => {
+        if (document.visibilityState === "hidden") {
+            this.#onAway();
+        }
+        else {
+            this.#onBack();
+        }
+    };
+    /** Drops the connection and opens a new one now: its subscriptions and declarations come back fresh. A reconnect
+     *  waiting out its retry delay tries again now. */
+    #startFresh() {
+        clearTimeout(this.#freshTimer);
+        const generation = this.#generation;
+        if (this.state !== "lost") {
+            this.#onLost(generation, 0);
+        }
+        else if (!this.#reconnecting) {
+            this.#onLost(generation, 0, true);
+        }
+        else {
+            this.#retryNow?.();
+        }
+    }
+    /** ends the reconnect loop's current wait between attempts */
+    #retryNow;
     onState(listener) {
         this.#stateListeners.add(listener);
         return () => {
@@ -929,6 +1124,9 @@ export class ZenohGateway {
             else if (kind === "video") {
                 receiver.playoutDelayHint = 0;
             }
+            if (kind === "video") {
+                offerCaptureTime(transceiver);
+            }
             await peer.setLocalDescription(await peer.createOffer());
             const offer = peer.localDescription;
             const response = await this._request({ op: "renegotiate", channel, sdp: { type: offer?.type, sdp: offer?.sdp } }, openTimeoutMs);
@@ -952,9 +1150,12 @@ export class ZenohGateway {
         const generation = ++this.#generation;
         this.#setState("connecting");
         this.#clockSamples = [];
-        this.#connected = new Promise((resolve) => {
+        this.#abandonConnected(new Error("connection replaced"));
+        this.#connected = new Promise((resolve, reject) => {
             this.#markConnected = resolve;
+            this.#abandonConnected = reject;
         });
+        this.#connected.catch(() => { });
         const auth = this.options.token === undefined ? {} : { authorization: `Bearer ${this.options.token}` };
         let iceServers = this.options.iceServers;
         let iceTransportPolicy = this.options.iceTransportPolicy;
@@ -983,8 +1184,16 @@ export class ZenohGateway {
             }
             else if (connectionState === "disconnected") {
                 this.#setState("degraded");
+                // the browser takes many seconds to call it failed: past `freshAfterMs` a fresh connection is quicker
+                clearTimeout(this.#freshTimer);
+                this.#freshTimer = setTimeout(() => {
+                    if (generation === this.#generation && peer.connectionState !== "connected") {
+                        this.#startFresh();
+                    }
+                }, this.options.freshAfterMs);
             }
             else if (connectionState === "connected" && control.readyState === "open") {
+                clearTimeout(this.#freshTimer);
                 this.#setState("connected");
             }
         };
@@ -1067,10 +1276,15 @@ export class ZenohGateway {
             }
         }
     }
-    #onLost(generation) {
-        if (generation !== this.#generation || this.state === "lost") {
+    /** reconnect attempts running (one at a time) */
+    #reconnecting = false;
+    /** `delayMs`: before the first reconnect attempt; `again`: already lost, but no attempt is running */
+    #onLost(generation, delayMs = reconnectDelayMs, again = false) {
+        if (generation !== this.#generation || (this.state === "lost" && !again)) {
             return;
         }
+        clearTimeout(this.#freshTimer);
+        this.#abandonConnected(new Error("connection lost"));
         this.#setState("lost");
         // the gateway fires this frontend's deadmen when it loses us
         this.#tripArmedPublishers("disconnected");
@@ -1083,19 +1297,32 @@ export class ZenohGateway {
         }
         this.#requests.clear();
         this.#peer?.close();
-        if (this.options.reconnect && !this.#closed) {
+        if (this.options.reconnect && !this.#closed && !this.#reconnecting) {
+            this.#reconnecting = true;
             setTimeout(async () => {
-                while (!this.#closed && generation === this.#generation) {
-                    try {
-                        await this._open();
-                        return;
-                    }
-                    catch (error) {
-                        console.warn("zenoh-gateway: reconnect failed", error);
-                        await sleep(reconnectDelayMs);
+                try {
+                    while (!this.#closed && generation === this.#generation) {
+                        try {
+                            await this._open();
+                            return;
+                        }
+                        catch (error) {
+                            console.warn("zenoh-gateway: reconnect failed", error);
+                            await new Promise((resolve) => {
+                                const timer = setTimeout(resolve, reconnectDelayMs);
+                                this.#retryNow = () => {
+                                    clearTimeout(timer);
+                                    resolve();
+                                };
+                            });
+                            this.#retryNow = undefined;
+                        }
                     }
                 }
-            }, reconnectDelayMs);
+                finally {
+                    this.#reconnecting = false;
+                }
+            }, delayMs);
         }
     }
     #onControlMessage(text) {
@@ -1295,19 +1522,21 @@ export class ZenohGateway {
         const response = await this._request({ op: "listTopics", key: filter, probeMs }, probeMs + 5000);
         return response.topics;
     }
-    /**
-     * Takes (or renews) the exclusive right to publish on `group`'s keys among this gateway's clients: the
-     * server's group, or `keys` for one it doesn't define. Needs a heartbeat; it ends when the heartbeat
-     * stops, at `maxSeconds`, on disconnect, by `release()` or by force-expiry (`onLost` says which).
-     */
-    async lease(group, { keys, maxSeconds } = {}) {
+    async lease(groupOrOptions, older = {}) {
+        const options = typeof groupOrOptions === "string" ? { group: groupOrOptions, publish: older.keys, maxSeconds: older.maxSeconds } : groupOrOptions;
         if (!this.options.heartbeatHz) {
             throw new Error("zenoh-gateway: a lease needs a heartbeat; connect(url, { heartbeatHz: 5, heartbeatMisses: 3 })");
         }
-        const response = await this._request({ op: "lease", group, keys, maxSeconds }, pingTimeoutMs);
-        const lease = new Lease(this, group, response.keys, response.expiresInMs ?? null);
-        this._leases.get(group)?._lose("renewed");
-        this._leases.set(group, lease);
+        const { group, publish, subscribe, allowTakeover, maxSeconds, timeoutMs, onLost } = options;
+        const response = await this._request({ op: "lease", group, publish, subscribe, allowTakeover, maxSeconds, timeoutMs }, pingTimeoutMs);
+        const granted = String(response.group);
+        const lease = new Lease(this, granted, response.keys, response.subscribe ?? [], response.expiresInMs ?? null);
+        lease.timeoutMs = response.timeoutMs ?? null;
+        if (onLost) {
+            lease.onLost(onLost);
+        }
+        this._leases.get(granted)?._lose("renewed");
+        this._leases.set(granted, lease);
         return lease;
     }
     /** Ends another client's lease on `group` (needs the grant's forceExpire right). */
@@ -1368,7 +1597,8 @@ export class ZenohGateway {
         const degraded = bandwidth?.constrained === true;
         this.congestion = {
             degraded,
-            limitedBy: !degraded ? null : number("pageBlockedFraction") > number("networkBlockedFraction") ? "page" : "network",
+            // (the gateway counts the page as part of the path: a page behind on its acks holds sending back like a slow link)
+            limitedBy: degraded ? "network" : null,
             droppedPerSec: seconds > 0 ? dropped / seconds : 0,
             sentBytesPerSec: number("sentBytesPerSec"),
             wantedBytesPerSec: number("demandBytesPerSec"),
@@ -1408,6 +1638,12 @@ export class ZenohGateway {
     }
     close() {
         this.#closed = true;
+        clearTimeout(this.#freshTimer);
+        if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
+            document.removeEventListener("visibilitychange", this.#onVisibility);
+            document.removeEventListener("freeze", this.#onAway);
+            document.removeEventListener("resume", this.#onBack);
+        }
         if (this.#statsTimer) {
             clearInterval(this.#statsTimer);
         }

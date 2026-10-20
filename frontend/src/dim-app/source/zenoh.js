@@ -338,6 +338,20 @@ class AppZenoh {
         )
     }
 
+    /**
+     * zenoh-gateway ≥ 0.5.16's lease, once connected: while held, only this page publishes on `publish` and subscribes to
+     * `subscribe` among the gateway's pages; other pages' subscriptions there end ("rejected") and are refused. Take it
+     * before subscribing to those keys. `allowTakeover: true` lets a newer page take it, `onLost(reason)` then gets
+     * "takenOver". Needs `connectOptions: { heartbeatHz, heartbeatMisses }` (misses / hz ≤ 60 s); leases end on
+     * disconnect and are not re-taken after a reconnect.
+     * @param {{ group?: string, publish?: string[], subscribe?: string[], allowTakeover?: boolean, maxSeconds?: number,
+     *   timeoutMs?: number, onLost?: (reason: string) => void }} options
+     */
+    async lease(options) {
+        await this.ready
+        return await this.client.lease(options)
+    }
+
     /** `listener(state)` on every connection state change ("connecting" | "connected" | "degraded" | "lost"). */
     onState(listener) {
         this.#stateListeners.add(listener)

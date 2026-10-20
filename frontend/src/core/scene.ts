@@ -160,7 +160,7 @@ export class MapScene {
         this.#regionLines = new FatLines(resolution, { width: 2, color: 0xffd166, dashed: false })
         this.root.add(this.#paths.object, this.#rawPath.object, this.#loops.object, this.#boxes.object, this.#regionLines.object, this.#labels.group, this.#annotationGroup)
 
-        this.#gizmo = new TransformControls(this.viewer.camera, this.viewer.renderer.domElement)
+        this.#gizmo = new TransformControls(this.viewer.camera, this.viewer.canvas)
         this.#gizmo.setSize(0.9)
         this.root.add(this.#proxy)
         scene.add(this.#gizmo.getHelper())
@@ -178,7 +178,7 @@ export class MapScene {
         this.#gizmo.addEventListener("change", () => this.viewer.requestRender())
 
         let downAt: { x: number; y: number } | null = null
-        const canvas = this.viewer.renderer.domElement
+        const canvas = this.viewer.canvas
         canvas.addEventListener("pointerdown", (event) => {
             downAt = { x: event.clientX, y: event.clientY }
         })
@@ -583,7 +583,7 @@ export class MapScene {
     // ---- picking ----
 
     #click(event: PointerEvent) {
-        const rect = this.viewer.renderer.domElement.getBoundingClientRect()
+        const rect = this.viewer.canvas.getBoundingClientRect()
         const ndc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
         const ray = new THREE.Raycaster()
         ray.setFromCamera(ndc, this.viewer.camera)
@@ -697,7 +697,7 @@ export class MapScene {
 
     /** Where a world point (the turned frame) is on the page. */
     worldToPage(point: THREE.Vector3): [number, number] {
-        const rect = this.viewer.renderer.domElement.getBoundingClientRect()
+        const rect = this.viewer.canvas.getBoundingClientRect()
         const v = point.clone().project(this.viewer.camera)
         return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height]
     }
@@ -722,7 +722,7 @@ export class MapScene {
 
     /** The world point under a page pixel on the horizontal plane at `z` (null above the horizon). */
     pageToWorld(px: number, py: number, z: number): THREE.Vector3 | null {
-        const rect = this.viewer.renderer.domElement.getBoundingClientRect()
+        const rect = this.viewer.canvas.getBoundingClientRect()
         const ndc = new THREE.Vector2(((px - rect.left) / rect.width) * 2 - 1, -((py - rect.top) / rect.height) * 2 + 1)
         const ray = new THREE.Raycaster()
         ray.setFromCamera(ndc, this.viewer.camera)
@@ -955,6 +955,10 @@ export class MapScene {
     /** The 3D view as a PNG data URL; `overlay` draws a labelled 1 m grid, axes and annotation labels on it. */
     capture(options: { overlay?: boolean; topDown?: boolean } = {}): string {
         const viewer = this.viewer
+        const renderer = viewer.renderer
+        if (!renderer) {
+            throw new Error(`no 3D view to capture: ${viewer.webglError ?? "no WebGL"}`)
+        }
         if (this.#mapPending) {
             // the agent asked for a picture of the 3D view while it's hidden: it shows the current map
             this.#mapPending = false
@@ -969,8 +973,8 @@ export class MapScene {
             camera.lookAt(target)
         }
         camera.updateMatrixWorld()
-        viewer.renderer.render(viewer.scene, camera)
-        const source = viewer.renderer.domElement
+        renderer.render(viewer.scene, camera)
+        const source = renderer.domElement
         const canvas = document.createElement("canvas")
         canvas.width = source.width
         canvas.height = source.height

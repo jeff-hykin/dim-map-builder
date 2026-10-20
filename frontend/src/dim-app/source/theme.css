@@ -83,7 +83,7 @@
     --primary-fg: #05070d;
     --ok: #8fd4a8;
     --warn: #e8bf6a;
-    --danger: #e8bf6a;
+    --danger: #f2707a;
     --info: #8fcfe0;
     --surface: #0e0c13;
     --raised: #0e0c13;
@@ -431,7 +431,7 @@ body.science.dark .dim-btn.accent:hover {
 body.science.dark .dim-btn.ghost:hover {
     border-color: var(--dim);
 }
-/* destructive: Research's close red; Portal's warn amber */
+/* destructive: the skin's red (--danger) */
 .dim-btn.danger {
     color: var(--danger);
     background: var(--card);
