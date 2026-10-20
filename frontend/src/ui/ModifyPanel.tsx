@@ -1,6 +1,7 @@
 // The paint tools' options: paint on the map in the 2D view, MS-Paint style, and the voxels change in 3D. Erase (columns from the local
 // floor up to the slice's z-end; the floor under them is patched from the floor around), draw (voxels up from the
-// floor to a height), and straighten a wall (drag along it: the band's voxels become one straight wall). Each stroke
+// floor to a height), straighten a wall (drag along it: the band's voxels become one straight wall), and fill floor
+// (brush over a hole: it's filled on a plane fit to the floor around). Each stroke
 // is one undoable edit.
 import { Checkbox, Column, Field, NumberInput, Row, Segmented, Slider, Spinner, Text } from "dimos-react"
 import { useStore } from "../core/store.ts"
@@ -11,6 +12,7 @@ const ABOUT: Record<string, string> = {
     erase: "Brush away what stands on the floor: a couch, a person, clutter, a lone speck. One stroke takes everything under the brush; the floor stays and nothing is added.",
     brush: "Brush voxels onto the floor, up to the height below.",
     line: "Drag a straight line of voxels (a wall the robot should see).",
+    fill_floor: "Brush over a hole in the floor. The floor around it (1.5 m) gets a plane fit, so a tilted floor or a ramp is followed; where the brush finds no floor near that plane it is filled, as thick as the floor around. Existing floor, and what stands on the floor (walls, furniture), stay as they are.",
     straighten: "Drag along a noisy wall. Inside the band you drag, it becomes one straight slab of the wall's own thickness; specks, fringe and doubled scans there go. Nothing outside the band changes.",
 }
 
@@ -69,6 +71,9 @@ export function ModifyPanel({ context }: { context: Context }) {
                     <Meters label="band width" value={state.band} min={0.1} max={1.5} step={0.05} onChange={(band) => modifyTool.update({ band })} data="band" />
                     <Text small muted>Your stroke picks the wall; the tool fits the whole wall past it, floor to top, keeps its thickness and corners, and clears stray voxels within half a metre of it. Doorways stay open.</Text>
                 </>
+            )}
+            {tool === "fill_floor" && (
+                <Meters label="radius" value={state.fillRadius} min={0.05} max={3} step={0.05} onChange={(fillRadius) => modifyTool.update({ fillRadius })} data="fillRadius" />
             )}
             {state.busy && (
                 <Row>

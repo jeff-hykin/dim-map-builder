@@ -433,9 +433,9 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
         const active = stroke.current
         if (active && active.path.length) {
             const state = modifyTool.get()
-            const radius = active.tool === "erase" ? state.radius : active.tool === "straighten" ? state.band / 2 : state.width / 2
-            g.strokeStyle = active.tool === "erase" ? "rgba(255, 95, 109, 0.9)" : active.tool === "straighten" ? "rgba(255, 209, 102, 0.95)" : "rgba(122, 240, 168, 0.95)"
-            g.fillStyle = active.tool === "erase" ? "rgba(255, 95, 109, 0.25)" : active.tool === "straighten" ? "rgba(255, 209, 102, 0.18)" : "rgba(122, 240, 168, 0.3)"
+            const radius = active.tool === "erase" ? state.radius : active.tool === "fill_floor" ? state.fillRadius : active.tool === "straighten" ? state.band / 2 : state.width / 2
+            g.strokeStyle = active.tool === "erase" ? "rgba(255, 95, 109, 0.9)" : active.tool === "fill_floor" ? "rgba(110, 180, 255, 0.95)" : active.tool === "straighten" ? "rgba(255, 209, 102, 0.95)" : "rgba(122, 240, 168, 0.95)"
+            g.fillStyle = active.tool === "erase" ? "rgba(255, 95, 109, 0.25)" : active.tool === "fill_floor" ? "rgba(110, 180, 255, 0.25)" : active.tool === "straighten" ? "rgba(255, 209, 102, 0.18)" : "rgba(122, 240, 168, 0.3)"
             g.lineCap = "round"
             g.lineJoin = "round"
             g.lineWidth = Math.max(2, radius * 2 * v.pixelsPerMeter)
@@ -570,7 +570,7 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             if (picked === "places") {
                 return `plan-${planTool.get().tool}`
             }
-            return ["erase", "brush", "line", "straighten", "polygon"].includes(picked) ? picked : "select"
+            return ["erase", "brush", "line", "straighten", "fill_floor", "polygon"].includes(picked) ? picked : "select"
         }
         const finishPolygon = (draftOf: "plan" | "prism") => {
             if (draftOf === "plan") {
@@ -598,6 +598,8 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             let body: Record<string, unknown>
             if (done.tool === "erase") {
                 body = { tool: "erase", floor: storey, path: done.path, radius: state.radius, ...reach }
+            } else if (done.tool === "fill_floor") {
+                body = { tool: "fill_floor", floor: storey, path: done.path, radius: state.fillRadius }
             } else if (done.tool === "brush" || done.tool === "line") {
                 body = { tool: "draw", floor: storey, path: done.tool === "line" ? [done.path[0], done.path[done.path.length - 1]] : done.path, width: state.width, height: state.height }
             } else {
@@ -608,7 +610,7 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 body = { tool: "straighten", floor: storey, from, to, width: state.band, thickness: state.thickness, ...reach }
             }
             modifyTool.update({ busy: true })
-            const result = await run(api.modify(session.id, body), (r) => `${r.label}: ${r.changed.toLocaleString()} voxels changed (⌘Z undoes)`)
+            const result = await run(api.modify(session.id, body), (r) => `${r.label}: ${r.changed.toLocaleString()} voxels changed${r.detail ? `, ${r.detail}` : ""} (⌘Z undoes)`)
             modifyTool.update({ busy: false })
             // the edit shows now, not when (or if) the session event arrives
             if (result?.changed) {
@@ -662,7 +664,7 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             if (kind !== "tool") {
                 return
             }
-            if (["erase", "brush", "line", "straighten"].includes(which)) {
+            if (["erase", "brush", "line", "straighten", "fill_floor"].includes(which)) {
                 stroke.current = { tool: which, path: [at] }
                 requestPaint()
             } else if (which === "select" && selectedPrism) {
@@ -712,7 +714,8 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                     stroke.current.path = [path[0], at]
                 } else {
                     const last = path[path.length - 1]
-                    const spacing = Math.max(0.02, (stroke.current.tool === "erase" ? modifyTool.get().radius : modifyTool.get().width) / 3)
+                    const tool = stroke.current.tool
+                    const spacing = Math.max(0.02, (tool === "erase" ? modifyTool.get().radius : tool === "fill_floor" ? modifyTool.get().fillRadius : modifyTool.get().width) / 3)
                     if (Math.hypot(at[0] - last[0], at[1] - last[1]) >= spacing) {
                         path.push(at)
                     }
@@ -917,7 +920,7 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
         }
     }, [])
 
-    const cursor = minimap ? "pointer" : !aligning && ["erase", "brush", "line", "straighten", "polygon", "places"].includes(ui.tool) ? "crosshair" : "grab"
+    const cursor = minimap ? "pointer" : !aligning && ["erase", "brush", "line", "straighten", "fill_floor", "polygon", "places"].includes(ui.tool) ? "crosshair" : "grab"
     void cameraTick
     return (
         <div className={minimap ? "minimap-view" : "plan-view"} ref={host} data-view2d={kind} style={{ cursor }}>

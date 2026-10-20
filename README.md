@@ -65,7 +65,10 @@ everything else is optional and in any order.
   to the result. 3D, 2D and the minimap all show it; it's saved as seven numbers (`map/slice`).
 - **Edit** (the green orb): a palette of tools. **Erase** (one stroke takes everything the brush covers, from the floor
   up to the slice's top, the floor itself stays; a lone speck goes in one click; nothing is ever added), **Draw** / **Line** (voxels from the floor up to a height), **Straighten wall** (drag along
-  a noisy wall: the wall in the band becomes one clean slab of its own thickness; nothing outside the band changes), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
+  a noisy wall: the wall in the band becomes one clean slab of its own thickness; nothing outside the band changes), **Fill floor** (brush over a hole in the floor: a plane is fit to the floor around it,
+  RANSAC then least squares, so tilted floors and ramps are followed and furniture tops ignored, and the brushed
+  columns missing their floor get it at the surrounding floor's thickness; walls and furniture standing there are left
+  alone), **Polygon** (an area drawn in 2D that stands up as a prism in 3D),
   **named points and areas** (no-go zones), **3D boxes, planes and points**, **Clean up** (floating specks, outliers,
   floor, walls, crop, level), **Saved views**. All undoable. On a phone or tablet one finger uses the picked tool, two
   fingers pan and pinch zooms (the 3D view: one finger turns, two pan and zoom), and a double tap closes a polygon.
@@ -126,6 +129,6 @@ One compiled binary at runtime: no Python, no dimos needed to build or edit maps
 
 ## Keyboard
 
-`V` 2D / 3D · `M` split · `E` the edit palette · `X` erase · `D` draw · `L` line · `W` straighten wall · `P` polygon ·
+`V` 2D / 3D · `M` split · `E` the edit palette · `X` erase · `D` draw · `L` line · `W` straighten wall · `H` fill floor · `P` polygon ·
 `N` named points / areas · `B` 3D boxes · `C` clean up · `⌘Z` / `⇧⌘Z` undo / redo · `⌘S` save · `F` frame the map ·
 `T` top view · `G` / `R` / `S` move / turn / resize the selection · `Del` delete it · `Esc` cancel / put the tool down.

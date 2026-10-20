@@ -1,5 +1,6 @@
 //! The Modify tools, as voxel edits on top of the local floor (floor.rs): erase what stands in brushed columns (and
-//! patch the floor under it), draw a block of voxels up from the floor, and replace a noisy wall with a straight one.
+//! patch the floor under it), draw a block of voxels up from the floor, replace a noisy wall with a straight one, and
+//! fill a hole in the floor on a plane fit to the floor around it.
 //! Each returns which voxels to remove and which to add; the server makes that one undoable edit.
 use crate::voxels::{key_of, Key};
 use ahash::{AHashMap, AHashSet};
@@ -33,12 +34,12 @@ impl Stroke {
         best
     }
 
-    fn contains(&self, x: f32, y: f32) -> bool {
+    pub(crate) fn contains(&self, x: f32, y: f32) -> bool {
         self.nearest(x, y).0 <= self.radius
     }
 
     /// the voxel columns (x, y keys) whose centers the stroke covers
-    fn columns(&self, voxel: f32) -> Vec<(i32, i32)> {
+    pub(crate) fn columns(&self, voxel: f32) -> Vec<(i32, i32)> {
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for p in &self.path {
             x0 = x0.min(p[0] - self.radius);
@@ -270,6 +271,11 @@ pub fn draw(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Stro
 #[allow(clippy::too_many_arguments)]
 pub fn straighten(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, from: [f32; 2], to: [f32; 2], width: f32, thickness: Option<f32>, floor_at: impl Fn(f32, f32) -> Option<f32>, reach: Reach) -> Edit {
     crate::wall::straighten(points, normals, voxel, from, to, width, thickness, floor_at, reach)
+}
+
+/// Fill floor: the brushed columns missing their floor get it, on a plane fit to the floor around (fill.rs).
+pub fn fill_floor(points: &[[f32; 3]], normals: &[[f32; 3]], voxel: f32, stroke: &Stroke, floor_at: impl Fn(f32, f32) -> Option<f32>, band: [f32; 2]) -> anyhow::Result<crate::fill::FillFloor> {
+    crate::fill::fill_floor(points, normals, voxel, stroke, floor_at, band)
 }
 
 #[cfg(test)]

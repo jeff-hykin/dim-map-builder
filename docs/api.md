@@ -41,7 +41,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | `GET api/sessions/{id}/floor` | the local floor per storey |
 | `PUT api/sessions/{id}/slice` | the slicer's view (or `null`) |
 | `GET api/sessions/{id}/alignment` | `{ yaw }` that lines the walls up with x and y |
-| `POST api/sessions/{id}/modify` | `{ tool: "erase" \| "draw" \| "straighten", floor, ... }` |
+| `POST api/sessions/{id}/modify` | `{ tool: "erase" \| "draw" \| "straighten" \| "fill_floor", floor, ... }` |
 | `GET` / `POST api/sessions/{id}/annotations` | list / add (`type`: box, plane, point, planPoint, area, prism, view) |
 | `PATCH` / `DELETE api/sessions/{id}/annotations/{annotation}` | change / remove |
 | `POST api/sessions/{id}/fit-box` | `{ box, label?, add? }`: the tightest box around what's in a rough box |
