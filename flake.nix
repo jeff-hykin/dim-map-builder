@@ -89,6 +89,8 @@
                     crossServer = arch:
                         let
                             target = "${arch}-unknown-linux-musl";
+                            envTarget = builtins.replaceStrings [ "-" ] [ "_" ] target;
+                            zigShim = wrapper: pkgs.writeShellScript "zigbuild-shim" "exec \"$CARGO_ZIGBUILD_CACHE_DIR\"/cargo-zigbuild/*/wrappers/*/${wrapper} \"$@\"";
                             rustCross = rust.override { targets = [ target ]; };
                         in
                         rustBuild {
@@ -98,10 +100,12 @@
                             extra = {
                                 nativeBuildInputs = [ pkgs.cargo-zigbuild pkgs.zig ];
                                 cargoBuildCommand = "cargo zigbuild --profile release";
-                                # zigbuild's cc / linker wrappers go in a path that is the same in every build (cargo fingerprints the linker, so a per-build path rebuilt all the deps); /private/tmp is in darwin's sandbox-paths, and Linux's sandboxed build dir is always /build
+                                # cargo fingerprints the linker, CC and AR paths, so they are nix-store shims (the same in every build, whichever nixbld user runs it) that hand off to the wrappers zigbuild writes in this build's own $TMPDIR; zigbuild leaves a CC / linker it finds set alone
+                                # (not one shared dir: zigbuild writes its wrappers 0700, so a second nixbld user, as in CI's parallel builds, can't run them)
                                 preBuild = ''
-                                    export HOME=$TMPDIR ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig
-                                    export CARGO_ZIGBUILD_CACHE_DIR=${if pkgs.stdenv.isDarwin then "/private/tmp/dim-map-builder-zigbuild" else "$TMPDIR/zigbuild"}
+                                    export HOME=$TMPDIR ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig CARGO_ZIGBUILD_CACHE_DIR=$TMPDIR/zigbuild
+                                    export CC_${envTarget}=${zigShim "zigcc-${target}-*.sh"} CXX_${envTarget}=${zigShim "zigcxx-${target}-*.sh"} AR_${envTarget}=${zigShim "ar"} RANLIB_${envTarget}=${zigShim "zigranlib.sh"}
+                                    export CARGO_TARGET_${pkgs.lib.toUpper envTarget}_LINKER=$CC_${envTarget}
                                 '';
                             };
                             install = {
