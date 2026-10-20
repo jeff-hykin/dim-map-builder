@@ -6,7 +6,6 @@ mod app;
 mod desktop;
 mod dimos_app;
 mod icp_stitch;
-mod lite_record;
 mod persist;
 mod pipeline;
 mod probe;

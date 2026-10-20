@@ -45,11 +45,11 @@ provides:
             path: api/status
             when: you need a quick summary of the open map before working on it
             description: >-
-                The open map, briefly: session id, recording, stage (raw = not built yet / map), postProcess (a lidar +
-                IMU recording with no odometry: why Generate runs lite_record's post_process first), recordedMap (the
-                recording's own global_map stream, which POST .../generate/recorded-map makes the map without
-                generating), voxel count, bounds, floors, annotation counts, running job, what can be undone, unsaved
-                edits, recent history.
+                The open map, briefly: session id, recording, stage (raw = not built yet / map), odometryPending (a
+                lidar + IMU recording with no odometry: why Generate runs Point-LIO first), recordedMap (the recording's
+                own global_map stream, which POST .../generate/recorded-map makes the map without generating), voxel
+                count, bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent
+                history.
             params:
                 session:
                     type: string
@@ -216,10 +216,10 @@ provides:
             when: you need to build or rebuild the 3D map from the recording
             description: >-
                 Start (re)building the global map from the recording (loop closure + ray tracing). A recording with a
-                lidar + IMU and no odometry (status postProcess set) gets lite_record's post_process first, in place:
-                odometry, corrected scans, its voxel map. Runs in the background: returns { job }; poll GET api/status
-                (job) or watch the page. Every option is optional (GET api/build-defaults; nested ray / pgo /
-                tfTolerance pass through too).
+                lidar + IMU and no odometry (status odometryPending set) gets Point-LIO first, in place (as POST
+                .../generate/odometry): odometry on the tf and /pointlio_odometry, deskewed scans. Runs in the
+                background: returns { job }; poll GET api/status (job) or watch the page. Every option is optional (GET
+                api/build-defaults; nested ray / pgo / tfTolerance pass through too).
             params:
                 voxelSize:
                     type: number
@@ -277,6 +277,25 @@ provides:
                     description: 'session id, or `current` (the recording open in the page)'
         -
             method: POST
+            path: 'api/sessions/{id}/generate/odometry'
+            when: >-
+                you need odometry for a lidar + IMU recording that has none, before correcting its tf or building its
+                map
+            description: >-
+                Step 0, Point-LIO, in the background, for a lidar + IMU recording with no odometry whose lidar nothing
+                in tf moves (GET .../generate odometry.needed): dimos's Point-LIO estimator over the lidar and the IMU
+                (its prefix's, else the only one; accelerations in m/s² or g, told apart by their norm; the lidar → IMU
+                extrinsic from tf when it connects them), written into the recording in place: odom → <the lidar tree's
+                root> on the tf, /pointlio_odometry, and in an .mcap the deskewed scans on /pointlio_lidar (derived_from
+                the raw lidar, which the later steps then use). The tags / tf / global-map steps take pointLio: true to
+                run it first.
+            params:
+                id:
+                    type: string
+                    required: true
+                    description: 'session id, or `current` (the recording open in the page)'
+        -
+            method: POST
             path: 'api/sessions/{id}/generate/tags'
             when: you need AprilTag or ArUco marker sightings (raw or grouped per marker) written into a recording
             description: >-
@@ -313,6 +332,9 @@ provides:
                     items:
                         type: number
                     description: marker ids on moving things
+                pointLio:
+                    type: boolean
+                    description: run Point-LIO first when the recording needs it (step 0)
                 id:
                     type: string
                     required: true
@@ -352,6 +374,9 @@ provides:
                     description: fast | high
                 stitch:
                     type: object
+                pointLio:
+                    type: boolean
+                    description: run Point-LIO first when the recording needs it (step 0)
                 id:
                     type: string
                     required: true
@@ -377,6 +402,9 @@ provides:
                     type: object
                 rrd:
                     type: object
+                pointLio:
+                    type: boolean
+                    description: run Point-LIO first when the recording needs it (step 0)
                 id:
                     type: string
                     required: true

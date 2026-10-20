@@ -34,9 +34,6 @@ pub struct Job {
     pub error: Option<String>,
     #[serde(skip)]
     pub cancel: Arc<AtomicBool>,
-    /// a build that ran lite_record's post_process first: that took the first 60% of the bar
-    #[serde(skip)]
-    post_processed: bool,
 }
 
 pub struct App {
@@ -60,9 +57,9 @@ pub struct App {
 pub const SLOW_TF_BYTES: u64 = 1 << 30;
 pub const READING_TF: &str = "Reading the tf tree";
 
-/// How much of a build's progress bar lite_record's post_process takes when it runs first (it reads the whole recording
-/// two or three times, about what the map build does)
-const POST_PROCESS_SHARE: f64 = 0.6;
+/// How much of a build's progress bar Point-LIO takes when it runs first (it reads the lidar and the IMU once, the map
+/// build reads the scans twice)
+const ODOMETRY_SHARE: f64 = 0.4;
 
 /// Overall progress of a job from its stage and the stage's done/total. Build stages aren't equal: loop closure and
 /// ray tracing each read every scan; reading tf and the normals are quick.
@@ -123,13 +120,13 @@ impl App {
                     ..Default::default()
                 };
                 let unindexed = dimos_recording::format_of(&path)? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(&path);
-                let (session, map, post_process, recorded_map) = if unindexed { (fresh.clone(), None, None, None) } else { Self::read_for_open(&path, fresh.clone())? };
+                let (session, map, odometry_pending, recorded_map) = if unindexed { (fresh.clone(), None, None, None) } else { Self::read_for_open(&path, fresh.clone())? };
                 self.store.save(&session)?;
                 if let Some(map) = &map {
                     self.store.save_map(&id, map)?;
                 }
                 let mut workspace = Workspace::new(session, map);
-                workspace.post_process = post_process;
+                workspace.odometry_pending = odometry_pending;
                 workspace.recorded_map = recorded_map;
                 let workspace = Arc::new(Mutex::new(workspace));
                 self.workspaces.lock().unwrap().insert(id.clone(), workspace.clone());
@@ -147,18 +144,18 @@ impl App {
     }
 
     /// What opening reads from the recording: an earlier save to restore (else `fresh`), whether it needs
-    /// lite_record's post_process, and its own `global_map` stream if it has one.
+    /// Point-LIO's odometry first, and its own `global_map` stream if it has one.
     fn read_for_open(path: &std::path::Path, fresh: Session) -> Result<(Session, Option<crate::session::MapData>, Option<String>, Option<String>)> {
         let recording = Recording::open(path)?;
-        let post_process = crate::lite_record::pending_with(&recording.stream_list()?, |s| recording.has_messages(&s.name).unwrap_or(false));
+        let odometry_pending = crate::pipeline::odometry_pending(&recording.stream_list()?, |s| recording.has_messages(&s.name).unwrap_or(false));
         let recorded_map = mapping::recorded::find(&recording)?;
         Ok(match persist::load(&recording, fresh.clone()) {
-            Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map), post_process, recorded_map),
-            Ok(None) => (fresh, None, post_process, recorded_map),
+            Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map), odometry_pending, recorded_map),
+            Ok(None) => (fresh, None, odometry_pending, recorded_map),
             Err(error) => {
                 let mut session = fresh;
                 session.history.push(format!("Couldn't restore the saved map: {error:#}"));
-                (session, None, post_process, recorded_map)
+                (session, None, odometry_pending, recorded_map)
             }
         })
     }
@@ -173,14 +170,14 @@ impl App {
         mapping::recorded::find(&Recording::open(path).ok()?).ok().flatten()
     }
 
-    /// Whether a restored session's recording still needs lite_record's post_process (as `read_for_open` decides).
-    fn post_process_of(path: &std::path::Path) -> Option<String> {
+    /// Whether a restored session's recording still needs Point-LIO's odometry (as `read_for_open` decides).
+    fn odometry_pending_of(path: &std::path::Path) -> Option<String> {
         let unindexed = dimos_recording::format_of(path).ok()? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(path);
         if unindexed || !path.is_file() {
             return None;
         }
         let recording = Recording::open(path).ok()?;
-        crate::lite_record::pending_with(&recording.stream_list().ok()?, |s| recording.has_messages(&s.name).unwrap_or(false))
+        crate::pipeline::odometry_pending(&recording.stream_list().ok()?, |s| recording.has_messages(&s.name).unwrap_or(false))
     }
 
     /// An .mcap with no summary: walk it once (bytes read / total, ETA, cancel), then restore an earlier save into the
@@ -197,7 +194,7 @@ impl App {
                 return Err(if cancel.load(Ordering::Relaxed) { anyhow::anyhow!(Cancelled) } else { error });
             }
             drop(file);
-            let (session, map, post_process, recorded_map) = Self::read_for_open(&path, fresh)?;
+            let (session, map, odometry_pending, recorded_map) = Self::read_for_open(&path, fresh)?;
             let shared = app.require(&session_id)?;
             let mut ws = shared.lock().unwrap();
             if ws.discarded {
@@ -210,7 +207,7 @@ impl App {
                 let view = std::mem::take(&mut ws.session.view);
                 *ws = Workspace::new(Session { view, ..session }, map);
             }
-            ws.post_process = post_process;
+            ws.odometry_pending = odometry_pending;
             ws.recorded_map = recorded_map;
             app.store.save(&ws.session)?;
             app.emit(json!({ "type": "session", "id": session_id, "revision": ws.session.revision }));
@@ -231,10 +228,10 @@ impl App {
             session.history.push("The built map's file was missing: build the map again".into());
         }
         let path = std::path::Path::new(&session.recording_path);
-        let (recorded_map, post_process) = (Self::recorded_map_of(path), Self::post_process_of(path));
+        let (recorded_map, odometry_pending) = (Self::recorded_map_of(path), Self::odometry_pending_of(path));
         let mut workspace = Workspace::new(session, map);
         workspace.recorded_map = recorded_map;
-        workspace.post_process = post_process;
+        workspace.odometry_pending = odometry_pending;
         let workspace = Arc::new(Mutex::new(workspace));
         self.workspaces.lock().unwrap().insert(id.into(), workspace.clone());
         Ok(Some(workspace))
@@ -333,7 +330,6 @@ impl App {
             eta_seconds: None,
             error: None,
             cancel: Arc::new(AtomicBool::new(false)),
-            post_processed: false,
         };
         self.jobs.lock().unwrap().insert(id.into(), job.clone());
         self.emit(json!({ "type": "job", "job": job }));
@@ -346,17 +342,7 @@ impl App {
             let report = |progress: Progress| {
                 let mut jobs = app.jobs.lock().unwrap();
                 let Some(job) = jobs.get_mut(&session) else { return };
-                let lite_record = progress.stage.starts_with("lite_record:");
-                job.post_processed |= lite_record;
-                let fraction = match progress.overall {
-                    Some(overall) => overall,
-                    None => match (lite_record, job.post_processed) {
-                    (true, _) => POST_PROCESS_SHARE * (progress.stage_index as f64 + fraction("", &progress)) / progress.stage_count.max(1) as f64,
-                    (false, true) => POST_PROCESS_SHARE + (1.0 - POST_PROCESS_SHARE) * fraction(&kind, &progress),
-                    (false, false) => fraction(&kind, &progress),
-                    },
-                }
-                .max(job.fraction);
+                let fraction = progress.overall.unwrap_or_else(|| fraction(&kind, &progress)).max(job.fraction);
                 job.fraction = fraction;
                 job.elapsed = now_seconds() - job.started_at;
                 job.eta_seconds = (fraction > 0.02 && job.elapsed > 1.0).then(|| job.elapsed * (1.0 - fraction) / fraction);
@@ -397,35 +383,32 @@ impl App {
         self.start_job(id, "build", move |app, report, cancel| {
             let started = now_seconds();
             let shared = app.require(&session_id)?;
-            let mut post_notes = Vec::new();
-            let pending = shared.lock().unwrap().post_process.clone();
+            let mut notes = Vec::new();
+            let pending = shared.lock().unwrap().odometry_pending.clone();
+            let mut build_share = 0.0;
             if let Some(reason) = pending {
                 Self::require_writable(&shared)?;
                 let path = shared.lock().unwrap().session.recording_path.clone();
-                let binary = crate::lite_record::binary(&app.store.dir)?;
-                shared.lock().unwrap().session.history.push(format!("Post-processing with lite_record ({reason})"));
-                let output = crate::lite_record::post_process(&binary, std::path::Path::new(&path), report, cancel)?;
-                post_notes = crate::lite_record::summary_lines(&output);
-                let processed = Recording::open(std::path::Path::new(&path))?;
-                let still = crate::lite_record::pending(&processed.streams()?);
-                let recorded_map = mapping::recorded::find(&processed)?;
+                shared.lock().unwrap().session.history.push(format!("Estimating the odometry with Point-LIO ({reason})"));
+                let record = crate::pipeline::run_odometry(&app.store.dir, std::path::Path::new(&path), crate::pipeline::Share::whole(report).part(0.0, ODOMETRY_SHARE, &[]), cancel)?;
+                notes = record.notes.clone();
+                app.invalidate_preview(&session_id);
                 let mut ws = shared.lock().unwrap();
-                ws.post_process = still;
-                ws.recorded_map = recorded_map;
-                ws.session.history.push(format!("lite_record post-processed {path}"));
-                ws.session.history.extend(post_notes.iter().cloned());
+                ws.odometry_pending = None;
+                ws.session.history.extend(notes.iter().cloned());
                 app.store.save(&ws.session)?;
                 app.emit(json!({ "type": "session", "id": ws.session.id, "revision": ws.session.revision }));
                 app.emit(json!({ "type": "recording-changed", "path": path }));
+                build_share = ODOMETRY_SHARE;
             }
             let path = shared.lock().unwrap().session.recording_path.clone();
             let recording = Recording::open(std::path::Path::new(&path))?;
-            let mut progress = |p: Progress| report(p);
+            let mut progress = |p: Progress| report(Progress { overall: (build_share > 0.0).then(|| build_share + (1.0 - build_share) * fraction("build", &p)), ..p });
             let result = mapping::build::build(&recording, &options, &mut progress, cancel)?;
             if cancel.load(Ordering::Relaxed) {
                 return Err(anyhow::anyhow!(Cancelled));
             }
-            app.install_map(&session_id, result, options, post_notes, started)
+            app.install_map(&session_id, result, options, notes, started)
         })
     }
 
@@ -464,9 +447,9 @@ impl App {
         let (path, pending) = {
             let workspace = self.require(id)?;
             let workspace = workspace.lock().unwrap();
-            (workspace.session.recording_path.clone(), workspace.post_process.is_some())
+            (workspace.session.recording_path.clone(), workspace.odometry_pending.is_some())
         };
-        // a raw lite_record recording has nothing placing its scans until Generate post-processes it: no preview
+        // a lidar + IMU recording with no odometry has nothing placing its scans until Point-LIO runs: no preview
         if pending {
             return Ok(None);
         }
@@ -606,20 +589,21 @@ mod tests {
         assert!(app.store.load(&id).unwrap().is_none());
     }
 
-    /// a raw lidar + IMU recording still offers lite_record's post_process after a restart restores its session
+    /// a raw lidar + IMU recording still offers Point-LIO after a restart restores its session
     #[test]
-    fn a_restored_session_still_needs_post_process() {
+    fn a_restored_session_still_needs_odometry() {
         let dir = tempfile::tempdir().unwrap();
         let recording = dir.path().join("r.db");
         let mut db = dimos_recording::db::Connection::open(&recording).unwrap();
-        dimos_recording::db::write_stream(&mut db, "rig/lidar", "sensor_msgs.PointCloud2", &[]).unwrap();
-        dimos_recording::db::write_stream(&mut db, "rig/imu", "sensor_msgs.Imu", &[]).unwrap();
+        let scan = dimos_recording::lcm::encode_xyz_cloud(&dimos_recording::lcm::Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        dimos_recording::db::write_stream(&mut db, "rig/lidar", "sensor_msgs.PointCloud2", &[(1.0, scan)]).unwrap();
+        dimos_recording::db::write_stream(&mut db, "rig/imu", "sensor_msgs.Imu", &[(1.0, vec![0; 8])]).unwrap();
         drop(db);
         let opened = App::new(dir.path().join("data"), dir.path().to_path_buf());
         let id = opened.open("r.db", &recording.display().to_string(), "r", true).unwrap().lock().unwrap().session.id.clone();
-        assert!(opened.require(&id).unwrap().lock().unwrap().post_process.is_some());
+        assert!(opened.require(&id).unwrap().lock().unwrap().odometry_pending.is_some());
         let restarted = App::new(dir.path().join("data"), dir.path().to_path_buf());
-        assert!(restarted.require(&id).unwrap().lock().unwrap().post_process.is_some());
+        assert!(restarted.require(&id).unwrap().lock().unwrap().odometry_pending.is_some());
     }
 
     /// an .mcap with no summary isn't read while opening: open returns, an open job reads it and restores its save

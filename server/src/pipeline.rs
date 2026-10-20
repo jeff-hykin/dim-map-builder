@@ -10,7 +10,8 @@ use dimos_recording::Recording;
 use mapping::build::{Cancelled, Progress};
 use mapping::correct::{self, CorrectOptions, Quality};
 use mapping::global::GlobalOptions;
-use mapping::pipeline::{self, GlobalRecord, PipelineState, TagsRecord, TfRecord};
+use mapping::pipeline::{self, GlobalRecord, OdometryRecord, PipelineState, TagsRecord, TfRecord};
+use mapping::pointlio;
 use mapping::tags::{self, TagOptions};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -32,7 +33,7 @@ impl<'a> Share<'a> {
         Share { report, lo: 0.0, hi: 1.0, weights: &[] }
     }
 
-    fn part(&self, lo: f64, hi: f64, weights: &'a [f64]) -> Share<'a> {
+    pub fn part(&self, lo: f64, hi: f64, weights: &'a [f64]) -> Share<'a> {
         let span = self.hi - self.lo;
         Share { report: self.report, lo: self.lo + span * lo, hi: self.lo + span * hi, weights }
     }
@@ -92,16 +93,80 @@ pub fn run_tags(path: &Path, options: &TagOptions, share: Share, cancel: &Atomic
     Ok(record)
 }
 
+/// Point-LIO: odometry from the recording's lidar + IMU (mapping::pointlio), written into it in place, recorded.
+/// Its deskewed scans are spooled through the data dir's `work` folder while it reads.
+pub fn run_odometry(data_dir: &Path, path: &Path, share: Share, cancel: &AtomicBool) -> Result<OdometryRecord> {
+    let recording = Recording::open(path)?;
+    let streams = recording.streams()?;
+    let inputs = pointlio::inputs(&streams, |s| s.count > 0).context("Point-LIO needs a lidar and an IMU, in a recording with no odometry yet")?;
+    let tree = mapping::frames::tf_tree(&recording)?;
+    let spool = (recording.format() == dimos_recording::Format::Mcap).then(|| TempDir(data_dir.join("work").join(format!("pointlio-{}", (now_seconds() * 1000.0) as u64))));
+    if let Some(dir) = &spool {
+        std::fs::create_dir_all(&dir.0)?;
+    }
+    let spool_file = spool.as_ref().map(|dir| dir.0.join("deskewed.spool"));
+    let estimating = share.part(0.0, 0.9, &[]);
+    let estimate = pointlio::estimate(&recording, &tree, &inputs, &pointlio::config(), spool_file.as_deref(), &mut |p| estimating.send(p), cancel)?;
+    drop(recording);
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(anyhow::anyhow!(Cancelled));
+    }
+    share.send(Progress { overall: Some(0.92), stage: "Point-LIO: writing the odometry into the recording".into(), stage_index: 0, stage_count: 1, done: 0, total: 1, note: format!("{} poses", estimate.poses.len()) });
+    let written = pointlio::write(path, &tree, &estimate, spool_file.as_deref(), generation())?;
+    let mut notes = estimate.notes();
+    notes.push(format!("Point-LIO: {} → {} on the tf, {} on {}{}", written.parent, written.child, written.poses, pointlio::ODOMETRY_TOPIC, if written.clouds > 0 { format!(", {} deskewed scans on {}", written.clouds, pointlio::CLOUD_TOPIC) } else { String::new() }));
+    let record = OdometryRecord {
+        at: now_seconds(),
+        lidar: inputs.lidar,
+        imu: inputs.imu,
+        parent: written.parent,
+        child: written.child,
+        poses: written.poses,
+        clouds: written.clouds,
+        path_length: estimate.path_length,
+        start_to_end: estimate.start_to_end(),
+        notes,
+    };
+    pipeline::update(path, |state| state.odometry = Some(record.clone()))?;
+    Ok(record)
+}
+
+/// Why Point-LIO should estimate the recording's odometry before its map can be built (mapping::pointlio::inputs: a
+/// lidar and an IMU, no odometry), or None. From the streams alone: opening reads no tf.
+pub fn odometry_pending(streams: &[dimos_recording::StreamInfo], has_messages: impl Fn(&dimos_recording::StreamInfo) -> bool) -> Option<String> {
+    let inputs = pointlio::inputs(streams, has_messages)?;
+    Some(format!("{} has an IMU ({}) and nothing places its scans yet: Point-LIO estimates the odometry first", inputs.lidar, inputs.imu))
+}
+
+/// Point-LIO first when asked for (`point_lio`) and the recording still has a lidar + IMU and no odometry: the rest
+/// of the job gets the remaining `share`. The raw lidar a later step was told to follow becomes the deskewed copy.
+fn odometry_first<'a>(data_dir: &Path, path: &Path, point_lio: bool, share: Share<'a>, cancel: &AtomicBool, cloud_streams: &mut [&mut String], notes: &mut Vec<String>) -> Result<Share<'a>> {
+    if !point_lio || pointlio::inputs(&Recording::open(path)?.streams()?, |s| s.count > 0).is_none() {
+        return Ok(share);
+    }
+    let record = run_odometry(data_dir, path, share.part(0.0, 0.4, &[]), cancel)?;
+    for stream in cloud_streams.iter_mut() {
+        if record.clouds > 0 && **stream == record.lidar {
+            **stream = pointlio::CLOUD_TOPIC.to_string();
+        }
+    }
+    notes.extend(record.notes);
+    Ok(share.part(0.4, 1.0, &[]))
+}
+
 /// Whether the recording has the raw tags a tf correction with tags needs.
 fn has_raw_tags(recording: &Recording) -> Result<bool> {
     Ok(recording.streams()?.iter().any(|s| s.name == tags::RAW_STREAM && s.count > 0))
 }
 
 /// A corrected tf tree: (tags first when asked for and missing), solve, write the grandparent → parent edge.
-pub fn run_tf(data_dir: &Path, path: &Path, options: &CorrectOptions, tag_options: Option<&TagOptions>, share: Share, cancel: &AtomicBool) -> Result<TfRecord> {
+pub fn run_tf(data_dir: &Path, path: &Path, options: &CorrectOptions, tag_options: Option<&TagOptions>, point_lio: bool, share: Share, cancel: &AtomicBool) -> Result<TfRecord> {
+    let mut options = options.clone();
+    let mut odometry_notes = Vec::new();
+    let mut share = odometry_first(data_dir, path, point_lio, share, cancel, &mut [&mut options.cloud_stream], &mut odometry_notes)?;
+    let options = &options;
     let mut recording = Recording::open(path)?;
     let mut state = pipeline::read(&recording)?;
-    let mut share = share;
     if options.use_tags && !has_raw_tags(&recording)? {
         drop(recording);
         let tag_options = tag_options.cloned().or_else(|| state.tags.as_ref().map(|t| t.options.clone())).unwrap_or_default();
@@ -160,6 +225,7 @@ pub fn run_tf(data_dir: &Path, path: &Path, options: &CorrectOptions, tag_option
     }
     let written = dimos_recording::tf_edit::replace_edge(path, &plan.grandparent, &plan.parent, &samples, generation())?;
     report.notes.push(format!("{} samples of {} → {} on {} ({} earlier transforms of it replaced)", written.written, plan.grandparent, plan.parent, written.stream, written.replaced));
+    report.notes.splice(0..0, odometry_notes);
     let record = TfRecord { at: now_seconds(), options: options.clone(), plan, report, samples: written.written, tags_at: if options.use_tags { state.tags.as_ref().map(|t| t.at) } else { None } };
     pipeline::update(path, |state| state.tf = Some(record.clone()))?;
     Ok(record)
@@ -172,16 +238,24 @@ pub fn has_correction(state: &PipelineState, tree: &mapping::tf::TfTree) -> bool
 
 /// The global map: (the tf step first when the corrected tf is wanted and missing), build, decimate, write the stream,
 /// the .pc2.lcm and maybe the .rrd. Returns the build (for the session's map) and the record.
-pub fn run_global(data_dir: &Path, path: &Path, options: &GlobalOptions, share: Share, cancel: &AtomicBool) -> Result<(mapping::build::BuildResult, GlobalRecord, Vec<String>)> {
+pub fn run_global(data_dir: &Path, path: &Path, options: &GlobalOptions, point_lio: bool, share: Share, cancel: &AtomicBool) -> Result<(mapping::build::BuildResult, GlobalRecord, Vec<String>)> {
+    let mut options = options.clone();
+    let mut notes = Vec::new();
+    let GlobalOptions { build, tf, .. } = &mut options;
+    let mut streams: Vec<&mut String> = vec![&mut build.cloud_stream];
+    if let Some(tf) = tf.as_mut() {
+        streams.push(&mut tf.cloud_stream);
+    }
+    let mut share = odometry_first(data_dir, path, point_lio, share, cancel, &mut streams, &mut notes)?;
+    drop(streams);
+    let options = &options;
     let mut recording = Recording::open(path)?;
     let mut state = pipeline::read(&recording)?;
-    let mut share = share;
-    let mut notes = Vec::new();
     if options.use_corrected_tf && !has_correction(&state, &mapping::frames::tf_tree(&recording)?) {
         drop(recording);
         let tf_options = options.tf.clone().or_else(|| state.tf.as_ref().map(|t| t.options.clone())).unwrap_or_else(|| default_correction(path));
         notes.push("no corrected tf in the recording yet: corrected it first".to_string());
-        state.tf = Some(run_tf(data_dir, path, &tf_options, options.tags.as_ref(), share.part(0.0, 0.5, &[]), cancel)?);
+        state.tf = Some(run_tf(data_dir, path, &tf_options, options.tags.as_ref(), false, share.part(0.0, 0.5, &[]), cancel)?);
         share = share.part(0.5, 1.0, &[]);
         recording = Recording::open(path)?;
     }
@@ -274,9 +348,19 @@ pub fn status(data_dir: &Path, path: &Path) -> Result<Value> {
     let lcm = mapping::global::lcm_path(path);
     let rrd = mapping::rrd::path_for(path);
     let can_stitch = crate::icp_stitch::available(data_dir);
+    // Point-LIO is offered for a lidar + IMU with no odometry whose lidar nothing in tf moves
+    let odometry_inputs = pointlio::inputs(&streams, |s| s.count > 0);
+    let lidar_frame = odometry_inputs.as_ref().and_then(|i| analysis.clouds.iter().find(|c| c.stream == i.lidar)).map(|c| c.frame.clone());
+    let odometry_needed = odometry_inputs.is_some() && lidar_frame.as_ref().is_none_or(|frame| !pointlio::moved_by_tf(&tree, frame));
     Ok(json!({
         "format": format!("{:?}", recording.format()).to_lowercase(),
         "streams": streams,
+        "odometry": {
+            "inputs": odometry_inputs,
+            "lidarFrame": lidar_frame,
+            "needed": odometry_needed,
+            "record": state.odometry,
+        },
         "tags": {
             "images": images,
             "camera": camera,
@@ -332,7 +416,10 @@ impl App {
             let path = PathBuf::from(shared.lock().unwrap().session.recording_path.clone());
             let note = work(app, &path, Share::whole(report), cancel)?;
             app.invalidate_preview(&session_id);
+            // odometry written (Point-LIO): not pending any more
+            let pending = Recording::open(&path).and_then(|r| r.streams()).ok().and_then(|streams| odometry_pending(&streams, |s| s.count > 0));
             let mut ws = shared.lock().unwrap();
+            ws.odometry_pending = pending;
             ws.session.history.push(note);
             app.store.save(&ws.session)?;
             app.emit(json!({ "type": "session", "id": ws.session.id, "revision": ws.session.revision }));
@@ -349,16 +436,27 @@ impl App {
         })
     }
 
-    pub fn generate_tags(self: &Arc<Self>, id: &str, options: TagOptions) -> Result<Job> {
-        self.pipeline_job(id, "tags", move |_, path, share, cancel| {
-            let record = run_tags(path, &options, share, cancel)?;
-            Ok(format!("{}: {} raw, {} grouped over {} images (markers {:?})", options.dictionary, record.raw, record.grouped, record.images, record.markers))
+    /// Point-LIO on its own (Generate's step 0).
+    pub fn generate_odometry(self: &Arc<Self>, id: &str) -> Result<Job> {
+        self.pipeline_job(id, "odometry", move |app, path, share, cancel| {
+            let record = run_odometry(&app.store.dir, path, share, cancel)?;
+            Ok(record.notes.join("; "))
         })
     }
 
-    pub fn generate_tf(self: &Arc<Self>, id: &str, options: CorrectOptions, tag_options: Option<TagOptions>) -> Result<Job> {
+    pub fn generate_tags(self: &Arc<Self>, id: &str, options: TagOptions, point_lio: bool) -> Result<Job> {
+        self.pipeline_job(id, "tags", move |app, path, share, cancel| {
+            let mut notes = Vec::new();
+            let share = odometry_first(&app.store.dir, path, point_lio, share, cancel, &mut [], &mut notes)?;
+            let record = run_tags(path, &options, share, cancel)?;
+            notes.push(format!("{}: {} raw, {} grouped over {} images (markers {:?})", options.dictionary, record.raw, record.grouped, record.images, record.markers));
+            Ok(notes.join("; "))
+        })
+    }
+
+    pub fn generate_tf(self: &Arc<Self>, id: &str, options: CorrectOptions, tag_options: Option<TagOptions>, point_lio: bool) -> Result<Job> {
         self.pipeline_job(id, "tf", move |app, path, share, cancel| {
-            let record = run_tf(&app.store.dir, path, &options, tag_options.as_ref(), share, cancel)?;
+            let record = run_tf(&app.store.dir, path, &options, tag_options.as_ref(), point_lio, share, cancel)?;
             let r = &record.report;
             Ok(format!(
                 "Corrected tf: {} → {} ({} keyframes, {} loops, {} tag factors, max shift {:.2} m{})",
@@ -376,11 +474,11 @@ impl App {
         })
     }
 
-    pub fn generate_global(self: &Arc<Self>, id: &str, options: GlobalOptions) -> Result<Job> {
+    pub fn generate_global(self: &Arc<Self>, id: &str, options: GlobalOptions, point_lio: bool) -> Result<Job> {
         let session_id = id.to_string();
         self.pipeline_job(id, "globalMap", move |app, path, share, cancel| {
             let started = now_seconds();
-            let (result, record, notes) = run_global(&app.store.dir, path, &options, share, cancel)?;
+            let (result, record, notes) = run_global(&app.store.dir, path, &options, point_lio, share, cancel)?;
             let chained = notes.iter().any(|n| n.starts_with("no corrected tf"));
             app.install_map(&session_id, result, options.build.clone(), notes, started)?;
             Ok(format!(

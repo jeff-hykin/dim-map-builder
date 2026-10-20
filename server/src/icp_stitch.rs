@@ -1,7 +1,6 @@
 //! The high-quality tf correction runs icp_stitch (github.com/jeff-hykin/icp_stitch: gsc_pgo's offline tag PGO + ICP
-//! stitching, in Rust on GTSAM) on a temporary memory2 db the correction writes (mapping::correct), the way Generate
-//! runs lite_record: its release binary, fetched into the data dir and re-fetched when the release is rebuilt, or
-//! ICP_STITCH_BIN. It only ever touches the temporary db, so Cancel kills it at any point.
+//! stitching, in Rust on GTSAM) on a temporary memory2 db the correction writes (mapping::correct): its release
+//! binary, fetched into the data dir and re-fetched when the release is rebuilt, or ICP_STITCH_BIN. It only ever touches the temporary db, so Cancel kills it at any point.
 use anyhow::{bail, Context, Result};
 use mapping::build::{Cancelled, Progress};
 use std::io::{BufRead, BufReader};
@@ -41,9 +40,9 @@ pub fn binary(data_dir: &Path) -> Result<PathBuf> {
         return Ok(path);
     }
     let have = std::fs::read_to_string(&stamp).unwrap_or_default().trim().to_string();
-    let outcome = crate::lite_record::latest_commit_of(REPO).and_then(|latest| {
+    let outcome = latest_commit_of(REPO).and_then(|latest| {
         if latest != have || !path.is_file() {
-            crate::lite_record::download_asset(REPO, asset()?, &path)?;
+            download_asset(REPO, asset()?, &path)?;
             std::fs::write(&stamp, &latest)?;
         }
         Ok(())
@@ -59,6 +58,41 @@ pub fn binary(data_dir: &Path) -> Result<PathBuf> {
         }
         Err(error) => Err(error),
     }
+}
+
+/// The commit `repo`'s `latest` release was built from ("Built from <sha>" in its notes).
+pub fn latest_commit_of(repo: &str) -> Result<String> {
+    let url = format!("https://api.github.com/repos/{repo}/releases/tags/latest");
+    let output = Command::new("curl").args(["-fsSL", "--max-time", "10", "-H", "Accept: application/vnd.github+json"]).arg(&url).output().context("curl")?;
+    if !output.status.success() {
+        bail!("couldn't read {url}");
+    }
+    let release: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    commit_of(release["body"].as_str().unwrap_or_default()).with_context(|| format!("no \"Built from <sha>\" in {url}"))
+}
+
+fn commit_of(notes: &str) -> Option<String> {
+    let sha = notes.split("Built from").nth(1)?.split_whitespace().next()?;
+    (sha.len() >= 7 && sha.chars().all(|c| c.is_ascii_hexdigit())).then(|| sha.to_string())
+}
+
+/// Downloads `repo`'s `latest` release asset to `path` (executable), through a partial file.
+pub fn download_asset(repo: &str, asset: &str, path: &Path) -> Result<()> {
+    let url = format!("https://github.com/{repo}/releases/download/latest/{asset}");
+    std::fs::create_dir_all(path.parent().context("bin dir")?)?;
+    let partial = path.with_extension("download");
+    let status = Command::new("curl").args(["-fsSL", "--retry", "2", "-o"]).arg(&partial).arg(&url).status().context("curl (to download a release binary)")?;
+    if !status.success() {
+        let _ = std::fs::remove_file(&partial);
+        bail!("couldn't download {url} (curl exit {status})");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755))?;
+    }
+    std::fs::rename(&partial, path)?;
+    Ok(())
 }
 
 /// How far through its run icp_stitch is, from what it prints: (stage index of 4, fraction within it, note).
@@ -155,6 +189,13 @@ pub fn accepted(output: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_release_notes_name_the_commit() {
+        assert_eq!(commit_of("Built from fe57ed983c26be0c02e5f5fa7748fdbbc02a58d7").as_deref(), Some("fe57ed983c26be0c02e5f5fa7748fdbbc02a58d7"));
+        assert_eq!(commit_of("Built from"), None);
+        assert_eq!(commit_of("something else"), None);
+    }
 
     #[test]
     fn its_output_becomes_progress() {

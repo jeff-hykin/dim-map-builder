@@ -10,10 +10,19 @@ everything else is optional and in any order.
   Opening reads only its index (an `.mcap`'s summary, a `.db`'s stream list), so it's instant at any size; a topic is
   read from the chunks that hold it. An `.mcap` cut short (no summary) is read once in the background, with progress,
   and so is a big recording's tf for the Generate steps.
-- **Generate** (the blue orb): a corrected map in one press ("Generate corrected map"), or any one of the steps that make
-  it, each with its own Run button, progress bar, ETA and Cancel. Every step writes into the recording in place
-  ([docs/schema.md](docs/schema.md#what-generate-writes)), and a step whose input the recording doesn't have yet runs
-  the earlier one first (it reads what's there from the file: its streams, its tf and `map/pipeline`).
+- **Generate** (the blue orb): a corrected map in one press ("Generate corrected map"), or any of the steps that make
+  it. Each step is collapsed to its title and a checkbox (Generate runs the checked ones; fiducials go with the tf
+  correction, which needs the scans placed first); open, it has its own Run button and settings. Progress bar, ETA and
+  Cancel. Every step writes into the recording in place ([docs/schema.md](docs/schema.md#what-generate-writes)), and a
+  step whose input the recording doesn't have yet runs the earlier one first (it reads what's there from the file: its
+  streams, its tf and `map/pipeline`).
+  0. **Estimate odometry (Point-LIO)**, offered for a lidar and an IMU with no odometry whose lidar nothing in tf moves
+     (a raw [lite_record](https://github.com/jeff-hykin/lite_record) recording): dimos's Point-LIO estimator
+     (`pointlio-core`, what `dimos-pointlio` runs) over the lidar and the IMU, in the app. The IMU under the lidar's
+     topic prefix, else the only one; its accelerations in m/s² or g (told apart by their norm); the lidar → IMU
+     extrinsic from tf when tf connects them (else a Mid-360's). Written in place: `odom → <the root of the lidar's
+     static tree>` on the tf, `/pointlio_odometry`, and in an `.mcap` the scans motion-compensated on `/pointlio_lidar`,
+     whose `derived_from` metadata names the raw lidar so the later steps use it instead.
   1. **Fiducial markers (AprilTag / ArUco)**: every image through a marker detector (tag36h11, 10 cm by default;
      kornia-apriltag, or for an OpenCV ArUco dictionary, `DICT_4X4_50` .. `DICT_7X7_1000`, `DICT_ARUCO_ORIGINAL`,
      `DICT_ARUCO_MIP_36h12`, cv2.aruco's decoding on kornia's quads; then a planar
@@ -39,14 +48,12 @@ everything else is optional and in any order.
   written into the recording. Generate's steps and settings are under **Details** (closed: the defaults are the usual path).
 - **Drop a recording** (`.db` / `.mcap`) on the page to open it with Generate up: one Desktop already has opens in place;
   any other is streamed into Desktop's recordings folder first (a page is handed a dropped file's bytes, not its path).
-- **Not post-processed yet** (a lidar + IMU and no odometry, e.g. a raw [lite_record](https://github.com/jeff-hykin/lite_record)
-  recording): Generate first runs lite_record's own `post_process` on it, in place (its release binary, re-fetched into
-  the data dir when the release is rebuilt, or `LITE_RECORD_BIN`): viewable images, the frame tree, odometry, a
-  motion-compensated copy of the lidar and a voxel map, appended to the recording. The map is then built at 4 cm from
-  the corrected copy (a cloud channel whose `derived_from` metadata names another is preferred over it).
+- **No odometry yet** (a lidar + IMU, nothing placing the scans): no preview until step 0 has run; the classic build
+  (`POST .../build`) runs it first too. A cloud channel whose `derived_from` metadata names another (the deskewed copy)
+  is preferred over it, by the build and by the tf correction's default cloud.
 - **Clocks**: tf is looked up at each scan's header stamp; when a device stamped the scans on its own clock and tf is on
   the log clock, the scans' stamps are moved onto the log clock (whichever tf covers). Nothing names a sensor.
-- **In place, never a copy**: Generate's post-processing and Save write into the recording itself (an `.mcap` save is
+- **In place, never a copy**: Generate's steps and Save write into the recording itself (an `.mcap` save is
   appended: the summary is cut off, the new chunks go where it was, the summary goes back; the newest save is what
   opens). A recording in a read-only folder is refused, not copied. Nothing is left beside the recording.
 - **2D**: a top-down slice of the current voxels between z-start and z-end, over the **local floor** (a per-cell floor

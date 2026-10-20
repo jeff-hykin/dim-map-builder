@@ -65,9 +65,9 @@ pub struct Workspace {
     pub discarded: bool,
     /// the local floor, for the map version and storey levels it was made from
     floor_cache: Option<(u64, Vec<f32>, Arc<FloorModel>)>,
-    /// why lite_record's post_process should run over the recording before a build (a raw lite_record recording), or
-    /// None; read from the recording's streams when it's opened
-    pub post_process: Option<String>,
+    /// why Point-LIO should estimate the recording's odometry before a build (a lidar + IMU with no odometry:
+    /// crate::pipeline::odometry_pending), or None; read from its streams when it's opened
+    pub odometry_pending: Option<String>,
     /// the recording's own `global_map` cloud stream (mapping::recorded), which can be the map without Generate; read
     /// from its streams when it's opened
     pub recorded_map: Option<String>,
@@ -134,7 +134,7 @@ fn rotate(value: &Iso, n: [f32; 3]) -> [f32; 3] {
 
 impl Workspace {
     pub fn new(session: Session, map: Option<MapData>) -> Workspace {
-        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64, discarded: false, floor_cache: None, post_process: None, recorded_map: None };
+        let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64, discarded: false, floor_cache: None, odometry_pending: None, recorded_map: None };
         workspace.refresh_frame();
         workspace
     }
