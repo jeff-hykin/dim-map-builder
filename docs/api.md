@@ -2,7 +2,7 @@
 
 `dimos-app-server` serves the page and every action as an HTTP endpoint. The page calls these, and Desktop's agent
 calls the same ones: `server/src/api.rs` registers each route with its description and params (`routes.rs`), and that
-one table is the served `GET /agent.json`. `dimos.yaml`'s `agent:` repeats it (`deno task check-endpoints --write`
+one table is the served `GET /openapi.json` (an OpenAPI 3.1 document). `dimos.yaml`'s `provides:` repeats it (`deno task check-endpoints --write`
 regenerates it; CI fails when they differ). Through Desktop it's all under `/apps/dim-map-builder/`; Desktop's MCP finds
 them with `search_endpoints` and runs them with `call_endpoint` (ids like `dim-map-builder:POST api/sessions/{id}/fit-box`,
 params fill `{id}` first). JSON unless noted; errors are `{ "error": "..." }` with a 4xx status. Images (the view's
@@ -53,7 +53,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | `POST api/sessions/{id}/save` | write the map into the recording (a job) |
 | `POST api/sessions/{id}/upload` | `{ saveFirst = true }`: queue the recording in Desktop's upload queue (after a save when there are unsaved edits) |
 
-The page's plumbing, not actions (not in agent.json): `GET api/sessions/{id}/points.bin` (f32 xyz of the visible
+The page's plumbing, not actions (not in openapi.json): `GET api/sessions/{id}/points.bin` (f32 xyz of the visible
 voxels), `GET api/sessions/{id}/preview.bin` (the raw recording at a glance; 202 while it's read), `PUT
 api/sessions/{id}/view` (the page reports its camera and UI state, saved with the session), `POST api/captures/{n}` (the
 page answering a screenshot request). Events reach the page over zenoh (Desktop's docs/events.md): the server POSTs each

@@ -1,5 +1,5 @@
 //! Map Editor's `dimos-app-server` (dimOS Desktop app contract, docs/apps.md in dimos-desktop): serves the built
-//! page and every action as an HTTP endpoint (api.rs), listed in /agent.json for Desktop's agent. One compiled binary;
+//! page and every action as an HTTP endpoint (api.rs), listed in /openapi.json for Desktop's agent. One compiled binary;
 //! no Python or dimos at runtime.
 mod api;
 mod app;
@@ -26,9 +26,9 @@ pub struct Args {
     /// the built page (vite's dist); the nix wrapper sets it
     #[arg(long, env = "MAP_BUILDER_FRONTEND")]
     frontend: Option<PathBuf>,
-    /// print the endpoints (agent.json) and exit: scripts/check_endpoints.ts compares them with dimos.yaml
+    /// print the endpoints (openapi.json) and exit: scripts/check_endpoints.ts compares them with dimos.yaml
     #[arg(long)]
-    agent_json: bool,
+    openapi_json: bool,
 }
 
 fn dimos_home() -> PathBuf {
@@ -41,8 +41,8 @@ async fn main() -> Result<()> {
     // DIMOS_APP is the whole interface (docs/apps.md in dimos-desktop); run outside Desktop, the defaults below
     let app = dimos_app::get().cloned().unwrap_or_default();
     let desktop_url = app.desktop_url.clone().unwrap_or_default();
-    if args.agent_json {
-        println!("{}", serde_json::to_string_pretty(&api::routes().manifest(api::WHEN, api::DESCRIPTION))?);
+    if args.openapi_json {
+        println!("{}", serde_json::to_string_pretty(&api::openapi())?);
         return Ok(());
     }
     // where working sessions are autosaved, and Desktop's shared recordings folder

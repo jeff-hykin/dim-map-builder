@@ -85,7 +85,7 @@ everything else is optional and in any order.
   in Desktop (they keep going when the page closes) and queue up; the uploads drawer shows each one's progress, speed
   and time left, with cancel, retry and readable errors.
 
-Every action is an HTTP endpoint the page itself uses, and Desktop's agent calls the same ones (listed at `/agent.json`
+Every action is an HTTP endpoint the page itself uses, and Desktop's agent calls the same ones (listed at `/openapi.json`
 and in `dimos.yaml`, [docs/api.md](docs/api.md)):
 "clean up the floating voxels in this view", "box every chair", "add a no-go area around the stairs".
 
@@ -111,8 +111,8 @@ In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (b
 | --- | --- |
 | `crates/dimos-recording` | read/write dimos recordings without dimos: memory2 `.db`, `.mcap`; LCM + ROS 2 CDR clouds, tf, odometry |
 | `crates/mapping` | the map math: the ray-traced voxel map (dimos's `dimos-voxel-ray-tracing` crate, a git dependency), tf tree, ICP, loop closure (a port of dimos's PGO), cleanup selections, floors, floor plans, the staged build |
-| `server` | `dimos-app-server`: sessions, jobs, every action as an endpoint (`api.rs`, one table that is also `/agent.json`), save/restore |
-| `scripts/check_endpoints.ts` | checks dimos.yaml's `agent:` against the server's `--agent-json` (`--write` regenerates it) |
+| `server` | `dimos-app-server`: sessions, jobs, every action as an endpoint (`api.rs`, one table that is also `/openapi.json`), save/restore |
+| `scripts/check_endpoints.ts` | checks dimos.yaml's `provides:` against the server's `--openapi-json` (`--write` regenerates it) |
 | `frontend` | the page: React + Vite, built from [dimos-react](https://github.com/jeff-hykin/dimos-react) (every control, panel and dialog, Desktop's theme, and the 3D view: its renderer, point styles and palettes); `src/core/scene.ts` is the editor on top of that view; `src/share` the shared-map page (`vite.share.config.ts` builds its viewer) |
 | `docs` | [schema.md](docs/schema.md) (what's saved), [api.md](docs/api.md) (the endpoints) |
 
@@ -122,7 +122,7 @@ One compiled binary at runtime: no Python, no dimos needed to build or edit maps
 
     cargo test --workspace                      # all the non-UI logic and every endpoint
     deno test frontend/src/share/ frontend/src/core/  # the shared map's packing, the 2D view's touch gestures
-    deno task check-endpoints [--write]         # dimos.yaml's agent: = the served agent.json
+    deno task check-endpoints [--write]         # dimos.yaml's provides: = the served openapi.json
     cargo run -p dimos-app-server -- --port 7190 --frontend frontend/dist
     (cd frontend && npm ci && npm run dev)      # the page, against a running Desktop (DESKTOP_URL)
     nix build .#dimosApp                        # what Desktop builds

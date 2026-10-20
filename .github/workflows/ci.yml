@@ -25,7 +25,7 @@ jobs:
             - uses: denoland/setup-deno@v2
               with:
                   deno-version: v2.5.0
-            # dimos.yaml's agent: lists exactly what the built server serves at agent.json
+            # dimos.yaml's provides: is exactly what the built server serves at openapi.json
             - run: deno task check-endpoints --binary result/bin/dimos-app-server
             - run: deno fmt --check && deno lint
             # the shared map's packing (Share → as HTML): voxel encoding and page round trips; the 2D view's gestures

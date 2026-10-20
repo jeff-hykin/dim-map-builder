@@ -1,5 +1,5 @@
 // Agent evaluation of the Map Builder's agent endpoints: real agents (`claude -p`, given ONLY Desktop's MCP server,
-// which reaches the Map Builder through its agent.json endpoints) do boxing / area tasks on real maps; each result is
+// which reaches the Map Builder through its openapi.json endpoints) do boxing / area tasks on real maps; each result is
 // scored against a hand-placed ground truth. The app runs inside Desktop, so --server is its URL under Desktop.
 //
 //   deno run -A eval/run.ts --server http://127.0.0.1:7077/apps/dim-map-builder --tasks eval/tasks.json --out eval/results.json

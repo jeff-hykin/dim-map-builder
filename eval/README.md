@@ -1,7 +1,7 @@
 # Agent evaluation of the Map Builder tools
 
 These results are from when the app served its own `/mcp` (with `?toolset=basic`), whose tools are now the app's HTTP
-endpoints (`GET agent.json` lists them: `fit_box` is `POST api/sessions/{id}/fit-box`, `find_objects` is
+endpoints (`GET openapi.json` lists them: `fit_box` is `POST api/sessions/{id}/fit-box`, `find_objects` is
 `.../find-objects`, `get_view` is `GET api/view`...). Agents reach them through Desktop's MCP; `run.ts` runs the same
 tasks that way.
 

@@ -1,5 +1,5 @@
 //! Every Map Editor action as an HTTP endpoint (routes.rs): the page calls these, Desktop's agent calls the same ones
-//! (listed in the served agent.json and dimos.yaml's `agent:`). Session routes take a session id, or `current` for
+//! (listed in the served openapi.json and dimos.yaml's `provides:`). Session routes take a session id, or `current` for
 //! the recording open in the page. Edits go through App::mutate (autosave, undo, a `session` event to every page), so
 //! anyone's change shows up live. Errors are `{ "error": "..." }`. docs/api.md.
 use crate::app::App;
@@ -17,6 +17,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+pub const TITLE: &str = "Map Editor";
+
+/// the endpoints' API version (openapi.json's info.version): major = breaking, minor = added
+pub const API_VERSION: &str = "1.0.0";
 
 pub const WHEN: &str = "you need to build, clean or annotate a 3D map from a recording";
 
@@ -132,6 +137,11 @@ fn required(mut spec: Value) -> Value {
     spec
 }
 
+/// The endpoints as an OpenAPI 3.1 document: the served openapi.json, and dimos.yaml's `provides:`.
+pub fn openapi() -> Value {
+    routes().openapi(TITLE, API_VERSION, WHEN, DESCRIPTION)
+}
+
 pub fn routes() -> Routes<Arc<App>> {
     let session = json!({ "type": "string", "required": true, "description": "session id, or `current` (the recording open in the page)" });
     let box_schema = json!({
@@ -235,7 +245,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .plumbing("PUT", "api/sessions/{id}/view", report_view)
         .plumbing("POST", "api/captures/{request}", capture)
         .plumbing("GET", "api/browse", browse)
-        .plumbing("GET", "agent.json", || async { Json(routes().manifest(WHEN, DESCRIPTION)) })
+        .plumbing("GET", "openapi.json", || async { Json(openapi()) })
 }
 
 /// `PUT api/import?path=<abs path>`: a recording dropped on the page that Desktop doesn't have, streamed into the
@@ -1062,19 +1072,19 @@ mod tests {
     #[tokio::test]
     async fn every_endpoint_is_routed() {
         let (_app, router, _dir) = app();
-        let manifest = routes().manifest(WHEN, DESCRIPTION);
-        for endpoint in manifest["endpoints"].as_array().unwrap() {
+        let table = routes();
+        for endpoint in &table.endpoints {
             let path = endpoint["path"].as_str().unwrap().replace("{id}", "current").replace("{annotation}", "a").replace("{floor}", "0");
             let method = endpoint["method"].as_str().unwrap();
             let (status, body) = call(&router, method, &format!("/{path}"), None).await;
             assert!(status.is_success() || body["error"].is_string(), "{method} {path}: {status} {body}");
             assert!(endpoint["description"].as_str().unwrap().len() > 10);
         }
-        let (status, body) = call(&router, "GET", "/agent.json", None).await;
+        let (status, body) = call(&router, "GET", "/openapi.json", None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, manifest);
-        assert!(manifest["endpoints"].as_array().unwrap().iter().any(|e| e["role"] == "view"));
-        assert!(manifest["endpoints"].as_array().unwrap().iter().any(|e| e["role"] == "context"));
+        assert_eq!(body, openapi());
+        assert!(table.endpoints.iter().any(|e| e["role"] == "view"));
+        assert!(table.endpoints.iter().any(|e| e["role"] == "context"));
     }
 
     #[tokio::test]
