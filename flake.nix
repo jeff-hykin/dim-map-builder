@@ -37,6 +37,7 @@
                             "dimos-voxel-ray-tracing-0.1.0" = "sha256-JmKOq9JmuFQ3HSwnpryrQu1w6Iq/76VQew8Ke+qyLuk=";
                             "dimos-module-0.1.0" = "sha256-6ikqdS3sroOJGI4WGuSyFx2yZjtJ+4Qgt+IGlkFl+qA=";
                             "lcm-msgs-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
+                            "pointlio-core-0.1.0" = "sha256-FjUcsZVI8nTcmKw8WhdxBuHelBjOCeJmyEsyqRxDvX0=";
                         };
                     };
 
