@@ -13,6 +13,7 @@ pub const OCCUPANCY_GRID_TYPE: &str = "nav_msgs.OccupancyGrid";
 pub const STRING_TYPE: &str = "std_msgs.String";
 pub const IMAGE_TYPE: &str = "sensor_msgs.Image";
 pub const CAMERA_INFO_TYPE: &str = "sensor_msgs.CameraInfo";
+pub const IMU_TYPE: &str = "sensor_msgs.Imu";
 
 // From the generated dimos-lcm python types (`Type._get_packed_fingerprint()`).
 pub const TF_FINGERPRINT: [u8; 8] = [0xc2, 0xb8, 0xa1, 0xc3, 0x3a, 0x89, 0x23, 0xec];
@@ -130,6 +131,14 @@ pub struct CameraInfo {
     pub distortion_model: String,
     pub d: Vec<f64>,
     pub k: [f64; 9],
+}
+
+/// sensor_msgs.Imu's rates and accelerations, as recorded: rad/s, and m/s² (or g, from a Livox driver)
+#[derive(Debug, Clone, PartialEq)]
+pub struct Imu {
+    pub header: Header,
+    pub angular_velocity: [f64; 3],
+    pub linear_acceleration: [f64; 3],
 }
 
 pub struct Reader<'a> {
@@ -290,6 +299,18 @@ pub fn decode_pose_stamped(payload: &[u8]) -> Result<PoseStamped> {
     let mut reader = Reader::new(payload);
     reader.expect_fingerprint(&POSE_STAMPED_FINGERPRINT)?;
     Ok(PoseStamped { header: read_header(&mut reader)?, pose: read_pose(&mut reader)? })
+}
+
+/// sensor_msgs.Imu (its fingerprint isn't checked: nothing here writes one to compare with)
+pub fn decode_imu(payload: &[u8]) -> Result<Imu> {
+    let mut reader = Reader::new(payload);
+    reader.take(8)?;
+    let header = read_header(&mut reader)?;
+    reader.f64_array::<4>()?;
+    reader.f64_array::<9>()?;
+    let angular_velocity = reader.f64_array()?;
+    reader.f64_array::<9>()?;
+    Ok(Imu { header, angular_velocity, linear_acceleration: reader.f64_array()? })
 }
 
 pub fn decode_string(payload: &[u8]) -> Result<String> {

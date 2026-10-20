@@ -103,6 +103,16 @@ pub fn format_of(path: &Path) -> Result<Format> {
     }
 }
 
+/// A PointCloud2 payload as stored, every field kept (`for_each_payload`).
+pub fn decode_point_cloud2(encoding: &str, payload: &[u8]) -> Result<lcm::PointCloud2> {
+    if encoding == "cdr" { cdr::decode_point_cloud2(payload) } else { lcm::decode_point_cloud2(payload) }
+}
+
+/// An Imu payload as stored (`for_each_payload`).
+pub fn decode_imu(encoding: &str, payload: &[u8]) -> Result<lcm::Imu> {
+    if encoding == "cdr" { cdr::decode_imu(payload) } else { lcm::decode_imu(payload) }
+}
+
 fn decode(encoding: &str, type_name: &str, payload: &[u8]) -> Result<Option<Message>> {
     let cdr = encoding == "cdr";
     let kind = Kind::of(type_name);
@@ -189,6 +199,50 @@ impl Recording {
                 Ok(Some(message)) => each(ts, message, None),
                 _ => Ok(true),
             }),
+        }
+    }
+
+    /// Every message of `streams` undecoded: `each(which of streams, log time, encoding ("cdr" or "lcm"), payload)`,
+    /// with `progress(done, total)` (bytes of an .mcap's chunks, rows of a .db). An .mcap is read once, its streams
+    /// interleaved in file order (log time); a .db's streams come one after another, each in time order. `each`
+    /// returns false to stop.
+    pub fn for_each_payload_of(&self, streams: &[&str], progress: Option<mcap_index::ProgressFn>, mut each: impl FnMut(usize, f64, &str, &[u8]) -> Result<bool>) -> Result<()> {
+        match &self.backend {
+            Backend::Db(connection, listed, _) => {
+                let total: u64 = streams.iter().map(|name| db::count(connection, name)).sum();
+                let mut done = 0;
+                let mut stopped = false;
+                for (which, name) in streams.iter().enumerate() {
+                    let info = listed.iter().find(|s| s.name == *name).with_context(|| format!("no stream {name}"))?;
+                    db::for_each(connection, info, |row| {
+                        done += 1;
+                        if let (Some(progress), true) = (progress, done % 256 == 0) {
+                            progress(done, total);
+                        }
+                        let more = each(which, row.ts, "lcm", &row.payload)?;
+                        stopped = !more;
+                        Ok(more)
+                    })?;
+                    if stopped {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+            Backend::Mcap(file) => {
+                let mut wanted: std::collections::HashMap<u16, usize> = std::collections::HashMap::new();
+                for (which, name) in streams.iter().enumerate() {
+                    for id in file.current_channels(name)? {
+                        wanted.insert(id, which);
+                    }
+                }
+                let ids: std::collections::BTreeSet<u16> = wanted.keys().copied().collect();
+                let index = file.index()?;
+                mcap_index::for_each(file.bytes(), &index, &ids, progress, |log_time, channel, payload| match wanted.get(&channel.id) {
+                    Some(which) => each(*which, log_time as f64 / 1e9, &channel.message_encoding, payload),
+                    None => Ok(true),
+                })
+            }
         }
     }
 

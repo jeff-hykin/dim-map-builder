@@ -2,7 +2,7 @@
 //! tf2_msgs/msg/TFMessage, nav_msgs/msg/Odometry, geometry_msgs/msg/PoseStamped), into the same structs the LCM
 //! decoders produce. A 4-byte encapsulation header (byte 1: 0 = big, 1 = little endian) precedes the body; every
 //! primitive is aligned to its own size, counted from the end of that header. ROS 2 headers carry no `seq`.
-use crate::lcm::{CameraInfo, Header, Image, Odometry, PointCloud2, PointField, Pose, PoseStamped, TfEdge};
+use crate::lcm::{CameraInfo, Header, Image, Imu, Odometry, PointCloud2, PointField, Pose, PoseStamped, TfEdge};
 use anyhow::{bail, Result};
 
 pub const POINT_CLOUD2_SCHEMA: &str = "sensor_msgs/msg/PointCloud2";
@@ -123,6 +123,16 @@ pub fn decode_tf(payload: &[u8]) -> Result<Vec<TfEdge>> {
 pub fn decode_odometry(payload: &[u8]) -> Result<Odometry> {
     let mut cdr = Cdr::new(payload)?;
     Ok(Odometry { header: cdr.header()?, child_frame_id: cdr.string()?, pose: cdr.pose()? })
+}
+
+pub fn decode_imu(payload: &[u8]) -> Result<Imu> {
+    let mut cdr = Cdr::new(payload)?;
+    let header = cdr.header()?;
+    cdr.f64s::<4>()?;
+    cdr.f64s::<9>()?;
+    let angular_velocity = cdr.f64s()?;
+    cdr.f64s::<9>()?;
+    Ok(Imu { header, angular_velocity, linear_acceleration: cdr.f64s()? })
 }
 
 pub fn decode_pose_stamped(payload: &[u8]) -> Result<PoseStamped> {
