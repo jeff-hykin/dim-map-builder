@@ -50,7 +50,7 @@ export function JobCard({ job, onCancel, style }: { job: Job; onCancel?: () => v
             <Row wrap gap={12}>
                 <Text small mono muted>elapsed {duration(job.elapsed)}</Text>
                 {state === "running" && <Text small mono muted data-eta>ETA {job.etaSeconds != null ? duration(job.etaSeconds) : "estimating…"}</Text>}
-                {job.error && <Text small tone="danger">{job.error}</Text>}
+                {job.error && <Text small tone="danger" className="job-error">{job.error}</Text>}
                 <Spacer />
                 {state === "running" && onCancel && job.kind !== "save" && (
                     <Button size="sm" variant="danger" onClick={onCancel}>
