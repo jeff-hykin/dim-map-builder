@@ -201,13 +201,21 @@ pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: 
             })
         })
     };
-    // the wall-height voxels: above their column's floor and under the reach
+    // the voxel just over a column's floor, in a layer spread around it with little above, is the floor's own thickness,
+    // not wall: under the band the floor is the model's (`around_floor` leaves the band out), which can sit a voxel low,
+    // and then the floor's top layer read as a band-wide wall (a thin wall came out as wide as the band)
+    let floor_layer = |p: [f32; 3], floor: f32| {
+        let k = key_of(p, voxel);
+        let spread = |layer: i32| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| occupied.contains(&(k.0 + dx, k.1 + dy, layer))).count();
+        p[2] <= floor + 1.5 * voxel && spread(k.2) >= 5 && spread(k.2 + 1) <= 3
+    };
+    // the wall-height voxels: above their column's floor (and not the floor's own top layer) and under the reach
     let wallish: Vec<u32> = near
         .iter()
         .copied()
         .filter(|i| {
             let p = points[*i as usize];
-            p[2] >= reach.bottom && floor_of(column_of(p)).is_some_and(|floor| p[2] > floor + voxel * 0.5 && p[2] <= reach.top(floor))
+            p[2] >= reach.bottom && floor_of(column_of(p)).is_some_and(|floor| p[2] > floor + voxel * 0.5 && p[2] <= reach.top(floor) && !floor_layer(p, floor))
         })
         .collect();
     let xy = |i: &u32| [points[*i as usize][0], points[*i as usize][1]];
@@ -385,13 +393,6 @@ pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: 
             })
         })
     };
-    // the voxel just over a column's floor, in a layer spread around it, is the floor's own thickness: it stays
-    let floor_layer = |i: &u32| {
-        let p = points[*i as usize];
-        let k = key_of(p, voxel);
-        let spread = |layer: i32| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| occupied.contains(&(k.0 + dx, k.1 + dy, layer))).count();
-        spread(k.2) >= 5 && spread(k.2 + 1) <= 3 && floors.get(&(k.0, k.1)).copied().flatten().is_some_and(|floor| p[2] <= floor + 1.5 * voxel)
-    };
     let mut removed: AHashSet<Key> = AHashSet::new();
     for i in &wallish {
         let p = points[*i as usize];
@@ -399,7 +400,7 @@ pub fn straighten(points: &[[f32; 3]], _normals: &[[f32; 3]], voxel: f32, from: 
         if !selected((key.0, key.1)) || slab.contains(&key) {
             continue;
         }
-        if line.across(xy(i)).abs() > half && (carries_on_at((key.0, key.1)) || floor_layer(i)) {
+        if line.across(xy(i)).abs() > half && carries_on_at((key.0, key.1)) {
             continue;
         }
         edit.remove.push(*i);
@@ -746,22 +747,15 @@ mod tests {
         assert!(crossing.iter().all(|c| after.contains(c)), "the crossing wall keeps every column");
     }
 
-    /// The real case (mid360_athens_stairs, upper storey): the noisy wall Jeff straightened into three parallel lines.
-    /// The voxels around it before that edit and the storey's floor model are in tests/fixtures/athens_noisy_wall.*;
-    /// the stroke is the one he drew (3.1 m along the wall, the default 0.4 m band). Set STRAIGHTEN_FIXTURE_OUT=<file>
-    /// to write the map after the edit (f32 xyz) for a look.
-    #[test]
-    fn the_real_noisy_wall_becomes_one_wall_inside_the_selection() {
-        let points: Vec<[f32; 3]> = include_bytes!("../tests/fixtures/athens_noisy_wall.bin")
-            .chunks_exact(12)
-            .map(|c| std::array::from_fn(|k| f32::from_le_bytes(c[k * 4..k * 4 + 4].try_into().unwrap())))
-            .collect();
-        let model: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/athens_noisy_wall.json")).unwrap();
+    /// A real map's voxels (f32 xyz) and its storey's floor model (the floor model's bilinear height, floor.rs's
+    /// height_at) and band, as written to tests/fixtures/*.{bin,json}.
+    fn real_fixture(bin: &[u8], json: &str) -> (Vec<[f32; 3]>, impl Fn(f32, f32) -> Option<f32>, [f32; 2]) {
+        let points: Vec<[f32; 3]> = bin.chunks_exact(12).map(|c| std::array::from_fn(|k| f32::from_le_bytes(c[k * 4..k * 4 + 4].try_into().unwrap()))).collect();
+        let model: serde_json::Value = serde_json::from_str(json).unwrap();
         let number = |v: &serde_json::Value| v.as_f64().unwrap() as f32;
         let (cell, origin) = (number(&model["cell"]), [number(&model["origin"][0]), number(&model["origin"][1])]);
         let heights: Vec<Vec<Option<f32>>> = model["heights"].as_array().unwrap().iter().map(|row| row.as_array().unwrap().iter().map(|h| h.as_f64().map(|h| h as f32)).collect()).collect();
-        // the floor model's bilinear height (floor.rs's height_at)
-        let floor_at = |x: f32, y: f32| -> Option<f32> {
+        let floor_at = move |x: f32, y: f32| -> Option<f32> {
             let (fx, fy) = ((x - origin[0]) / cell - 0.5, (y - origin[1]) / cell - 0.5);
             let (c0, r0) = (fx.floor() as i32, fy.floor() as i32);
             let (tx, ty) = (fx - c0 as f32, fy - r0 as f32);
@@ -777,11 +771,44 @@ mod tests {
             (weights > 1e-6).then(|| sum / weights)
         };
         let band = [number(&model["band"][0]), number(&model["band"][1])];
+        (points, floor_at, band)
+    }
+
+    /// What the 2D view draws as wall (slice.ts: columnFloors + computeSlice): a column's floor is its own walkable top
+    /// surface (7 of the 3 x 3 columns occupied, at most 3 just above, within 0.3 m of the floor model) or else the
+    /// model's, and a voxel 0.1–1.8 m over that is wall.
+    fn view_2d_walls(points: &[[f32; 3]], floor_at: impl Fn(f32, f32) -> Option<f32>) -> AHashSet<(i32, i32)> {
+        let occupied: AHashSet<Key> = points.iter().map(|p| key_of(*p, V)).collect();
+        let count = |c: (i32, i32), layer: i32| (-1..=1).flat_map(|dx| (-1..=1).map(move |dy| (dx, dy))).filter(|(dx, dy)| occupied.contains(&(c.0 + dx, c.1 + dy, layer))).count();
+        let mut own: AHashMap<(i32, i32), f32> = AHashMap::new();
+        for p in points {
+            let (k, c) = (key_of(*p, V), ((p[0] / V).floor() as i32, (p[1] / V).floor() as i32));
+            if floor_at(p[0], p[1]).is_some_and(|grid| (p[2] - grid).abs() <= 0.3) && own.get(&c).is_none_or(|f| *f < p[2]) && count(c, k.2) >= 7 && count(c, k.2 + 1) <= 3 {
+                own.insert(c, p[2]);
+            }
+        }
+        points
+            .iter()
+            .filter_map(|p| {
+                let c = ((p[0] / V).floor() as i32, (p[1] / V).floor() as i32);
+                let floor = own.get(&c).copied().or_else(|| floor_at(p[0], p[1]))?;
+                (0.1..=1.8).contains(&(p[2] - floor)).then_some(c)
+            })
+            .collect()
+    }
+
+    /// The real case (mid360_athens_stairs, upper storey): the noisy wall Jeff straightened into three parallel lines.
+    /// The voxels around it before that edit and the storey's floor model are in tests/fixtures/athens_noisy_wall.*;
+    /// the stroke is the one he drew (3.1 m along the wall, the default 0.4 m band). Set STRAIGHTEN_FIXTURE_OUT=<file>
+    /// to write the map after the edit (f32 xyz) for a look.
+    #[test]
+    fn the_real_noisy_wall_becomes_one_wall_inside_the_selection() {
+        let (points, floor_at, band) = real_fixture(include_bytes!("../tests/fixtures/athens_noisy_wall.bin"), include_str!("../tests/fixtures/athens_noisy_wall.json"));
         // the server's reach for a straighten on the top storey: its floor to 3.25 m over it
         let reach = Reach { above_floor: None, top: band[0] + 3.25, bottom: band[0] };
         let (from, to, width) = ([-1.3, -2.33], [1.6, -2.33], 0.4);
         let normals = vec![[0.0, 0.0, 1.0]; points.len()];
-        let edit = straighten(&points, &normals, V, from, to, width, None, floor_at, reach);
+        let edit = straighten(&points, &normals, V, from, to, width, None, &floor_at, reach);
         assert!(!edit.add.is_empty() && !edit.remove.is_empty(), "it does something");
         assert_clipped(&points, &edit, from, to, width);
         let removed: AHashSet<u32> = edit.remove.iter().copied().collect();
@@ -802,4 +829,38 @@ mod tests {
             assert!(runs <= 1 && rows.len() <= 3, "column {x}: one wall at most 3 voxels thick, got rows {rows:?}");
         }
     }
+
+    /// The real case (raycast_2, 2026-10-19): a thin, slightly slanted line a voxel over the floor (what the 2D view
+    /// draws as a 1-voxel wall, rising from a long wall) that Jeff straightened into two parallel lines with a gap
+    /// between (the whole band's floor read as wall: a 5-voxel slab, which the 2D view draws as its rim). The voxels
+    /// before that edit and the floor model are in tests/fixtures/raycast_thin_slanted_wall.*; the stroke is his (it reproduces his edit voxel for voxel). Set STRAIGHTEN_THIN_WALL_OUT=<file> to write the map
+    /// after the edit (f32 xyz) for a look.
+    #[test]
+    fn a_thin_slanted_wall_becomes_one_wall_not_two() {
+        let (points, floor_at, band) = real_fixture(include_bytes!("../tests/fixtures/raycast_thin_slanted_wall.bin"), include_str!("../tests/fixtures/raycast_thin_slanted_wall.json"));
+        let reach = Reach { above_floor: None, top: band[0] + 3.25, bottom: band[0] };
+        let (from, to, width) = ([0.8, -1.744], [0.7, -2.9], 0.3);
+        let normals = vec![[0.0, 0.0, 1.0]; points.len()];
+        let edit = straighten(&points, &normals, V, from, to, width, None, &floor_at, reach);
+        assert!(!edit.add.is_empty(), "it does something");
+        assert_clipped(&points, &edit, from, to, width);
+        let removed: AHashSet<u32> = edit.remove.iter().copied().collect();
+        let after: Vec<[f32; 3]> = points.iter().enumerate().filter(|(i, _)| !removed.contains(&(*i as u32))).map(|(_, p)| *p).chain(edit.add.iter().copied()).collect();
+        if let Ok(path) = std::env::var("STRAIGHTEN_THIN_WALL_OUT") {
+            std::fs::write(path, after.iter().flat_map(|p| p.iter().flat_map(|v| v.to_le_bytes())).collect::<Vec<u8>>()).unwrap();
+        }
+        let wall = view_2d_walls(&after, &floor_at);
+        // per row along the wall (0.1 m in from the stroke's ends, clear of the long wall it rises from): one wall, at
+        // most 2 voxels thick
+        let (y0, y1) = (((from[1].min(to[1]) + 0.15) / V).floor() as i32, ((from[1].max(to[1]) - 0.1) / V).floor() as i32);
+        let mut walled = 0;
+        for y in y0..=y1 {
+            let columns: Vec<i32> = (-40..80).filter(|x| in_band((*x, y), from, to, width) && wall.contains(&(*x, y))).collect();
+            let runs = columns.windows(2).filter(|w| w[1] != w[0] + 1).count() + usize::from(!columns.is_empty());
+            assert!(runs <= 1 && columns.len() <= 2, "row {y}: one wall at most 2 voxels thick, got columns {columns:?}");
+            walled += usize::from(runs == 1);
+        }
+        assert!(walled * 10 >= (y1 - y0 + 1) as usize * 9, "the wall runs the stroke's length: {walled} of {} rows", y1 - y0 + 1);
+    }
 }
+
