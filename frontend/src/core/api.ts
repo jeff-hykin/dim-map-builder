@@ -220,8 +220,8 @@ export interface Session {
     voxelSize: number | null
     bounds: [[number, number, number], [number, number, number]] | null
     job: Job | null
-    /** why Generate runs lite_record's post_process over the recording first (a raw lite_record recording), or null */
-    postProcess: string | null
+    /** why Generate runs Point-LIO over the recording first (a lidar + IMU and no odometry), or null */
+    odometryPending: string | null
     /** the recording's own global_map cloud stream (its newest message can be the map, skipping Generate), or null */
     recordedMap: string | null
 }
@@ -376,6 +376,13 @@ export interface TfPlan {
 /** GET api/sessions/{id}/generate: what the recording has for each generation step, the defaults, what ran last */
 export interface GenerateStatus {
     format: "db" | "mcap"
+    /** step 0, Point-LIO: offered (needed) for a lidar + IMU with no odometry whose lidar nothing in tf moves */
+    odometry: {
+        inputs: { lidar: string; imu: string } | null
+        lidarFrame: string | null
+        needed: boolean
+        record: { at: number; lidar: string; imu: string; parent: string; child: string; poses: number; clouds: number; pathLength: number; startToEnd: number; notes: string[] } | null
+    }
     tags: {
         images: { name: string; count: number }[]
         camera: string | null
@@ -460,6 +467,7 @@ export const api = {
         }
         return response.status === 202 ? null : (body as GenerateStatus)
     },
+    generateOdometry: (id: string) => call<{ job: Job }>(`api/sessions/${id}/generate/odometry`, json({})),
     generateTags: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/tags`, json(options)),
     generateTf: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/tf`, json(options)),
     generateGlobal: (id: string, options: Record<string, unknown>) => call<{ job: Job }>(`api/sessions/${id}/generate/global-map`, json(options)),

@@ -1,9 +1,11 @@
-// Generate: the corrected map, or any one of the steps that make it, each written into the recording in place.
-// 1. fiducial markers from images, AprilTag or ArUco (raw_april_tags, april_tags), 2. a corrected tf tree (loop closure, with the tags, written
-// as the edge above the odometry: world → odom), 3. the global map (through the corrected tf, ray traced, decimated:
-// global_map_aggregated + a .pc2.lcm beside the recording, optionally an .rrd). A step whose input the recording
-// doesn't have yet runs the earlier step first. The defaults work for most recordings: press "Generate corrected
-// map". A raw lite_record recording (no odometry) is post-processed and built the classic way.
+// Generate: the corrected map, or any of the steps that make it, each written into the recording in place.
+// 0. odometry with Point-LIO, for a lidar + IMU that nothing moves yet (odom → the lidar's tree on the tf, deskewed
+// scans), 1. fiducial markers from images, AprilTag or ArUco (raw_april_tags, april_tags), 2. a corrected tf tree (loop
+// closure, with the tags, written as the edge above the odometry: world → odom), 3. the global map (through the
+// corrected tf, ray traced, decimated: global_map_aggregated + a .pc2.lcm beside the recording, optionally an .rrd).
+// Each step is collapsed to its title and a checkbox: Generate runs the checked ones (the server runs an earlier one
+// a later one needs first). Fiducials only feed the tf correction, so they go with it; nothing can be corrected
+// before Point-LIO places the scans. The defaults work for most recordings: press "Generate corrected map".
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type CloudChoice, type FrameNode, type GenerateStatus } from "../core/api.ts"
 import { ReadOnlyAlert } from "./ReadOnlyAlert.tsx"
@@ -12,8 +14,6 @@ import { JobCard, duration } from "./JobCard.tsx"
 import type { Context } from "./context.ts"
 
 type Options = Record<string, any>
-
-const LITE_RECORD_VOXEL = 0.04
 
 const LABELS: Record<string, [string, string]> = {
     every: ["use every Nth", "1 = all; higher is faster and sparser"],
@@ -142,15 +142,35 @@ function cloudLabel(cloud: CloudChoice) {
     return `${cloud.stream} (${where}, ${cloud.count})`
 }
 
-function StepCard({ number, title, status, children, run, running, disabled, runLabel, step }: { number: number; title: string; status: React.ReactNode; children: React.ReactNode; run: () => void; running: boolean; disabled?: boolean; runLabel?: string; step: string }) {
+/** One step: collapsed to its title and its checkbox (whether Generate runs it); open, its status, its own Run button
+ * and its settings. */
+function StepCard({ step, title, included, onInclude, includeDisabled, status, children, run, running, disabled, runLabel }: {
+    step: string
+    title: string
+    included: boolean
+    onInclude: (included: boolean) => void
+    includeDisabled?: boolean
+    status: React.ReactNode
+    children?: React.ReactNode
+    run: () => void
+    running: boolean
+    disabled?: boolean
+    runLabel?: string
+}) {
     return (
-        <Card padded data-step={step} title={`${number}. ${title}`} description={status} actions={
-            <Button size="sm" disabled={running || disabled} onClick={run} data-action={`run-${step}`}>
-                {runLabel ?? "Run this step"}
-            </Button>
+        <Panel collapsible defaultOpen={false} data-step={step} title={title} actions={
+            <Checkbox value={included} disabled={includeDisabled} onChange={onInclude} data-include={step} label="include" />
         }>
-            <Column gap={8}>{children}</Column>
-        </Card>
+            <Column gap={8}>
+                <Row justify="space-between" wrap gap={8}>
+                    <Text small muted data-step-status>{status}</Text>
+                    <Button size="sm" disabled={running || disabled} onClick={run} data-action={`run-${step}`}>
+                        {runLabel ?? "Run this step"}
+                    </Button>
+                </Row>
+                {children}
+            </Column>
+        </Panel>
     )
 }
 
@@ -161,11 +181,12 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const { session, run } = context
     const [status, setStatus] = useState<GenerateStatus | null>(null)
     const [problem, setProblem] = useState<string | null>(null)
-    const [buildDefaults, setBuildDefaults] = useState<Options | null>(null)
     const [tagOptions, setTagOptions] = useState<Options | null>(null)
     const [tfOptions, setTfOptions] = useState<Options | null>(null)
     const [globalOptions, setGlobalOptions] = useState<Options | null>(null)
-    const [classic, setClassic] = useState<Options | null>(null)
+    /** step 0 (Point-LIO) checked; null = the default (checked when the recording needs it) */
+    const [includeOdometry, setIncludeOdometry] = useState<boolean | null>(null)
+    const [includeGlobal, setIncludeGlobal] = useState(true)
     /** a press that would replace the current map, waiting for a yes: Generate's, or the recorded map's */
     const [confirming, setConfirming] = useState<"generate" | "recorded" | null>(null)
     /** with a recorded global_map the steps aren't read until Details opens (it is the map) */
@@ -214,10 +235,6 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
         if (!session || !stepsWanted) {
             return
         }
-        api.buildDefaults().then((base) => {
-            setBuildDefaults(tidy(base))
-            setClassic(tidy({ ...base, ...(session.buildOptions ?? {}), ...(session.postProcess && !session.buildOptions ? { voxelSize: LITE_RECORD_VOXEL } : {}) }))
-        })
         load()
     }, [session?.id, stepsWanted])
     // a step finished (here or from the agent): what the recording has now
@@ -233,8 +250,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
         return null
     }
     const built = session.stage === "map"
-    const lite = !!session.postProcess
-    const ready = status && tagOptions && tfOptions && globalOptions && buildDefaults
+    const ready = status && tagOptions && tfOptions && globalOptions
     const setTags = (patch: Options) => setTagOptions({ ...tagOptions, ...patch })
     const setTf = (patch: Options) => setTfOptions({ ...tfOptions, ...patch })
     const setGlobal = (patch: Options) => setGlobalOptions({ ...globalOptions, ...patch })
@@ -246,19 +262,62 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const edge = sensor ? edgeFor(frames, sensor, tfOptions?.grandparent ?? "") : null
     const markers = status?.tags.markers ?? []
 
-    const runTags = () => run(api.generateTags(session.id, tagOptions ?? {}))
+    // which steps Generate runs: Point-LIO's and the global map's are their own; the fiducials' is whether the
+    // correction uses them, the correction's whether the global map goes through it
+    const odometryNeeded = !!status?.odometry.needed
+    const withOdometry = odometryNeeded && (includeOdometry ?? true)
+    const withTags = !!tfOptions?.useTags
+    const withTf = !!globalOptions?.useCorrectedTf
+    // nothing can be corrected before Point-LIO places the scans; fiducials only feed the correction
+    const includeOdometryStep = (included: boolean) => {
+        setIncludeOdometry(included)
+        if (!included) {
+            setGlobal({ useCorrectedTf: false })
+            setTf({ useTags: false })
+        }
+    }
+    const includeTags = (useTags: boolean) => {
+        setTf({ useTags })
+        if (useTags) {
+            setGlobal({ useCorrectedTf: true })
+            if (odometryNeeded) {
+                setIncludeOdometry(true)
+            }
+        }
+    }
+    const includeTf = (useCorrectedTf: boolean) => {
+        setGlobal({ useCorrectedTf })
+        if (!useCorrectedTf) {
+            setTf({ useTags: false })
+        } else if (odometryNeeded) {
+            setIncludeOdometry(true)
+        }
+    }
+
+    const runOdometry = () => run(api.generateOdometry(session.id))
+    const runTags = (pointLio = false) => run(api.generateTags(session.id, { ...(tagOptions ?? {}), pointLio }))
     // the correction gates the tags the way step 1 does
-    const runTf = () => run(api.generateTf(session.id, { ...tfOptions, gates: tagOptions?.gates, sensorFrame: cloud?.isRoot ? tfOptions?.sensorFrame : "", tags: tagOptions }))
+    const tfRequest = () => ({ ...tfOptions, useTags: withTags, gates: tagOptions?.gates, sensorFrame: cloud?.isRoot ? tfOptions?.sensorFrame : "", tags: tagOptions })
+    const runTf = () => run(api.generateTf(session.id, { ...tfRequest(), pointLio: withOdometry }))
     const runGlobal = () => {
         if (built && confirming !== "generate") {
             setConfirming("generate")
             return
         }
         setConfirming(null)
-        if (lite) {
-            run(api.build(session.id, classic ?? {}))
-        } else {
-            run(api.generateGlobal(session.id, { ...globalOptions, tf: { ...tfOptions, gates: tagOptions?.gates, sensorFrame: cloud?.isRoot ? tfOptions?.sensorFrame : "" }, tags: tagOptions }))
+        run(api.generateGlobal(session.id, { ...globalOptions, useCorrectedTf: withTf, tf: tfRequest(), tags: tagOptions, pointLio: withOdometry }))
+    }
+    // Generate: the last checked step, which runs the checked ones before it first
+    const nothingChecked = !includeGlobal && !withTf && !withTags && !withOdometry
+    const generate = () => {
+        if (includeGlobal) {
+            runGlobal()
+        } else if (withTf) {
+            runTf()
+        } else if (withTags) {
+            runTags(withOdometry)
+        } else if (withOdometry) {
+            runOdometry()
         }
     }
     const recorded = session.recordedMap
@@ -274,6 +333,10 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const a = session.annotations
     const annotationCount = a.boxes.length + a.planes.length + a.points.length + a.planPoints.length + a.areas.length + (a.prisms?.length ?? 0)
 
+    const odometry = status?.odometry
+    const odometryStatus = odometry?.record
+        ? `${odometry.record.poses.toLocaleString()} poses, ${odometry.record.pathLength.toFixed(0)} m of path (start to end ${odometry.record.startToEnd.toFixed(1)} m)${odometry.record.clouds ? `, ${odometry.record.clouds.toLocaleString()} deskewed scans` : ""} · ${when(odometry.record.at)}`
+        : odometryNeeded ? "not in the recording yet: nothing places the scans" : "the recording has odometry"
     const tagStatus = status && (status.tags.raw > 0 || status.tags.grouped > 0)
         ? <>{`${status.tags.raw} raw, ${status.tags.grouped} grouped · markers ${markers.map((m) => m.id).join(", ") || "none"}`}{status.tags.record ? ` · ${when(status.tags.record.at)}` : ""}</>
         : "not in the recording yet"
@@ -310,8 +373,8 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                                 {built && session.build ? `current: ${session.totalVoxels.toLocaleString()} voxels at ${(session.build.voxelSize * 100).toFixed(0)} cm, built in ${duration(session.build.seconds)}` : ""}
                             </Text>
                             {stepsShown && (
-                                <Button variant={recorded ? undefined : "primary"} disabled={running || !ready || !session.writable} data-action="build" onClick={runGlobal}>
-                                    {lite ? (built ? "Regenerate…" : "Generate") : built ? "Regenerate corrected map…" : "Generate corrected map"}
+                                <Button variant={recorded ? undefined : "primary"} disabled={running || !ready || nothingChecked || !session.writable} data-action="build" onClick={generate}>
+                                    {includeGlobal ? `${built ? "Regenerate" : "Generate"} ${withTf ? "corrected map" : "map"}${built ? "…" : ""}` : "Run the checked steps"}
                                 </Button>
                             )}
                         </Row>
@@ -335,12 +398,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 )}
                 {problem && <Alert tone="danger" title="Couldn't read the recording.">{problem}</Alert>}
                 {/* it only matters for generating: with a recorded map, inside Details */}
-                {!session.writable && !recorded && <ReadOnlyAlert session={session} doing={lite ? "Post-processing" : "Every step"} />}
-                {lite && (
-                    <Alert tone="info" title="Not post-processed yet." data-post-process>
-                        Generate first runs lite_record's post-processing on it (its Post process button): odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording in place. Then the map is built from the corrected scans; the steps below work once it has its frame tree.
-                    </Alert>
-                )}
+                {!session.writable && !recorded && <ReadOnlyAlert session={session} doing="Every step" />}
                 <Panel collapsible open={detailsOpen} onOpenChange={(open: boolean) => {
                     setDetailsOpen(open)
                     if (open) {
@@ -348,14 +406,24 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                     }
                 }} title={recorded ? "Details · generate from the scans instead" : "Details · steps and settings"} data-details>
                 <Column gap={10}>
-                {!session.writable && recorded && <ReadOnlyAlert session={session} doing={lite ? "Post-processing" : "Every step"} />}
+                {!session.writable && recorded && <ReadOnlyAlert session={session} doing="Every step" />}
                 <Text small muted>
-                    Everything is written into the recording itself ({status?.format ?? "…"}): run the whole thing, or any one step below. A step that needs an earlier one the recording doesn't have yet runs it first.
+                    Everything is written into the recording itself ({status?.format ?? "…"}): Generate runs the checked steps, or open one and run it alone. A step that needs an earlier one the recording doesn't have yet runs it first.
                 </Text>
                 {stepsShown && !ready && !problem && <Text small muted>Reading the recording…</Text>}
-                {stepsShown && ready && !lite && (
+                {stepsShown && ready && (
                     <>
-                        <StepCard number={1} step="tags" title="Fiducial markers (AprilTag / ArUco)" status={tagStatus} running={running} disabled={!!status.tags.problem || (!tagOptions.raw && !tagOptions.grouped)} run={runTags}>
+                        {(odometryNeeded || odometry?.record) && (
+                            <StepCard step="odometry" title="Estimate odometry (Point-LIO)" included={withOdometry} onInclude={includeOdometryStep} includeDisabled={!odometryNeeded} status={odometryStatus} running={running} disabled={!odometry?.inputs} run={runOdometry}>
+                                {odometry?.inputs && (
+                                    <Text small>
+                                        From <b>{odometry.inputs.lidar}</b> and the IMU <b>{odometry.inputs.imu}</b>: the lidar's motion, written as {odometry.record ? `${odometry.record.parent} → ${odometry.record.child}` : `odom → the top of ${odometry.lidarFrame ?? "the lidar"}'s frame tree`} on the tf and /pointlio_odometry, and{status.format === "mcap" ? " the scans motion-compensated on /pointlio_lidar, which the steps below use" : " nothing else (a .db keeps its raw scans)"}.
+                                    </Text>
+                                )}
+                                {(odometry?.record?.notes ?? []).map((note) => <Text key={note} small muted>{note}</Text>)}
+                            </StepCard>
+                        )}
+                        <StepCard step="tags" title="Add Fiducials" included={withTags} onInclude={includeTags} includeDisabled={!!status.tags.problem && status.tags.raw === 0} status={tagStatus} running={running} disabled={!!status.tags.problem || (!tagOptions.raw && !tagOptions.grouped)} run={() => runTags()}>
                             {status.tags.problem && <Alert tone="warn" title="Can't find tags here.">{status.tags.problem}</Alert>}
                             <Row wrap gap={16}>
                                 <Checkbox value={tagOptions.raw} onChange={(raw: boolean) => setTags({ raw })} data-option="tagsRaw" label="raw tags (every glimpse: raw_april_tags)" />
@@ -385,10 +453,11 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                             </Panel>
                         </StepCard>
 
-                        <StepCard number={2} step="tf" title="A corrected tf tree (loop closure)" status={tfStatus} running={running} disabled={!cloud || (cloud.isRoot && !tfOptions.sensorFrame) || !edge} run={runTf}>
+                        <StepCard step="tf" title="Add corrected tf tree" included={withTf} onInclude={includeTf} status={tfStatus} running={running} disabled={!cloud || (cloud.isRoot && !tfOptions.sensorFrame) || (!edge && !withOdometry)} run={runTf}>
                             {status.tf.planProblem && !cloud && <Alert tone="warn" title="Nothing to correct yet.">{status.tf.planProblem}</Alert>}
-                            <Checkbox value={tfOptions.useTags} onChange={(useTags: boolean) => setTf({ useTags })} disabled={!!status.tags.problem && status.tags.raw === 0} data-option="useTags"
-                                label={status.tags.raw > 0 ? "use the AprilTags" : status.tags.problem ? "use AprilTags (none here: no camera intrinsics)" : "use AprilTags (step 1 runs first: the recording has none yet)"} />
+                            <Text small muted>
+                                {withTags ? (status.tags.raw > 0 ? "With the fiducials." : "With the fiducials (Add Fiducials runs first: the recording has none yet).") : status.tags.problem ? "No fiducials here: no camera intrinsics." : "Without fiducials (check Add Fiducials to use them)."}
+                            </Text>
                             <Field inline label="target cloud">
                                 <Select size="sm" value={tfOptions.cloudStream} onChange={(cloudStream: string) => setTf({ cloudStream, sensorFrame: "" })} data-option="cloudStream"
                                     options={clouds.map((c) => ({ value: c.stream, label: `${cloudLabel(c)}${c.stream === status.tf.analysis.defaultCloud ? " · default" : ""}`, disabled: !c.inTf }))} />
@@ -409,7 +478,9 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                                         {!edge.exists && <TextInput size="sm" value={tfOptions.grandparent || "world"} onChange={(grandparent: string) => setTf({ grandparent })} data-option="grandparent" style={{ width: 120 }} />}
                                     </Row>
                                 )
-                                : sensor && <Text small tone="danger">Nothing moves {sensor}: every edge above it is static.</Text>}
+                                : sensor && (odometryNeeded
+                                    ? <Text small tone={withOdometry ? undefined : "danger"} data-needs-odometry>Nothing moves {sensor} yet: every edge above it is static. {withOdometry ? "Point-LIO estimates its odometry first." : "Check Estimate odometry (Point-LIO) to place its scans."}</Text>
+                                    : <Text small tone="danger">Nothing moves {sensor}: every edge above it is static.</Text>)}
                             {tfOptions.useTags && markers.length > 0 && (
                                 <Field label="tags to leave out (on things that move)">
                                     <Row wrap gap={6}>
@@ -442,9 +513,10 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                             </Panel>
                         </StepCard>
 
-                        <StepCard number={3} step="globalMap" title="Global map" status={globalStatus} running={running} run={runGlobal} runLabel={built ? "Run this step…" : "Run this step"}>
-                            <Checkbox value={globalOptions.useCorrectedTf} onChange={(useCorrectedTf: boolean) => setGlobal({ useCorrectedTf })} data-option="useCorrectedTf"
-                                label={status.tf.corrected ? "use the corrected tf" : "use the corrected tf (step 2 runs first: the recording has none yet)"} />
+                        <StepCard step="globalMap" title="Global map" included={includeGlobal} onInclude={setIncludeGlobal} status={globalStatus} running={running} run={runGlobal} runLabel={built ? "Run this step…" : "Run this step"}>
+                            <Text small muted>
+                                {withTf ? (status.tf.corrected ? "Through the corrected tf." : "Through the corrected tf (Add corrected tf tree runs first: the recording has none yet).") : "Through the recording's own tf (check Add corrected tf tree to correct it first)."}
+                            </Text>
                             <Checkbox value={globalOptions.build.rayTracing} onChange={(rayTracing: boolean) => setGlobal({ build: { ...globalOptions.build, rayTracing } })} data-option="rayTracing" label="ray tracing (free space clears what moved)" />
                             <Field inline label="voxel size">
                                 <Row>
@@ -489,11 +561,6 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                             </Panel>
                         </StepCard>
                     </>
-                )}
-                {stepsShown && ready && lite && classic && (
-                    <Field inline label="voxel size">
-                        <NumberInput size="sm" min={0.01} max={0.5} step={0.01} unit="m" value={classic.voxelSize} onChange={(voxelSize: number) => setClassic({ ...classic, voxelSize })} data-option="voxelSize" style={{ width: 90 }} />
-                    </Field>
                 )}
                 </Column>
                 </Panel>
