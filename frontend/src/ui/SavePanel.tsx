@@ -21,7 +21,7 @@ export function SavePanel({ context }: { context: Context }) {
             <Text small muted>
                 Written as new {db ? "streams" : "channels"} in {session.name}, beside its own data (which isn't touched). Saving again {db ? "replaces them" : "appends newer ones in place (the newest is what opens)"}. Your working session is always kept, saved or not.
             </Text>
-            {!session.writable && <ReadOnlyAlert session={session} doing="Saving" />}
+            {!session.writable && <ReadOnlyAlert session={session} doing="Saving" refresh={context.refresh} />}
             <Column gap={1}>
                 <Text small mono muted>{name("voxels")} · PointCloud2 · {session.voxels.toLocaleString()} voxels</Text>
                 <Text small mono muted>{name("path")} · Path · the loop-closed path</Text>

@@ -488,9 +488,11 @@ impl App {
     /// Everything the Map Editor writes goes into the recording in place; one in a read-only folder is refused, never
     /// copied (a copy per edit is how a disk of recordings fills up).
     fn require_writable(shared: &Arc<Mutex<Workspace>>) -> Result<()> {
-        let ws = shared.lock().unwrap();
+        let mut ws = shared.lock().unwrap();
+        // asked now, not at open: a chmod / chown since then counts
+        ws.session.writable = crate::api::recording_writable(std::path::Path::new(&ws.session.recording_path));
         if !ws.session.writable {
-            bail!("{} is in a read-only folder: the Map Editor writes into recordings in place and never copies them; move it into the recordings folder (Recordings can) and open it from there", ws.session.recording_path);
+            bail!("{} is read-only to this user: the Map Editor writes into recordings in place and never copies them; make it writable (the page shows the command) and try again", ws.session.recording_path);
         }
         Ok(())
     }

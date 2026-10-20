@@ -90,7 +90,10 @@ pub fn summary(app: &App, workspace: &Workspace) -> Value {
         );
         object.insert("undoLabel".into(), json!(session.undo.last().map(|e| e.label.clone())));
         object.insert("redoLabel".into(), json!(session.redo.last().map(|e| e.label.clone())));
-        object.insert("writeFix".into(), json!(if session.writable { None } else { write_fix(std::path::Path::new(&session.recording_path)) }));
+        // asked each time, so a chmod / chown shows without reopening
+        let writable = recording_writable(std::path::Path::new(&session.recording_path));
+        object.insert("writable".into(), json!(writable));
+        object.insert("writeFix".into(), json!(if writable { None } else { write_fix(std::path::Path::new(&session.recording_path)) }));
         object.insert("unsaved".into(), json!(session.revision != session.saved_revision));
         object.insert("voxels".into(), json!(workspace.remaining()));
         object.insert("mapVersion".into(), json!(workspace.map_version));
@@ -330,6 +333,12 @@ fn browse_dir(dir: &str) -> anyhow::Result<Value> {
     Ok(json!({ "dir": folder, "parent": folder.parent(), "home": home, "selected": selected, "entries": entries }))
 }
 
+/// Whether the steps and Save can write into this recording: the file, and a .db's folder too (sqlite's journal goes beside it).
+pub fn recording_writable(path: &std::path::Path) -> bool {
+    let db = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("db"));
+    can_write(path) && (!db || path.parent().is_some_and(can_write))
+}
+
 /// The command that lets this user write a read-only recording: chown when another user (root) owns it, else chmod.
 fn write_fix(path: &std::path::Path) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
@@ -416,7 +425,7 @@ async fn open(State(app): State<Arc<App>>, Body(body): Body) -> Result<Json<Valu
     let id = body["id"].as_str().unwrap_or_default().to_string();
     let name = body["name"].as_str().unwrap_or_default().to_string();
     // the steps write into the file itself: a writable folder isn't enough (a recording root made is read-only to us)
-    let writable = body["writable"].as_bool().unwrap_or(true) && can_write(std::path::Path::new(&path));
+    let writable = body["writable"].as_bool().unwrap_or(true) && recording_writable(std::path::Path::new(&path));
     let app2 = app.clone();
     let workspace = blocking(move || app2.open(&id, &path, &name, writable)).await?;
     let value = summary(&app, &workspace.lock().unwrap());
@@ -1167,6 +1176,10 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(reopened["writable"], false, "{reopened}");
         assert!(reopened["writeFix"].as_str().unwrap().contains(&format!("chmod u+w '{}'", path)), "{reopened}");
+        // after the chmod the session says writable without reopening
+        let (_, now) = call(&router, "GET", &format!("/api/sessions/{}", reopened["id"].as_str().unwrap()), None).await;
+        assert_eq!(now["writable"], true, "{now}");
+        assert!(now["writeFix"].is_null());
     }
 
     #[tokio::test]

@@ -398,7 +398,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 )}
                 {problem && <Alert tone="danger" title="Couldn't read the recording.">{problem}</Alert>}
                 {/* it only matters for generating: with a recorded map, inside Details */}
-                {!session.writable && !recorded && <ReadOnlyAlert session={session} doing="Every step" />}
+                {!session.writable && !recorded && <ReadOnlyAlert session={session} doing="Every step" refresh={context.refresh} />}
                 <Panel collapsible open={detailsOpen} onOpenChange={(open: boolean) => {
                     setDetailsOpen(open)
                     if (open) {
@@ -406,7 +406,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                     }
                 }} title={recorded ? "Details · generate from the scans instead" : "Details · steps and settings"} data-details>
                 <Column gap={10}>
-                {!session.writable && recorded && <ReadOnlyAlert session={session} doing="Every step" />}
+                {!session.writable && recorded && <ReadOnlyAlert session={session} doing="Every step" refresh={context.refresh} />}
                 <Text small muted>
                     Everything is written into the recording itself ({status?.format ?? "…"}): Generate runs the checked steps, or open one and run it alone. A step that needs an earlier one the recording doesn't have yet runs it first.
                 </Text>
