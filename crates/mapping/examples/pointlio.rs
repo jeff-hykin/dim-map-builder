@@ -15,7 +15,7 @@ fn main() -> anyhow::Result<()> {
     let tree = mapping::frames::tf_tree(&recording)?;
     let spool = std::env::temp_dir().join("pointlio_example.spool");
     let mut report = |p: mapping::build::Progress| eprint!("\r{} {:.0}%  {}      ", p.stage, 100.0 * p.done as f64 / p.total.max(1) as f64, p.note);
-    let config: dimos_pointlio::pointlio_core::Config = match flag("--config") {
+    let config: pointlio_core::Config = match flag("--config") {
         Some(json) => serde_json::from_str(&json)?,
         None => mapping::pointlio::config(),
     };

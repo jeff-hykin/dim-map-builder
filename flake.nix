@@ -34,12 +34,10 @@
                     cargoLock = {
                         lockFile = ./Cargo.lock;
                         outputHashes = {
-                            "dimos-voxel-ray-tracing-0.1.0" = "sha256-GFdIBvweICBNyEaHPcI2WS6O534NpZk6cnwrtvDDu78=";
+                            "dimos-voxel-ray-tracing-0.1.0" = "sha256-JmKOq9JmuFQ3HSwnpryrQu1w6Iq/76VQew8Ke+qyLuk=";
                             "dimos-module-0.1.0" = "sha256-6ikqdS3sroOJGI4WGuSyFx2yZjtJ+4Qgt+IGlkFl+qA=";
-                            "dimos-pointlio-0.1.0" = "sha256-GFdIBvweICBNyEaHPcI2WS6O534NpZk6cnwrtvDDu78=";
-                            "livox-wire-0.1.0" = "sha256-wDNVchRiqm4N9wPGwvYJ9JssmPOC33wBTE4QT6vZkGA=";
-                            "pointlio-core-0.1.0" = "sha256-FjUcsZVI8nTcmKw8WhdxBuHelBjOCeJmyEsyqRxDvX0=";
                             "lcm-msgs-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
+                            "pointlio-core-0.1.0" = "sha256-FjUcsZVI8nTcmKw8WhdxBuHelBjOCeJmyEsyqRxDvX0=";
                         };
                     };
 

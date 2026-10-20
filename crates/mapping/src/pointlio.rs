@@ -17,7 +17,7 @@ use dimos_recording::lcm::{self, Header, Odometry, Pose, PointCloud2};
 use dimos_recording::mcap_io::{DERIVED_FROM_KEY, GENERATION_KEY, LCM_TYPE_KEY};
 use dimos_recording::{Format, Kind, Recording, StreamInfo};
 use nalgebra::Point3;
-use dimos_pointlio::pointlio_core::{Config, LivoxPoint, PointLio};
+use pointlio_core::{Config, LivoxPoint, PointLio};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::io::{BufReader, BufWriter, Read, Write};
