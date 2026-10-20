@@ -90,6 +90,7 @@ pub fn summary(app: &App, workspace: &Workspace) -> Value {
         );
         object.insert("undoLabel".into(), json!(session.undo.last().map(|e| e.label.clone())));
         object.insert("redoLabel".into(), json!(session.redo.last().map(|e| e.label.clone())));
+        object.insert("writeFix".into(), json!(if session.writable { None } else { write_fix(std::path::Path::new(&session.recording_path)) }));
         object.insert("unsaved".into(), json!(session.revision != session.saved_revision));
         object.insert("voxels".into(), json!(workspace.remaining()));
         object.insert("mapVersion".into(), json!(workspace.map_version));
@@ -327,6 +328,19 @@ fn browse_dir(dir: &str) -> anyhow::Result<Value> {
     Ok(json!({ "dir": folder, "parent": folder.parent(), "home": home, "selected": selected, "entries": entries }))
 }
 
+/// The command that lets this user write a read-only recording: chown when another user (root) owns it, else chmod.
+fn write_fix(path: &std::path::Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let owner = std::fs::metadata(path).ok()?.uid();
+    let quoted = format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
+    if owner != unsafe { libc::getuid() } {
+        let user = std::env::var("USER").unwrap_or_else(|_| "$(id -un)".into());
+        Some(format!("sudo chown {user} {quoted} && chmod u+w {quoted}"))
+    } else {
+        Some(format!("chmod u+w {quoted}"))
+    }
+}
+
 /// whether this process may write `path` (its permissions for this user, not just the mode bits)
 fn can_write(path: &std::path::Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
@@ -399,7 +413,8 @@ async fn open(State(app): State<Arc<App>>, Body(body): Body) -> Result<Json<Valu
     let path = if std::path::Path::new(&path).is_absolute() { path } else { app.recordings_dir.join(&path).display().to_string() };
     let id = body["id"].as_str().unwrap_or_default().to_string();
     let name = body["name"].as_str().unwrap_or_default().to_string();
-    let writable = body["writable"].as_bool().unwrap_or(true);
+    // the steps write into the file itself: a writable folder isn't enough (a recording root made is read-only to us)
+    let writable = body["writable"].as_bool().unwrap_or(true) && can_write(std::path::Path::new(&path));
     let app2 = app.clone();
     let workspace = blocking(move || app2.open(&id, &path, &name, writable)).await?;
     let value = summary(&app, &workspace.lock().unwrap());
@@ -1134,6 +1149,12 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{opened}");
         assert_eq!(opened["recordingPath"], path);
         assert_eq!(opened["writable"], true);
+        // a file we can't write (made by root) is read-only even in a writable folder, and says how to fix it
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let (_, reopened) = call(&router, "POST", "/api/open", Some(json!({ "path": path, "id": path, "name": "r.db", "writable": true }))).await;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(reopened["writable"], false, "{reopened}");
+        assert!(reopened["writeFix"].as_str().unwrap().contains(&format!("chmod u+w '{}'", path)), "{reopened}");
     }
 
     #[tokio::test]

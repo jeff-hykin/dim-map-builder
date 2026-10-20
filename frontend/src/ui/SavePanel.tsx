@@ -2,6 +2,7 @@
 import { useState } from "react"
 import { api } from "../core/api.ts"
 import { JobCard } from "./JobCard.tsx"
+import { ReadOnlyAlert } from "./ReadOnlyAlert.tsx"
 import { Badge, Button, Card, Column, Heading, Kbd, Row, Text } from "dimos-react"
 import type { Context } from "./context.ts"
 
@@ -20,7 +21,7 @@ export function SavePanel({ context }: { context: Context }) {
             <Text small muted>
                 Written as new {db ? "streams" : "channels"} in {session.name}, beside its own data (which isn't touched). Saving again {db ? "replaces them" : "appends newer ones in place (the newest is what opens)"}. Your working session is always kept, saved or not.
             </Text>
-            {!session.writable && <Text small tone="warn">This recording is in a read-only folder, and the Map Editor never copies recordings: move it into the recordings folder to save into it.</Text>}
+            {!session.writable && <ReadOnlyAlert session={session} doing="Saving" />}
             <Column gap={1}>
                 <Text small mono muted>{name("voxels")} · PointCloud2 · {session.voxels.toLocaleString()} voxels</Text>
                 <Text small mono muted>{name("path")} · Path · the loop-closed path</Text>

@@ -197,6 +197,8 @@ export interface Session {
     recordingId: string
     recordingPath: string
     writable: boolean
+    /** when it isn't writable: the shell command that makes it so (chown / chmod) */
+    writeFix?: string | null
     name: string
     stage: "raw" | "map"
     build: BuildSummary | null

@@ -6,6 +6,7 @@
 // map". A raw lite_record recording (no odometry) is post-processed and built the classic way.
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type CloudChoice, type FrameNode, type GenerateStatus } from "../core/api.ts"
+import { ReadOnlyAlert } from "./ReadOnlyAlert.tsx"
 import { Alert, Badge, Button, Card, Checkbox, Chip, Column, Field, Heading, Modal, NumberInput, Panel, Row, Segmented, Select, Slider, Text, TextInput } from "dimos-react"
 import { JobCard, duration } from "./JobCard.tsx"
 import type { Context } from "./context.ts"
@@ -308,7 +309,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                             </Text>
                             {stepsShown
                                 ? (
-                                    <Button variant="primary" disabled={running || !ready} data-action="build" onClick={runGlobal}>
+                                    <Button variant="primary" disabled={running || !ready || !session.writable} data-action="build" onClick={runGlobal}>
                                         {lite ? (built ? "Regenerate…" : "Generate") : built ? "Regenerate corrected map…" : "Generate corrected map"}
                                     </Button>
                                 )
@@ -353,10 +354,9 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 {lite && (
                     <Alert tone="info" title="Not post-processed yet." data-post-process>
                         Generate first runs lite_record's post-processing on it (its Post process button): odometry, motion-compensated scans, the frame tree and its 4 cm voxel map, written into the recording in place. Then the map is built from the corrected scans; the steps below work once it has its frame tree.
-                        {!session.writable && " This recording is in a read-only folder, so it can't be: move it into the recordings folder first."}
                     </Alert>
                 )}
-                {!session.writable && !lite && <Alert tone="warn" title="Read-only folder.">The steps write into the recording, and it's in a read-only folder: move it into the recordings folder first.</Alert>}
+                {!session.writable && <ReadOnlyAlert session={session} doing={lite ? "Post-processing" : "Every step"} />}
                 {stepsShown && !ready && !problem && <Text small muted>Reading the recording…</Text>}
                 {stepsShown && ready && !lite && (
                     <>

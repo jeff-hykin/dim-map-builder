@@ -139,6 +139,8 @@ impl App {
                 workspace
             }
         };
+        // reopening takes the file's current permissions (a chown since the last open)
+        workspace.lock().unwrap().session.writable = writable;
         self.store.set_last_open(&id);
         *self.active.lock().unwrap() = Some(id);
         Ok(workspace)
