@@ -13,7 +13,7 @@ import type { Uploads } from "./useUploads.ts"
 export type ViewMode = "3d" | "split" | "2d"
 
 /** The edit orb's palette: one tool at a time, each with its own options card. "select" just looks around. */
-export type ToolId = "select" | "clean" | "annotate" | "polygon" | "places" | "erase" | "brush" | "line" | "straighten" | "views"
+export type ToolId = "select" | "clean" | "annotate" | "polygon" | "places" | "erase" | "brush" | "line" | "straighten" | "fill_floor" | "views"
 
 export const TOOLS: { id: ToolId; icon: IconName; label: string; key: string; view: "2d" | "3d" | "any" }[] = [
     { id: "select", icon: "pointer", label: "Select / move around", key: "Escape", view: "any" },
@@ -21,6 +21,7 @@ export const TOOLS: { id: ToolId; icon: IconName; label: string; key: string; vi
     { id: "brush", icon: "edit", label: "Draw", key: "d", view: "2d" },
     { id: "line", icon: "line", label: "Draw a line", key: "l", view: "2d" },
     { id: "straighten", icon: "ruler", label: "Straighten a wall", key: "w", view: "2d" },
+    { id: "fill_floor", icon: "fill", label: "Fill floor (holes)", key: "h", view: "2d" },
     { id: "polygon", icon: "polygon", label: "Polygon (an area with a height)", key: "p", view: "2d" },
     { id: "places", icon: "pin", label: "Named points and areas", key: "n", view: "2d" },
     { id: "annotate", icon: "cube", label: "Boxes, planes and points in 3D", key: "b", view: "3d" },

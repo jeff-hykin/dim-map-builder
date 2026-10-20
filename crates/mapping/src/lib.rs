@@ -7,6 +7,7 @@ pub mod build;
 pub mod clock;
 pub mod correct;
 pub mod edit;
+pub mod fill;
 pub mod floor;
 pub mod floorplan;
 pub mod frames;

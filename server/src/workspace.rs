@@ -50,6 +50,9 @@ pub struct OpResult {
     pub remaining: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<Vec<[f32; 3]>>,
+    /// a word on how it went (fill floor: the plane it filled on)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Clone)]
@@ -109,6 +112,9 @@ pub enum Modify {
         #[serde(flatten)]
         reach: ZEnd,
     },
+    /// fill the floor's holes under a brush stroke, on a plane fit to the floor around it
+    #[serde(rename = "fill_floor", alias = "fillFloor")]
+    FillFloor { floor: usize, path: Vec<[f32; 2]>, radius: f32 },
 }
 
 fn new_id(prefix: &str) -> String {
@@ -244,7 +250,7 @@ impl Workspace {
             self.map_version += 1;
             self.record(UndoEntry { label: format!("{label} ({changed} voxels)"), flipped, ..Default::default() });
         }
-        Ok(OpResult { label: label.into(), changed, remaining: self.remaining(), preview: None })
+        Ok(OpResult { label: label.into(), changed, remaining: self.remaining(), preview: None, detail: None })
     }
 
     /// A cleanup / crop tool: compute its selection among visible voxels; delete it unless `preview`.
@@ -300,7 +306,7 @@ impl Workspace {
         let global: Vec<u32> = local.iter().map(|i| indices[*i as usize]).collect();
         if preview {
             let sample: Vec<[f32; 3]> = local.iter().take(200_000).map(|i| points[*i as usize]).collect();
-            return Ok(OpResult { label, changed: global.len(), remaining: self.remaining(), preview: Some(sample) });
+            return Ok(OpResult { label, changed: global.len(), remaining: self.remaining(), preview: Some(sample), detail: None });
         }
         self.delete(&label, global)
     }
@@ -380,13 +386,13 @@ impl Workspace {
         Ok(model)
     }
 
-    /// Erase / draw / straighten a wall on a storey, as one undoable edit.
+    /// Erase / draw / straighten a wall / fill the floor on a storey, as one undoable edit.
     pub fn modify(&mut self, request: &Modify) -> Result<OpResult> {
         let model = self.floor_model()?;
         let voxel = self.require_map()?.voxel_size;
         let (_, points, normals) = self.visible_points();
         let storey = match request {
-            Modify::Erase { floor, .. } | Modify::Draw { floor, .. } | Modify::Straighten { floor, .. } => *floor,
+            Modify::Erase { floor, .. } | Modify::Draw { floor, .. } | Modify::Straighten { floor, .. } | Modify::FillFloor { floor, .. } => *floor,
         };
         let band = model.storeys.get(storey).with_context(|| format!("no floor {storey} (floors: 0..{})", model.storeys.len()))?.band;
         let floor_at = |x: f32, y: f32| model.height_at(storey, x, y);
@@ -402,6 +408,7 @@ impl Workspace {
             let end = z.z_end.context("zEnd (or fullColumn) is required")?;
             Ok(if z.relative { Reach { above_floor: Some(end), top: f32::MAX, bottom: band[0] } } else { Reach { above_floor: None, top: end, bottom: band[0] } })
         };
+        let mut detail = None;
         let (label, edit) = match request {
             Modify::Erase { path, radius, reach: z, .. } => {
                 if path.is_empty() {
@@ -427,10 +434,17 @@ impl Workspace {
                 }
                 (format!("Straighten wall ({:.1} m)", (to[0] - from[0]).hypot(to[1] - from[1])), edit)
             }
+            Modify::FillFloor { path, radius, .. } => {
+                // the plane's samples are the floor near the model's estimate; off its edge, near the storey's level
+                let fill = mapping::edit::fill_floor(&points, &normals, voxel, &Stroke { path: path.clone(), radius: *radius }, erase_floor_at, band)?;
+                detail = Some(format!("on a plane at z {:.2} m, {:.1}° tilt, {:.0} cm thick", fill.height, fill.tilt_degrees, fill.thickness * 100.0));
+                (format!("Fill floor ({:.2} m²)", fill.area), fill.edit)
+            }
         };
         let erasing = matches!(request, Modify::Erase { .. });
         let entries = self.session.undo.len();
-        let result = self.apply_edit(&label, edit)?;
+        let mut result = self.apply_edit(&label, edit)?;
+        result.detail = detail;
         if erasing && self.session.undo.len() > entries {
             // what an erase removed stays removed when the map is built again (`carry_erased`)
             let points = &self.require_map()?.points;
@@ -488,7 +502,7 @@ impl Workspace {
             self.map_version += 1;
             self.record(UndoEntry { label: format!("{label}: -{} +{} voxels", flipped.len(), added.len()), flipped, added, ..Default::default() });
         }
-        Ok(OpResult { label: label.into(), changed, remaining: self.remaining(), preview: None })
+        Ok(OpResult { label: label.into(), changed, remaining: self.remaining(), preview: None, detail: None })
     }
 
     pub fn undo(&mut self) -> Option<String> {
@@ -955,6 +969,29 @@ pub mod tests {
         ws.undo();
         ws.undo();
         assert!(ws.session.annotations.prisms.is_empty());
+    }
+
+    /// fill floor closes a hole in the floor as one undoable edit, and says so when there's no floor around to fit
+    #[test]
+    fn fill_floor_closes_a_hole() {
+        let mut map = room_map();
+        // a 40 cm square hole in the floor at (3, 3)
+        let points: Vec<[f32; 3]> = map.points.iter().copied().filter(|p| !(p[2] < 0.05 && (2.8..3.2).contains(&p[0]) && (2.8..3.2).contains(&p[1]))).collect();
+        map.normals = voxels::normals(&points, 0.18);
+        map.removed = vec![false; points.len()];
+        map.points = points;
+        let mut ws = Workspace::new(Session { stage: "map".into(), ..Default::default() }, Some(map));
+        let total = ws.remaining();
+        let request: Modify = serde_json::from_value(serde_json::json!({ "tool": "fill_floor", "floor": 0, "path": [[3.0, 3.0]], "radius": 0.4 })).unwrap();
+        let filled = ws.modify(&request).unwrap();
+        assert_eq!(filled.changed, 8 * 8, "{filled:?}");
+        assert_eq!(filled.label, "Fill floor (0.16 m²)");
+        assert!(filled.detail.as_deref().is_some_and(|d| d.contains("0.0° tilt")), "{:?}", filled.detail);
+        assert_eq!(ws.remaining(), total + 64);
+        ws.undo();
+        assert_eq!(ws.remaining(), total);
+        let nowhere = ws.modify(&Modify::FillFloor { floor: 0, path: vec![[40.0, 40.0]], radius: 0.4 }).unwrap_err();
+        assert!(nowhere.to_string().contains("no floor around the stroke"), "{nowhere}");
     }
 
     /// an erase removes what it covers in one stroke, adds nothing, and stays erased through undo / redo and a rebuild

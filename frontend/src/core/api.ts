@@ -233,6 +233,8 @@ export interface OpResult {
     changed: number
     remaining: number
     preview?: [number, number, number][]
+    /** a word on how it went (fill floor: the plane it filled on) */
+    detail?: string
 }
 
 const here = (path: string) => new URL(path, location.href).href
