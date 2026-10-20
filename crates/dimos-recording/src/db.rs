@@ -30,6 +30,12 @@ pub struct DbRow {
     pub tags: Option<String>,
 }
 
+/// dimos makes `<name>_blob` with a stream's first message: a stream that never got one (a recording stopped before any
+/// tf arrived) has none, and reads as empty.
+fn has_blobs(db: &Connection, name: &str) -> Result<bool> {
+    Ok(db.query_row("SELECT count(*) FROM sqlite_master WHERE name = ?1", [format!("{name}_blob")], |row| row.get::<_, i64>(0))? > 0)
+}
+
 fn has_tags(db: &Connection, name: &str) -> bool {
     db.prepare(&format!("SELECT * FROM {} LIMIT 0", quote(name))).is_ok_and(|statement| statement.column_names().contains(&"tags"))
 }
@@ -101,6 +107,9 @@ pub fn decode_blob(codec: &str, data: &[u8]) -> Result<Vec<u8>> {
 /// order without their payloads and each payload read as it's reached (a sort that carried the blobs would read every
 /// one before the first row: a reader wanting the first message would read the whole stream).
 pub fn for_each(db: &Connection, stream: &DbStream, mut each: impl FnMut(DbRow) -> Result<bool>) -> Result<()> {
+    if !has_blobs(db, &stream.name)? {
+        return Ok(());
+    }
     let table = quote(&stream.name);
     let blob = quote(&format!("{}_blob", stream.name));
     let mut statement = db.prepare(&format!(
@@ -232,6 +241,9 @@ pub fn write_rows(db: &mut Connection, name: &str, kind: &str, rows: &[NewRow]) 
 pub fn latest(db: &Connection, name: &str) -> Result<Option<(f64, Vec<u8>)>> {
     let exists: Option<String> = db.query_row("SELECT config FROM _streams WHERE name = ?1", [name], |row| row.get(0)).optional()?;
     let Some(config) = exists else { return Ok(None) };
+    if !has_blobs(db, name)? {
+        return Ok(None);
+    }
     let codec = serde_json::from_str::<serde_json::Value>(&config).ok().and_then(|c| c["codec_id"].as_str().map(String::from)).unwrap_or("lcm".into());
     let row: Option<(f64, Vec<u8>)> = db
         .query_row(
@@ -246,6 +258,24 @@ pub fn latest(db: &Connection, name: &str) -> Result<Option<(f64, Vec<u8>)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// a stream that never got a message has no `_blob` table (dimos makes it with the first one): it reads as empty
+    #[test]
+    fn a_stream_with_no_blob_table_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = Connection::open(dir.path().join("x.db")).unwrap();
+        write_stream(&mut db, "tf", "tf2_msgs.TFMessage", &[]).unwrap();
+        db.execute_batch("DROP TABLE tf_blob").unwrap();
+        let listed = streams(&db).unwrap();
+        let mut rows = 0;
+        for_each(&db, &listed[0], |_| {
+            rows += 1;
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(rows, 0);
+        assert_eq!(latest(&db, "tf").unwrap(), None);
+    }
 
     #[test]
     fn writes_streams_dimos_can_list_and_reads_them_back() {
