@@ -2935,6 +2935,7 @@ dependencies = [
  "kornia-imgproc",
  "nalgebra 0.33.3",
  "png 0.17.16",
+ "pointlio-core",
  "rayon",
  "rerun",
  "serde",
@@ -3762,6 +3763,15 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide 0.8.9",
+]
+
+[[package]]
+name = "pointlio-core"
+version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimos-module-pointlio.git?rev=22a5403f827d030b248ae473c2808b5d405b3d55#22a5403f827d030b248ae473c2808b5d405b3d55"
+dependencies = [
+ "nalgebra 0.35.0",
+ "serde",
 ]
 
 [[package]]

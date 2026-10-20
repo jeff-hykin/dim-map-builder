@@ -50,9 +50,28 @@ pub struct GlobalRecord {
     pub rrd_path: Option<String>,
 }
 
+/// Point-LIO's odometry (crate::pointlio), for a recording that had none.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OdometryRecord {
+    pub at: f64,
+    pub lidar: String,
+    pub imu: String,
+    /// the tf edge written: parent (odom) → child (the root above the lidar)
+    pub parent: String,
+    pub child: String,
+    pub poses: usize,
+    /// deskewed scans on crate::pointlio::CLOUD_TOPIC (0 in a .db)
+    pub clouds: usize,
+    pub path_length: f64,
+    pub start_to_end: f64,
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineState {
+    pub odometry: Option<OdometryRecord>,
     pub tags: Option<TagsRecord>,
     pub tf: Option<TfRecord>,
     pub global_map: Option<GlobalRecord>,

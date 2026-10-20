@@ -26,6 +26,9 @@ zune-jpeg = "0.5.15"
 dimos-recording = { path = "../dimos-recording" }
 # the ray-traced voxel map, from dimos main (move to crates.io once it is published there)
 dimos-voxel-ray-tracing = { git = "https://github.com/dimensionalOS/dimos", rev = "509d0b57ac175a282e47362f4a7485603ef03d89" }
+# Point-LIO (lidar + IMU odometry), the estimator dimos's dimos-pointlio wraps at the same dimos rev as the ray tracer
+# (its Cargo.toml pins this rev); dimos-pointlio itself is an LCM module with nothing offline to call
+pointlio-core = { git = "https://github.com/dimensionalOS/dimos-module-pointlio.git", rev = "22a5403f827d030b248ae473c2808b5d405b3d55" }
 # the ray tracer's Config derives this crate's Validate
 validator = "0.21"
 

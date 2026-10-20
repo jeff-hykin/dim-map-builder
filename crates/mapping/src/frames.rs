@@ -70,6 +70,8 @@ pub struct CloudChoice {
     pub tree_size: usize,
     /// a map / accumulated / aggregated cloud, not scans
     pub map_like: bool,
+    /// another stream is a corrected copy of this one (`derived_from`)
+    pub corrected_copy_exists: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -96,7 +98,7 @@ impl TfAnalysis {
     }
 }
 
-fn map_like(name: &str) -> bool {
+pub(crate) fn map_like(name: &str) -> bool {
     let lower = name.to_lowercase();
     ["map", "accumulated", "aggregated", "voxel"].iter().any(|word| lower.contains(word))
 }
@@ -154,7 +156,10 @@ pub fn analyze(recording: &Recording, tree: &TfTree) -> Result<TfAnalysis> {
     roots.sort_by_key(|r| std::cmp::Reverse(sizes[r]));
     let moving: BTreeSet<&str> = edges.iter().filter(|e| !e.fixed).flat_map(|e| [e.parent.as_str(), e.child.as_str()]).collect();
     let mut clouds = Vec::new();
-    for stream in recording.streams()?.into_iter().filter(|s| s.kind == Kind::Cloud && s.count > 0) {
+    let streams = recording.streams()?;
+    // a corrected copy (its channel names the raw scans in `derived_from`) comes before the scans it was made from
+    let sources: BTreeSet<String> = streams.iter().filter_map(|s| s.derived_from.clone()).collect();
+    for stream in streams.into_iter().filter(|s| s.kind == Kind::Cloud && s.count > 0) {
         let mut frame = None;
         recording.for_each(&stream.name, |_, message, _| {
             if let Message::Cloud(cloud) = message {
@@ -167,6 +172,7 @@ pub fn analyze(recording: &Recording, tree: &TfTree) -> Result<TfAnalysis> {
         let node = frames.iter().find(|f| f.name == frame);
         clouds.push(CloudChoice {
             map_like: map_like(&stream.name),
+            corrected_copy_exists: sources.contains(&stream.name),
             stream: stream.name,
             count: stream.count,
             in_tf: node.is_some(),
@@ -178,11 +184,11 @@ pub fn analyze(recording: &Recording, tree: &TfTree) -> Result<TfAnalysis> {
         });
     }
     // the default: scans (not a map) placed in tf, a moving frame that isn't a root, the biggest tree, nearest its
-    // root, the most messages
+    // root, a corrected copy before its source, the most messages
     let default_cloud = clouds
         .iter()
         .filter(|c| c.in_tf && !c.map_like)
-        .min_by_key(|c| (c.is_root, !c.dynamic, std::cmp::Reverse(c.tree_size), c.depth, std::cmp::Reverse(c.count)))
+        .min_by_key(|c| (c.is_root, !c.dynamic, std::cmp::Reverse(c.tree_size), c.depth, c.corrected_copy_exists, std::cmp::Reverse(c.count)))
         .map(|c| c.stream.clone());
     Ok(TfAnalysis { frames, edges, roots, clouds, default_cloud })
 }
