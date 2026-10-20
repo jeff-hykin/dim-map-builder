@@ -1,5 +1,5 @@
 // The Map Editor page: a map viewer, [ 3D | Split | 2D ], with two orbs over it: Generate (the build settings, the only
-// step needed first) and Edit (a palette of tools: erase, draw, straighten walls, polygons, named points and areas,
+// step needed first) and Edit (a palette of tools: erase, draw, straighten walls, fill floor holes, polygons, named points and areas,
 // 3D boxes, cleanup, saved 2D views), used in any order. All state lives server-side (the session), so a refresh comes
 // back to the same recording, view, tool, map, edits, cameras and selection; running jobs keep running and the page
 // reattaches to their progress.
@@ -796,7 +796,7 @@ export function App() {
                                     {ui.tool === "annotate" && <AnnotatePanel context={context} />}
                                     {ui.tool === "polygon" && <PolygonPanel context={context} />}
                                     {ui.tool === "places" && <PlacesPanel context={context} />}
-                                    {["erase", "brush", "line", "straighten"].includes(ui.tool) && <ModifyPanel context={context} />}
+                                    {["erase", "brush", "line", "straighten", "fill_floor"].includes(ui.tool) && <ModifyPanel context={context} />}
                                     {ui.tool === "views" && <ViewsPanel context={context} />}
                                 </Panel>
                             )}
