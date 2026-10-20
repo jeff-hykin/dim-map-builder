@@ -422,7 +422,8 @@ pub fn build(recording: &Recording, options: &BuildOptions, progress: &mut dyn F
         tf_wait_timeout_s: 0.0,
         region_m: 10.0,
         viz_emit_every: 0,
-        viz_sweep_regions: 0,
+        viz_cell_m: 4.0,
+        viz_sweep_cells: 0,
         worker_threads: std::thread::available_parallelism().map_or(4, |n| n.get() as u32).clamp(1, 8),
     };
     config.validate()?;
