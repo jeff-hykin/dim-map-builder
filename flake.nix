@@ -5,9 +5,11 @@
         nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
         rust-overlay.url = "github:oxalica/rust-overlay";
         rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+        # deps build once into their own derivation (keyed on Cargo.toml / Cargo.lock), so a commit that only edits our code rebuilds just our crates
+        crane.url = "github:ipetkov/crane";
     };
 
-    outputs = { self, nixpkgs, rust-overlay }:
+    outputs = { self, nixpkgs, rust-overlay, crane }:
         let
             systems = [ "aarch64-darwin" "x86_64-darwin" "x86_64-linux" "aarch64-linux" ];
             forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; overlays = [ (import rust-overlay) ]; }));
@@ -30,8 +32,9 @@
                         '';
                     };
 
-                    # the git dependencies (one hash per repo + rev): the dimos ray tracer, the dimos-module it builds on, and lcm-msgs
-                    cargoLock = {
+                    # the git dependencies (one hash per repo + rev): the dimos ray tracer and Point-LIO, the dimos-module they build on, livox-wire, lcm-msgs
+                    # vendored by nixpkgs (crane's own fetcher would pull dimos's LFS data), then handed to crane as a vendor dir
+                    vendorDir = pkgs.rustPlatform.importCargoLock {
                         lockFile = ./Cargo.lock;
                         outputHashes = {
                             "dimos-voxel-ray-tracing-0.1.0" = "sha256-GFdIBvweICBNyEaHPcI2WS6O534NpZk6cnwrtvDDu78=";
@@ -42,19 +45,44 @@
                             "lcm-msgs-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
                         };
                     };
+                    cargoVendorDir = pkgs.runCommand "dim-map-builder-vendor" { } ''
+                        mkdir $out
+                        sed 's|^directory = "cargo-vendor-dir"$|directory = "${vendorDir}"|' ${vendorDir}/.cargo/config.toml > $out/config.toml
+                    '';
+
+                    # only what cargo reads, so a dimos.yaml or frontend change doesn't rebuild the server
+                    src = pkgs.lib.fileset.toSource {
+                        root = ./.;
+                        fileset = pkgs.lib.fileset.unions [ ./Cargo.toml ./Cargo.lock ./crates ./server ];
+                    };
 
                     # the backend: one Rust binary (map building, editing, saving, the agent tools); no Python at runtime
-                    server = rustPlatform.buildRustPackage {
+                    # Cargo.toml's thin LTO stays: it is most of the ~1 min a code-only commit costs, but without it a 60 s map build took 89 s
+                    # crane: buildDepsOnly compiles every dependency against a dummy of our crates (so its hash only moves with Cargo.toml / Cargo.lock), buildPackage starts from that target dir
+                    rustBuild = { craneLib, pname, cargoExtraArgs, extra ? { }, install ? { } }:
+                        let
+                            common = {
+                                inherit src cargoVendorDir pname cargoExtraArgs;
+                                version = "0.1.0";
+                                doCheck = false;
+                                strictDeps = true;
+                            } // extra;
+                            cargoArtifacts = craneLib.buildDepsOnly (common // {
+                                # only the build's artifacts are reused; a `cargo check` pass would be a second compile nobody reads
+                                cargoCheckCommand = "true";
+                            });
+                        in
+                        craneLib.buildPackage (common // {
+                            inherit cargoArtifacts;
+                            # nothing builds on this target dir, so don't archive it into $out
+                            doInstallCargoArtifacts = false;
+                        } // install);
+
+                    craneLib = (crane.mkLib pkgs).overrideToolchain (_: rust);
+                    server = rustBuild {
+                        inherit craneLib;
                         pname = "dim-map-builder-server";
-                        version = "0.1.0";
-                        # only what cargo reads, so a dimos.yaml or frontend change doesn't rebuild the server
-                        src = pkgs.lib.fileset.toSource {
-                            root = ./.;
-                            fileset = pkgs.lib.fileset.unions [ ./Cargo.toml ./Cargo.lock ./crates ./server ];
-                        };
-                        inherit cargoLock;
-                        cargoBuildFlags = [ "-p" "dimos-app-server" ];
-                        doCheck = false;
+                        cargoExtraArgs = "--locked -p dimos-app-server";
                     };
 
                     # <arch> Linux from any machine: a static musl binary linked by zig, so no Linux builder or cross gcc
@@ -63,20 +91,22 @@
                             target = "${arch}-unknown-linux-musl";
                             rustCross = rust.override { targets = [ target ]; };
                         in
-                        (pkgs.makeRustPlatform { cargo = rustCross; rustc = rustCross; }).buildRustPackage {
+                        rustBuild {
+                            craneLib = (crane.mkLib pkgs).overrideToolchain (_: rustCross);
                             pname = "dim-map-builder-server-${arch}-linux";
-                            version = "0.1.0";
-                            src = server.src;
-                            inherit cargoLock;
-                            nativeBuildInputs = [ pkgs.cargo-zigbuild pkgs.zig ];
-                            # cargo-auditable's -Wl,--undefined is a flag zig's linker rejects
-                            auditable = false;
-                            buildPhase = ''
-                                export HOME=$TMPDIR ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig
-                                cargo zigbuild --release --offline --target ${target} -p dimos-app-server
-                            '';
-                            doCheck = false;
-                            installPhase = "install -Dm755 target/${target}/release/dimos-app-server $out/bin/dimos-app-server";
+                            cargoExtraArgs = "--locked -p dimos-app-server --target ${target}";
+                            extra = {
+                                nativeBuildInputs = [ pkgs.cargo-zigbuild pkgs.zig ];
+                                cargoBuildCommand = "cargo zigbuild --profile release";
+                                # zigbuild's cc / linker wrappers go in a path that is the same in every build (cargo fingerprints the linker, so a per-build path rebuilt all the deps); /private/tmp is in darwin's sandbox-paths, and Linux's sandboxed build dir is always /build
+                                preBuild = ''
+                                    export HOME=$TMPDIR ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig
+                                    export CARGO_ZIGBUILD_CACHE_DIR=${if pkgs.stdenv.isDarwin then "/private/tmp/dim-map-builder-zigbuild" else "$TMPDIR/zigbuild"}
+                                '';
+                            };
+                            install = {
+                                installPhaseCommand = "install -Dm755 target/${target}/release/dimos-app-server $out/bin/dimos-app-server";
+                            };
                         };
                     # the same wrapper as dimosApp, but its shell is the target's (a cache.nixos.org download); the frontend is plain JS
                     linuxApp = arch:
