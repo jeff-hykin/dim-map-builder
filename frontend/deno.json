@@ -1,0 +1,35 @@
+{
+    "nodeModulesDir": "auto",
+    "tasks": {
+        "dev": "deno run -A npm:vite",
+        "build": "deno task typecheck && deno run -A npm:vite build && deno run -A npm:vite build -c vite.share.config.ts",
+        "typecheck": "deno check src/",
+        "test": "deno test -A src/share/ src/core/"
+    },
+    "imports": {
+        "react": "npm:react@^19.2.0",
+        "react/": "npm:/react@^19.2.0/",
+        "react-dom": "npm:react-dom@^19.2.0",
+        "react-dom/": "npm:/react-dom@^19.2.0/",
+        "three": "npm:three@^0.180.0",
+        "three/": "npm:/three@^0.180.0/",
+        "@types/react": "npm:@types/react@^19.2.0",
+        "@types/react-dom": "npm:@types/react-dom@^19.2.0",
+        "@types/three": "npm:@types/three@^0.180.0",
+        "@vitejs/plugin-react": "npm:@vitejs/plugin-react@^5.1.0",
+        "vite": "npm:vite@^7.1.0",
+        "dimos-react": "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.2.0-beta16/src/index.ts",
+        "dimos-react/three": "https://raw.githubusercontent.com/jeff-hykin/dimos-react/v0.2.0-beta16/src/three.ts"
+    },
+    "compilerOptions": {
+        "jsx": "react-jsx",
+        "jsxImportSource": "react",
+        "jsxImportSourceTypes": "@types/react",
+        "lib": [
+            "ES2022",
+            "DOM",
+            "DOM.Iterable",
+            "deno.ns"
+        ]
+    }
+}

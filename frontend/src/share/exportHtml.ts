@@ -28,7 +28,7 @@ function gzippedViewer(): Promise<Uint8Array> {
     viewerCode ??= fetch(new URL("share-viewer.js", document.baseURI))
         .then((response) => {
             if (!response.ok) {
-                throw new Error(`the share viewer (share-viewer.js) is missing: ${response.status}. Build it with npm run build`)
+                throw new Error(`the share viewer (share-viewer.js) is missing: ${response.status}. Build it with deno task build`)
             }
             return response.arrayBuffer()
         })

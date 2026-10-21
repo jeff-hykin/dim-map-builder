@@ -1,6 +1,7 @@
 // Client for this app's backend (server/src/api.rs, at ./api: the same endpoints Desktop's agent calls), Desktop's shared recordings (../../recordings) and
 // Desktop's Dimensional cloud uploads (../../dimos-gateway/cloud/account, ../../dimos-gateway/cloud/uploads).
 import type { FloorModel } from "./slice.ts"
+// @deno-types="../dim-app/source/events.d.ts"
 import { appEvents } from "../dim-app/source/events.js"
 
 export interface DesktopRecording {

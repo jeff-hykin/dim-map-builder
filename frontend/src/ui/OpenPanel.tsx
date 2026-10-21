@@ -4,6 +4,7 @@ import { Button, Card, Column, EmptyState, IconButton, List, ListRow, Row, Searc
 import { files, recordings, type BrowseEntry, type DesktopRecording, type RecordingMetadata } from "../core/api.ts"
 import type { Context } from "./context.ts"
 import { AppButton } from "./AppButton.tsx"
+// @deno-types="../dim-app/source/zenoh.d.ts"
 import { getZenoh } from "../dim-app/source/zenoh.js"
 
 function size(bytes: number) {

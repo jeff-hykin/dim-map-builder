@@ -1,6 +1,6 @@
 // DEV ONLY: a tiny in-memory stand-in for Desktop's cloud account + upload queue (/dimos-gateway/cloud/account, /dimos-gateway/cloud/uploads) and
 // error feed (/api/errors), so the upload UI can be worked on without Desktop or a Dimensional account. On with
-// `MOCK_UPLOADS=1 npm run dev`; never part of the build. Login (Desktop's Settings, not here): logged in 6 s after the
+// `MOCK_UPLOADS=1 deno task dev`; never part of the build. Login (Desktop's Settings, not here): logged in 6 s after the
 // page first finds it logged out. Uploads: one at a time,
 // 4 MB/s; a path containing "fail" fails with a network error. The real endpoints: docs/api.md (the dimos gateway's API 4.0).
 import type { Plugin } from "vite"

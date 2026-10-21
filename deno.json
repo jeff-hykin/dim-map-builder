@@ -3,9 +3,10 @@
         "@std/yaml": "jsr:@std/yaml@1"
     },
     "tasks": {
-        "test": "cargo test --workspace && deno test frontend/src/share/ frontend/src/core/ && cd frontend && npm run typecheck",
+        "test": "cargo test --workspace && cd frontend && deno task typecheck && deno task test",
         "check": "deno task check-endpoints",
-        "check-endpoints": "deno run -A scripts/check_endpoints.ts"
+        "check-endpoints": "deno run -A scripts/check_endpoints.ts",
+        "update-hashes": "deno run -A scripts/update_hashes.ts"
     },
     "fmt": {
         "indentWidth": 4,

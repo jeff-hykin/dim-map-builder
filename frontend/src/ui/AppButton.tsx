@@ -2,6 +2,7 @@
 // instead, and outside Desktop it isn't shown.
 import { useEffect, useState } from "react"
 import { Button } from "dimos-react"
+// @deno-types="../dim-app/source/desktop.d.ts"
 import { appInstalled, openApp, underDesktop } from "../dim-app/source/desktop.js"
 
 export function AppButton({ app, title, children, variant }: { app: string; title: string; children: string; variant?: "primary" | "default" }) {

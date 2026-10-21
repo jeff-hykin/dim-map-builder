@@ -121,6 +121,6 @@ type Upload = {
 - A 404 / 405 from these means a Desktop from before them: the page says it needs a newer Desktop.
 - Page errors go to Desktop's error feed (`POST ../../api/errors`, dim-app `errors.js`) for its agent.
 
-Dev only: `MOCK_UPLOADS=1 npm run dev` (in `frontend/`) answers these and `/api/errors` from an in-memory mock
+Dev only: `MOCK_UPLOADS=1 deno task dev` (in `frontend/`) answers these and `/api/errors` from an in-memory mock
 (`frontend/dev/mockUploads.ts`: login approves itself after 6 s, 4 MB/s uploads, a path containing "fail" fails).
 Without it the dev server forwards `/dimos` to `DESKTOP_URL`.

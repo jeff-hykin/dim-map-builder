@@ -4,7 +4,9 @@
 // app's: it is Desktop's Settings → Dimensional account (one login for every app), which comes back here once done.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { cloud, uploads as uploadsApi, type CloudAccount, type Upload } from "../core/api.ts"
+// @deno-types="../dim-app/source/desktop.d.ts"
 import { openApp } from "../dim-app/source/desktop.js"
+// @deno-types="../dim-app/source/zenoh.d.ts"
 import { getZenoh } from "../dim-app/source/zenoh.js"
 
 export interface Uploads {

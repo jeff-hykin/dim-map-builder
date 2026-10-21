@@ -28,15 +28,13 @@ jobs:
             # dimos.yaml's provides: is exactly what the built server serves at openapi.json
             - run: deno task check-endpoints --binary result/bin/dimos-app-server
             - run: deno fmt --check && deno lint
-            # the shared map's packing (Share → as HTML): voxel encoding and page round trips; the 2D view's gestures
-            - run: deno test frontend/src/share/ frontend/src/core/
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
             - run: cargo test --workspace --locked
-            - uses: actions/setup-node@v4
+            # the page's deno: the version the flake builds it with (nixos-25.11's), whose deno.lock this is
+            - uses: denoland/setup-deno@v2
               with:
-                  node-version: 22
-                  cache: npm
-                  cache-dependency-path: frontend/package-lock.json
-            - run: npm ci && npm run typecheck
+                  deno-version: v2.6.10
+            # typecheck, then the shared map's packing (Share → as HTML: voxel encoding and page round trips) and the 2D view's gestures
+            - run: deno install --frozen && deno task typecheck && deno task test
               working-directory: frontend
