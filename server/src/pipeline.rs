@@ -195,7 +195,8 @@ pub fn run_tf(data_dir: &Path, path: &Path, options: &CorrectOptions, tag_option
             let db = work.0.join("work.db");
             let (trajectory, sightings, mut report) = correct::write_stitch_inputs(&recording, &tree, &plan, options, tags_view, &db, &mut |p| share.send(p), cancel)?;
             let args = correct::stitch_args(&plan, options, &db, tags_view.map(|(_, frame)| frame));
-            let output = crate::icp_stitch::run(&binary, &args, &|p| share.send(p), cancel)?;
+            let log = data_dir.join("logs").join(format!("icp_stitch-{}.log", (now_seconds() * 1000.0) as u64));
+            let output = crate::icp_stitch::run(&binary, &args, &log, &|p| share.send(p), cancel)?;
             let keyframes = correct::read_stitch_output(&db, &trajectory)?;
             report.loops = crate::icp_stitch::accepted(&output);
             report.notes.extend(crate::icp_stitch::summary_lines(&output));

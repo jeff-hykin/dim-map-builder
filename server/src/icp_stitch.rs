@@ -122,8 +122,8 @@ pub fn parse_line(line: &str) -> Option<(usize, f64, String)> {
 }
 
 /// Runs icp_stitch with `args`, reporting progress as stages 1..3 of 4 (stage 0 is writing its input); returns its
-/// output.
-pub fn run(binary: &Path, args: &[String], report: &dyn Fn(Progress), cancel: &AtomicBool) -> Result<String> {
+/// output. The full run (command, stdout, stderr) goes to `log`, which a failure names.
+pub fn run(binary: &Path, args: &[String], log: &Path, report: &dyn Fn(Progress), cancel: &AtomicBool) -> Result<String> {
     let mut child = Command::new(binary)
         .args(args)
         .env("NO_COLOR", "1")
@@ -169,9 +169,24 @@ pub fn run(binary: &Path, args: &[String], report: &dyn Fn(Progress), cancel: &A
     if killed || cancel.load(Ordering::Relaxed) {
         return Err(anyhow::anyhow!(Cancelled));
     }
+    let command = std::iter::once(binary.display().to_string()).chain(args.iter().cloned()).collect::<Vec<_>>().join(" ");
+    let saved = log.parent().map(std::fs::create_dir_all).transpose().and_then(|_| {
+        std::fs::write(log, format!("$ {command}\n\n== stdout ==\n{output}\n== stderr ==\n{errors}\n== {status} ==\n"))
+    });
     if !status.success() {
-        let tail: Vec<&str> = errors.lines().chain(output.lines()).filter(|l| !l.trim().is_empty()).collect();
-        bail!("icp_stitch failed ({status}): {}", tail[tail.len().saturating_sub(6)..].join(" / "));
+        // The reason is at the end of stderr; stdout's tail is only progress.
+        let errors: Vec<&str> = errors.lines().filter(|l| !l.trim().is_empty()).collect();
+        let reason = if errors.is_empty() {
+            let output: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+            output[output.len().saturating_sub(12)..].join("\n")
+        } else {
+            errors[errors.len().saturating_sub(12)..].join("\n")
+        };
+        let full = match saved {
+            Ok(()) => format!("full log: {}", log.display()),
+            Err(e) => format!("couldn't save the full log to {}: {e}", log.display()),
+        };
+        bail!("icp_stitch failed ({status}):\n{reason}\n({full})");
     }
     Ok(output)
 }
