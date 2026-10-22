@@ -28,7 +28,7 @@ pub async fn post(base: &str, path: &str, body: &Value) -> Result<Value> {
 }
 
 /// Backend → page (Desktop's docs/events.md): forwards every event the app emits to Desktop's relay,
-/// `POST <desktopUrl>/desktop/frontend/<name>/events`, which publishes it on `<ns>/apps/<name>/frontend/events` for the
+/// `POST <desktopUrl>/gateways/desktop/ui/apps/<name>/frontend/events`, which publishes it on `<ns>/apps/<name>/frontend/events` for the
 /// page's zenoh-gateway connection (dim-app's appEvents). One task, one POST at a time, so events arrive in order; a failure
 /// is logged once per message and never stops it.
 pub fn spawn_relay(app: std::sync::Arc<crate::app::App>, desktop_url: String, name: String) {
@@ -55,7 +55,7 @@ pub fn spawn_relay(app: std::sync::Arc<crate::app::App>, desktop_url: String, na
     });
 }
 
-/// `/desktop/frontend/<name>/<topic>`, the name percent-encoded
+/// `/gateways/desktop/ui/apps/<name>/frontend/<topic>`, the name percent-encoded
 pub fn relay_path(name: &str, topic: &str) -> String {
     let name: String = name
         .bytes()
@@ -64,7 +64,7 @@ pub fn relay_path(name: &str, topic: &str) -> String {
             _ => format!("%{b:02X}"),
         })
         .collect();
-    format!("/desktop/frontend/{name}/{topic}")
+    format!("/gateways/desktop/ui/apps/{name}/frontend/{topic}")
 }
 
 /// (status, body) of an HTTP/1.1 response, with a chunked body put back together.
@@ -96,8 +96,8 @@ mod tests {
 
     #[test]
     fn relay_paths() {
-        assert_eq!(relay_path("dim-map-builder", "events"), "/desktop/frontend/dim-map-builder/events");
-        assert_eq!(relay_path("a b", "events"), "/desktop/frontend/a%20b/events");
+        assert_eq!(relay_path("dim-map-builder", "events"), "/gateways/desktop/ui/apps/dim-map-builder/frontend/events");
+        assert_eq!(relay_path("a b", "events"), "/gateways/desktop/ui/apps/a%20b/frontend/events");
     }
 
     #[tokio::test]
@@ -119,7 +119,7 @@ mod tests {
                 raw.extend_from_slice(&buf[..read]);
             }
             let text = String::from_utf8_lossy(&raw).to_string();
-            assert!(text.starts_with("POST /desktop/frontend/maps/events HTTP/1.1"), "{text}");
+            assert!(text.starts_with("POST /gateways/desktop/ui/apps/maps/frontend/events HTTP/1.1"), "{text}");
             // key order follows serde_json's preserve_order, which a dependency (dimos-module) turns on
             let body: serde_json::Value = serde_json::from_str(text.split("\r\n\r\n").nth(1).unwrap_or_default()).unwrap();
             assert_eq!(body, serde_json::json!({ "type": "session", "n": n }), "{text}");
@@ -145,7 +145,7 @@ mod tests {
             let _ = socket.read(&mut buffer).await;
             socket.write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 25\r\n\r\n{\"error\":\"not an .mcap\"}").await.unwrap();
         });
-        let error = post(&format!("http://{address}"), "/dimos-gateway/cloud/uploads", &serde_json::json!({ "path": "x" })).await.unwrap_err();
+        let error = post(&format!("http://{address}"), "/gateways/dimos/cloud/uploads", &serde_json::json!({ "path": "x" })).await.unwrap_err();
         assert_eq!(error.to_string(), "not an .mcap");
     }
 }

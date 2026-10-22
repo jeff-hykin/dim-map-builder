@@ -8,10 +8,11 @@
 //     zenoh.subscribeDesktop("apps", () => reloadApps()) // <ns>/desktop/events/apps ("*" = every type)
 //     zenoh.onReconnect(() => reloadEverything()) // events published while the link was down are gone
 //
-// Where things are comes from Desktop's `GET /api/desktop/zenoh?app=<name>` (relative to the app:
-// `../../api/desktop/zenoh`). The client is vendor/zenoh-gateway/zenoh_gateway.js (vendored, so nothing loads from the network); an app
-// that already has its own copy passes `connect`. Discovery and connecting retry with backoff (0.5 s doubling to 10 s);
-// once connected the client reconnects by itself and its subscriptions come back on their own.
+// Where things are comes from Desktop's `GET /gateways/desktop/management/gateways/zenoh?app=<name>` (relative to the
+// app: `../../gateways/desktop/management/gateways/zenoh`). The client is vendor/zenoh-gateway/zenoh_gateway.js
+// (vendored, so nothing loads from the network); an app that already has its own copy passes `connect`. Discovery and
+// connecting retry with backoff (0.5 s doubling to 10 s); once connected the client reconnects by itself and its
+// subscriptions come back on their own.
 
 import { checkTopic } from "./topic.js"
 
@@ -129,7 +130,7 @@ class AppZenoh {
 
     async #start() {
         const fetchImpl = this.#options.fetch ?? globalThis.fetch
-        const discovery = new URL("api/desktop/zenoh", this.base)
+        const discovery = new URL("gateways/desktop/management/gateways/zenoh", this.base)
         if (this.app) {
             discovery.searchParams.set("app", this.app)
         }

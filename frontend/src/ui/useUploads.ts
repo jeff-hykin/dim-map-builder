@@ -1,4 +1,4 @@
-// Uploads to Dimensional cloud: Desktop's queue (../../dimos-gateway/cloud/uploads), read once and again whenever the dimos server says
+// Uploads to Dimensional cloud: Desktop's queue (../../gateways/dimos/cloud/uploads), read once and again whenever the dimos server says
 // it changed (its zenoh events <ns>/dimos/events/upload, uploads, upload-removed, on the page's one zenoh-gateway
 // connection; also after that connection comes back), so uploads the agent starts show up too. Logging in isn't this
 // app's: it is Desktop's Settings → Dimensional account (one login for every app), which comes back here once done.
@@ -49,7 +49,7 @@ export function useUploads(say: (text: string, error?: boolean) => void): Upload
     const refresh = useCallback(async () => {
         try {
             const body = await uploadsApi.list()
-            setList(body.uploads ?? []) // outside Desktop (no /dimos-gateway/cloud/uploads) the answer has no list
+            setList(body.uploads ?? []) // outside Desktop (no /gateways/dimos/cloud/uploads) the answer has no list
             setWaiting(Boolean(body.waitingForLogin))
             setProblem(null)
         } catch (error) {

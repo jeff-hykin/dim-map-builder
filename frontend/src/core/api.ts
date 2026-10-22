@@ -1,5 +1,5 @@
-// Client for this app's backend (server/src/api.rs, at ./api: the same endpoints Desktop's agent calls), Desktop's shared recordings (../../recordings) and
-// Desktop's Dimensional cloud uploads (../../dimos-gateway/cloud/account, ../../dimos-gateway/cloud/uploads).
+// Client for this app's backend (server/src/api.rs, at ./api: the same endpoints Desktop's agent calls), Desktop's shared recordings (../../gateways/desktop/recordings) and
+// Desktop's Dimensional cloud uploads (../../gateways/dimos/cloud/account, ../../gateways/dimos/cloud/uploads).
 import type { FloorModel } from "./slice.ts"
 // @deno-types="../dim-app/source/events.d.ts"
 import { appEvents } from "../dim-app/source/events.js"
@@ -253,10 +253,10 @@ const json = (body: unknown): RequestInit => ({ method: "POST", body: JSON.strin
 
 /** Desktop's shared recordings folder (docs/api.md in dimos-desktop). */
 export const recordings = {
-    list: () => call<{ dir: string; extraDirs: string[]; recordings: DesktopRecording[] }>("../../recordings"),
+    list: () => call<{ dir: string; extraDirs: string[]; recordings: DesktopRecording[] }>("../../gateways/desktop/recordings"),
     /** a free path in Desktop's main recordings folder for a new file */
-    create: (name: string, format: "db" | "mcap") => call<{ id: string; path: string }>("../../recordings/new", json({ name, format })),
-    metadata: (id: string) => call<RecordingMetadata>(`../../recordings/${id.split("/").map(encodeURIComponent).join("/")}`),
+    create: (name: string, format: "db" | "mcap") => call<{ id: string; path: string }>("../../gateways/desktop/recordings", json({ name, format })),
+    metadata: (id: string) => call<RecordingMetadata>(`../../gateways/desktop/recordings/${id.split("/").map(encodeURIComponent).join("/")}`),
 }
 
 export interface BrowseEntry {
@@ -327,18 +327,18 @@ async function desktop<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const cloud = {
-    account: () => desktop<CloudAccount>("../../dimos-gateway/cloud/account"),
+    account: () => desktop<CloudAccount>("../../gateways/dimos/cloud/account"),
 }
 
 /** Desktop's upload queue (GET, and what DELETE answers); its byPath (every file uploaded before) isn't used here */
 export type UploadQueue = { uploads: Upload[]; waitingForLogin: boolean }
 
 export const uploads = {
-    list: () => desktop<UploadQueue>("../../dimos-gateway/cloud/uploads"),
+    list: () => desktop<UploadQueue>("../../gateways/dimos/cloud/uploads"),
     /** cancels a queued / running one, removes a finished one */
-    remove: (id: string) => desktop<UploadQueue>(`../../dimos-gateway/cloud/uploads?id=${encodeURIComponent(id)}`, { method: "DELETE" }),
-    retry: (id: string) => desktop<Upload>("../../dimos-gateway/cloud/uploads", { method: "POST", body: JSON.stringify({ retry: id }) }),
-    clearFinished: () => desktop<UploadQueue>("../../dimos-gateway/cloud/uploads", { method: "DELETE" }),
+    remove: (id: string) => desktop<UploadQueue>(`../../gateways/dimos/cloud/uploads?id=${encodeURIComponent(id)}`, { method: "DELETE" }),
+    retry: (id: string) => desktop<Upload>("../../gateways/dimos/cloud/uploads", { method: "POST", body: JSON.stringify({ retry: id }) }),
+    clearFinished: () => desktop<UploadQueue>("../../gateways/dimos/cloud/uploads", { method: "DELETE" }),
 }
 
 /** a cloud stream the tf correction could follow (server: mapping::frames::CloudChoice) */

@@ -49,7 +49,7 @@ let appsCache = null
 let appsCacheAt = 0
 
 /**
- * Desktop's installed apps (`GET /api/apps`), cached for 2 s. `[]` outside Desktop or when it fails.
+ * Desktop's installed apps (`GET /apps`), cached for 2 s. `[]` outside Desktop or when it fails.
  * @returns {Promise<Array<{ name: string, title: string, url: string, stopped?: boolean }>>}
  */
 export async function listApps({ fresh = false } = {}) {
@@ -60,7 +60,7 @@ export async function listApps({ fresh = false } = {}) {
         return appsCache
     }
     try {
-        const response = await fetch("/api/apps")
+        const response = await fetch("/gateways/desktop/info/apps")
         const body = await response.json()
         const list = Array.isArray(body) ? body : body.apps ?? []
         appsCache = list

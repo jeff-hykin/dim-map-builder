@@ -17,7 +17,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 
 | Method + path | What |
 | --- | --- |
-| `PUT api/import?path=` (plumbing) | a dropped recording's bytes, streamed into a free path Desktop's `POST /recordings/new` handed out |
+| `PUT api/import?path=` (plumbing) | a dropped recording's bytes, streamed into a free path Desktop's `POST /gateways/desktop/recordings` handed out |
 | `GET api/browse?dir=` (plumbing) | the Open panel's file browser: a folder's subfolders and .db / .mcap files (name, path, isDir, size, modified, writable), `$HOME` by default; a recording's path lists its folder with it `selected` |
 | `GET api/status` (context) | the open map briefly: recording, stage, voxels, bounds, floors, annotation counts, job, unsaved, recent history |
 | `GET api/state` | what the page loads: `{ active, session, last, recordingsDir }` (only a recording opened since the server started is open; `last` is the one before, offered on the empty page) |
@@ -57,7 +57,7 @@ The page's plumbing, not actions (not in openapi.json): `GET api/sessions/{id}/p
 voxels), `GET api/sessions/{id}/preview.bin` (the raw recording at a glance; 202 while it's read), `PUT
 api/sessions/{id}/view` (the page reports its camera and UI state, saved with the session), `POST api/captures/{n}` (the
 page answering a screenshot request). Events reach the page over zenoh (Desktop's docs/events.md): the server POSTs each
-to Desktop's relay (`/desktop/frontend/<name>/events`), which publishes it on `<ns>/apps/<name>/frontend/events`, and
+to Desktop's relay (`/gateways/desktop/ui/apps/<name>/frontend/events`), which publishes it on `<ns>/apps/<name>/frontend/events`, and
 the page hears it on its one zenoh-gateway connection (dim-app's appEvents), in order: `job`, `session`, `preview`,
 `opened`, `discarded`, `ui`, `setView`, `capture`, `upload`. After that connection comes back the page re-reads.
 
@@ -76,20 +76,20 @@ The evaluation that shaped these endpoints (boxing tasks, IoU against hand-place
 
 ## Desktop endpoints this app uses: uploads + cloud login
 
-Served by the dimos gateway (API 4.0; Desktop serves it at `/dimos-gateway/`) and called relative to the app
-(`../../dimos-gateway/...`); the agent reaches them as Desktop's own endpoints. Queueing this app's recording goes through
-`POST api/sessions/{id}/upload` (the backend posts to `/dimos-gateway/cloud/uploads`, after a save when asked). Declared in
+Served by the dimos gateway (API 4.0; Desktop serves it at `/gateways/dimos/`) and called relative to the app
+(`../../gateways/dimos/...`); the agent reaches them as Desktop's own endpoints. Queueing this app's recording goes through
+`POST api/sessions/{id}/upload` (the backend posts to `/gateways/dimos/cloud/uploads`, after a save when asked). Declared in
 `dimos.yaml` `uses: "@dimos-gateway"`, so a Desktop whose gateway doesn't provide them refuses to install this version. The page code is `frontend/src/core/api.ts` (`cloud`, `uploads`), `ui/useUploads.ts`, `ui/UploadsPanel.tsx`
 (logging in is Desktop's Settings → Dimensional account, one login for every app). The upload itself runs in Desktop (dimos's `CloudData().upload`), so it outlives the page.
 
 | Method + path | Body | Response |
 | --- | --- | --- |
-| `GET /dimos-gateway/cloud/account` | | `CloudAccount` |
-| `GET /dimos-gateway/cloud/uploads` | | `UploadQueue`: `{ uploads: Upload[], waitingForLogin: boolean, byPath }`, oldest first (`byPath`: every file uploaded before; unused here) |
-| `POST /dimos-gateway/cloud/uploads` | `{ path, robotId?, kind? }` | `Upload`. The same path already queued or uploading → that item. 400 `{ error }` for a missing file or one that isn't `.mcap` / `.db` |
-| `POST /dimos-gateway/cloud/uploads` | `{ retry: id }` | `Upload`, queued again (at the end); 404 for an unknown id |
-| `DELETE /dimos-gateway/cloud/uploads?id={id}` | | `UploadQueue`: cancels a queued / uploading one (→ `cancelled`), removes a finished one |
-| `DELETE /dimos-gateway/cloud/uploads` | | `UploadQueue`: clears the finished ones (done, failed, cancelled) |
+| `GET /gateways/dimos/cloud/account` | | `CloudAccount` |
+| `GET /gateways/dimos/cloud/uploads` | | `UploadQueue`: `{ uploads: Upload[], waitingForLogin: boolean, byPath }`, oldest first (`byPath`: every file uploaded before; unused here) |
+| `POST /gateways/dimos/cloud/uploads` | `{ path, robotId?, kind? }` | `Upload`. The same path already queued or uploading → that item. 400 `{ error }` for a missing file or one that isn't `.mcap` / `.db` |
+| `POST /gateways/dimos/cloud/uploads` | `{ retry: id }` | `Upload`, queued again (at the end); 404 for an unknown id |
+| `DELETE /gateways/dimos/cloud/uploads?id={id}` | | `UploadQueue`: cancels a queued / uploading one (→ `cancelled`), removes a finished one |
+| `DELETE /gateways/dimos/cloud/uploads` | | `UploadQueue`: clears the finished ones (done, failed, cancelled) |
 
 ```ts
 type CloudAccount = { loggedIn: boolean; email: string | null; scopes: string[] | null; source: "env" | "stored" | null; cloudUrl: string; error: string | null }
@@ -110,17 +110,17 @@ type Upload = {
   `waitingForLogin` turns true: nothing is lost, the page shows "Uploads are waiting for you to log in", and a completed
   login resumes the queue by itself. `errorCode: "not_logged_in"` on a failed item (e.g. a key revoked mid-upload) gets
   a Log in button beside Retry.
-- Upload button: checks `GET /dimos-gateway/cloud/account` first; not logged in → Desktop's Settings → Dimensional account
+- Upload button: checks `GET /gateways/dimos/cloud/account` first; not logged in → Desktop's Settings → Dimensional account
   opens (dim-app `openApp("settings", { path: "settings-cloud-account" })`, which returns here once logged in) and the
   upload waits for the login (the dimos server's `cloud-login` zenoh event, or a look every 3 s), then
   `POST api/sessions/{id}/upload`. Unsaved edits → "Save, then upload" (the backend
   waits for the save job, then queues it) or "Upload as last saved".
-- The page reads `GET /dimos-gateway/cloud/uploads` once, then follows the dimos server's zenoh events (`<ns>/dimos/events/upload`
+- The page reads `GET /gateways/dimos/cloud/uploads` once, then follows the dimos server's zenoh events (`<ns>/dimos/events/upload`
   carries the whole upload, progress included; `uploads` and `upload-removed` make it re-read), and re-reads after its
   zenoh-gateway connection comes back. No polling.
 - A 404 / 405 from these means a Desktop from before them: the page says it needs a newer Desktop.
-- Page errors go to Desktop's error feed (`POST ../../api/errors`, dim-app `errors.js`) for its agent.
+- Page errors go to Desktop's error feed (`POST ../../gateways/desktop/ui/errors`, dim-app `errors.js`) for its agent.
 
-Dev only: `MOCK_UPLOADS=1 deno task dev` (in `frontend/`) answers these and `/api/errors` from an in-memory mock
+Dev only: `MOCK_UPLOADS=1 deno task dev` (in `frontend/`) answers these and `/gateways/desktop/ui/errors` from an in-memory mock
 (`frontend/dev/mockUploads.ts`: login approves itself after 6 s, 4 MB/s uploads, a path containing "fail" fails).
 Without it the dev server forwards `/dimos` to `DESKTOP_URL`.

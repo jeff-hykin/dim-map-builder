@@ -1,4 +1,4 @@
-// Notifications → dimOS Desktop's notification center (POST /api/notifications on the Desktop origin).
+// Notifications → dimOS Desktop's notification center (POST /gateways/desktop/ui/notifications on the Desktop origin).
 //
 //     import { notify } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.18.0/source/notify.js"
 //     notify({ title: "Battery low", body: "Go2 at 14%", kind: "warn", sound: "battery" })
@@ -10,7 +10,7 @@
 //   title, body          strings (required)
 //   kind                 "ok" | "warn" | "agent" | "events"            (default "ok")
 //   sound                "default" | "urgent" | "battery"              (default "default")
-//   icon                 URL of an image; default: this app's icon (/api/apps/<app>/icon)
+//   icon                 URL of an image; default: this app's icon (/gateways/desktop/info/apps/<app>/icon)
 //   actions              [[label, action], ...]  e.g. [["Open", "open_app:controller"]]; also post:<path>[ <json>],
 //                        modal:<key> (opens modals[key]), dismiss
 //   details              anything JSON (shown expanded in the panel)
@@ -62,12 +62,13 @@ export async function notify(notification, options = {}) {
             kind: notification.kind ?? "ok",
             sound: notification.sound ?? "default",
             app,
-            icon: notification.icon ?? (app ? `/api/apps/${encodeURIComponent(app)}/icon` : undefined),
+            icon: notification.icon ??
+                (app ? `/gateways/desktop/info/apps/${encodeURIComponent(app)}/icon` : undefined),
             actions: notification.actions,
             details: notification.details,
             modals: notification.modals,
         }
-        const url = new URL("/api/notifications", options.origin ?? location.origin)
+        const url = new URL("/gateways/desktop/ui/notifications", options.origin ?? location.origin)
         const response = await fetch(url, {
             method: "POST",
             headers: { "content-type": "application/json" },

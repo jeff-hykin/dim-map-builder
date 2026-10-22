@@ -237,7 +237,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .when("you want to redo an edit you undid")
         .endpoint("POST", "api/sessions/{id}/save", "Write the map and every annotation into the recording file (a background job, in place: an .mcap gets the new messages appended, nothing is copied; a recording in a read-only folder is refused). Returns { job }.", with_id(json!({})), save)
         .when("you need to save the map and annotations into the recording")
-        .endpoint("POST", "api/sessions/{id}/upload", "Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /dimos-gateway/cloud/uploads shows progress; it waits for a login if there is none). Returns { upload }; with unsaved edits and saveFirst (default true) it saves into it first and returns { job, note }, queueing the upload when the save finishes. 503 when not started by Desktop.", with_id(json!({ "saveFirst": b("save unsaved edits into the recording first (default true)") })), upload)
+        .endpoint("POST", "api/sessions/{id}/upload", "Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /gateways/dimos/cloud/uploads shows progress; it waits for a login if there is none). Returns { upload }; with unsaved edits and saveFirst (default true) it saves into it first and returns { job, note }, queueing the upload when the save finishes. 503 when not started by Desktop.", with_id(json!({ "saveFirst": b("save unsaved edits into the recording first (default true)") })), upload)
         .when("you want to upload the recording to Dimensional cloud")
         // the page's plumbing: binary map data, its reports (events reach it over zenoh: desktop::spawn_relay)
         .plumbing("GET", "api/sessions/{id}/points.bin", points)
@@ -249,7 +249,7 @@ pub fn routes() -> Routes<Arc<App>> {
 }
 
 /// `PUT api/import?path=<abs path>`: a recording dropped on the page that Desktop doesn't have, streamed into the
-/// path Desktop's `POST /recordings/new` handed out (inside the recordings folder, not there yet), through a partial
+/// path Desktop's `POST /gateways/desktop/recordings` handed out (inside the recordings folder, not there yet), through a partial
 /// file. Not an action: the page's plumbing for drag and drop.
 pub fn import_router() -> axum::Router<Arc<App>> {
     axum::Router::new().route("/api/import", axum::routing::put(import))
@@ -1002,7 +1002,7 @@ async fn upload(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body):
             }
             let Ok((_, workspace)) = session(&app, &id) else { return };
             let path = workspace.lock().unwrap().session.recording_path.clone();
-            match crate::desktop::post(&desktop, "/dimos-gateway/cloud/uploads", &json!({ "path": path })).await {
+            match crate::desktop::post(&desktop, "/gateways/dimos/cloud/uploads", &json!({ "path": path })).await {
                 Ok(upload) => app.emit(json!({ "type": "upload", "upload": upload })),
                 Err(error) => app.emit(json!({ "type": "upload", "error": format!("{error:#}") })),
             }
@@ -1010,7 +1010,7 @@ async fn upload(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body):
         return Ok(Json(json!({ "job": job, "note": "saving into the recording first; it is queued for upload when the save finishes" })));
     }
     let path = workspace.lock().unwrap().session.recording_path.clone();
-    let upload = crate::desktop::post(&desktop, "/dimos-gateway/cloud/uploads", &json!({ "path": path })).await?;
+    let upload = crate::desktop::post(&desktop, "/gateways/dimos/cloud/uploads", &json!({ "path": path })).await?;
     app.emit(json!({ "type": "upload", "upload": upload }));
     Ok(Json(json!({ "upload": upload })))
 }

@@ -6,8 +6,8 @@ import { mockUploads } from "./dev/mockUploads.ts"
 import { esmFetch } from "./tools/esm_fetch.ts"
 
 // served at /apps/<name>/, so every asset URL is relative; the dev server forwards this app's API to its server
-// through a running Desktop (DESKTOP_URL, default 7077) and Desktop's /recordings and /dimos-gateway to Desktop.
-// MOCK_UPLOADS=1 answers /dimos-gateway/cloud/* and /api/errors from a dev-only mock (dev/mockUploads.ts)
+// through a running Desktop (DESKTOP_URL, default 7077) and Desktop's /gateways (recordings, dimos gateway, error feed) to Desktop.
+// MOCK_UPLOADS=1 answers /gateways/dimos/cloud/* and /gateways/desktop/ui/errors from a dev-only mock (dev/mockUploads.ts)
 const desktop = process.env.DESKTOP_URL ?? "http://127.0.0.1:7077"
 const app = process.env.APP_NAME ?? "dim-map-builder"
 const imports: Record<string, string> = JSON.parse(readFileSync(new URL("./deno.json", import.meta.url), "utf8")).imports
@@ -30,8 +30,7 @@ export default defineConfig({
     server: {
         proxy: {
             "/api": { target: `${desktop}/apps/${app}`, changeOrigin: true },
-            "/recordings": { target: desktop, changeOrigin: true },
-            "/dimos-gateway": { target: desktop, changeOrigin: true },
+            "/gateways": { target: desktop, changeOrigin: true },
         },
     },
     build: { target: "es2022", chunkSizeWarningLimit: 1500 },

@@ -1,6 +1,6 @@
 title: Map Editor
 version: "0.1.17"
-spec-version: v1.3 # the dimos.yaml spec version this file follows
+spec-version: v1.4 # the dimos.yaml spec version this file follows
 uses:
     # Dimensional cloud: who is logged in (logging in is Desktop's Settings → Dimensional account) and queue uploads of
     # the recording (these need a Desktop with cloud uploads; an older Desktop doesn't serve them, so it won't install
@@ -10,11 +10,23 @@ uses:
         - GET /cloud/uploads
         - POST /cloud/uploads
         - DELETE /cloud/uploads
-    # Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams.
+    # Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams; a dropped
+    # recording gets a free path in it.
     "@desktop-gateway":
         - GET /recordings
         - GET /recordings/{id}
-        - POST /api/notifications
+        - POST /recordings
+        # notifications (dim-app notify.js), with this app's icon as the default
+        - POST /ui/notifications
+        - GET /info/apps/{pkg}/icon
+        # page errors → Desktop's error feed (core/errors.js)
+        - POST /ui/errors
+        # dim-app desktop.js: is the app an AppButton opens installed
+        - GET /info/apps
+        # the dim-app SDK's zenoh client finds the zenoh bridge and this app's namespace here
+        - GET /management/gateways/zenoh
+        # the backend's job/session events relay to the page through Desktop (server/src/desktop.rs)
+        - POST /ui/apps/{pkg}/frontend/{topic}
     # the dim-app SDK's zenoh client (backend state, events): the zenoh bridge and how it finds it
     "@zenoh-gateway": ">=0.5 <0.6"
 # Desktop's nix builds of this app pull from this cache (CI fills it)
@@ -72,7 +84,7 @@ provides:
             post:
                 description: >-
                     Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and edits
-                    come back). path = absolute path (Desktop's GET /recordings lists them) or relative to the recordings
+                    come back). path = absolute path (Desktop's GET /gateways/desktop/recordings lists them) or relative to the recordings
                     folder. Returns the session's full state (as GET api/sessions/{id}) at once: only the recording's index
                     is read (an .mcap's summary, a .db's stream list). An .mcap with no summary (cut short) is read in the
                     background as an open job (job: bytes read / total, ETA, cancel); GET api/sessions/{id}/generate answers
@@ -1135,7 +1147,7 @@ provides:
         /api/sessions/{id}/upload:
             post:
                 description: >-
-                    Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /dimos-gateway/cloud/uploads
+                    Upload the recording to Dimensional cloud through Desktop's upload queue (Desktop's /gateways/dimos/cloud/uploads
                     shows progress; it waits for a login if there is none). Returns { upload }; with unsaved edits and saveFirst
                     (default true) it saves into it first and returns { job, note }, queueing the upload when the save finishes.
                     503 when not started by Desktop.
