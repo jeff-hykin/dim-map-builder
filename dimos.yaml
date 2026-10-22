@@ -1,5 +1,5 @@
 title: Map Editor
-version: "0.1.16"
+version: "0.1.17"
 spec-version: v1.3 # the dimos.yaml spec version this file follows
 uses:
     # Dimensional cloud: who is logged in (logging in is Desktop's Settings → Dimensional account) and queue uploads of
