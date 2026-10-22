@@ -17,27 +17,6 @@ uses:
         - POST /api/notifications
     # the dim-app SDK's zenoh client (backend state, events): the zenoh bridge and how it finds it
     "@zenoh-gateway": ">=0.5 <0.6"
-# spec v1.2: what the page may do on zenoh (dim-app's zenoh.js, as zenoh's ACL config): its server's events, Desktop's
-# recordings-changed event and the dimos server's upload and cloud-login events. Read only: it publishes nothing.
-zenoh:
-    default_permission: deny
-    read:
-        - id: own-events
-          messages: [declare_subscriber, put] # subscribe, and receive its samples
-          key_exprs: ["**/apps/dim-map-builder/frontend/events"]
-          permission: allow
-        - id: recordings-changed
-          messages: [declare_subscriber, put]
-          key_exprs: ["**/desktop/events/recordings"]
-          permission: allow
-        - id: dimos-events
-          messages: [declare_subscriber, put]
-          key_exprs:
-              - "**/dimos/events/upload"
-              - "**/dimos/events/uploads"
-              - "**/dimos/events/upload-removed"
-              - "**/dimos/events/cloud-login"
-          permission: allow
 # Desktop's nix builds of this app pull from this cache (CI fills it)
 caches:
     - url: https://dimos-desktop.cachix.org
