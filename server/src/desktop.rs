@@ -7,20 +7,37 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 const TOO_OLD: &str = "uploading needs a newer dimOS Desktop (one with cloud uploads)";
 
 pub async fn post(base: &str, path: &str, body: &Value) -> Result<Value> {
+    let (status, value) = send(base, "POST", path, Some(body)).await?;
+    if status == 404 || status == 405 {
+        bail!(TOO_OLD);
+    }
+    ok_or_error(status, value)
+}
+
+/// A GET on one of Desktop's JSON endpoints, the gateways it proxies included (`/gateways/dimos/...`).
+pub async fn get(base: &str, path: &str) -> Result<Value> {
+    let (status, value) = send(base, "GET", path, None).await?;
+    ok_or_error(status, value)
+}
+
+/// One request and its answer's (status, JSON body); `body` is None for a request without one.
+async fn send(base: &str, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value)> {
     let rest = base.strip_prefix("http://").context("Desktop's URL must be http://host:port")?;
     let host = rest.trim_end_matches('/').split('/').next().unwrap_or_default().to_string();
     let address = if host.contains(':') { host.clone() } else { format!("{host}:80") };
-    let payload = body.to_string();
-    let request = format!("POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
+    let payload = body.map(Value::to_string).unwrap_or_default();
+    let sent = body.map(|_| format!("Content-Type: application/json\r\nContent-Length: {}\r\n", payload.len())).unwrap_or_default();
+    let request = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n{sent}Connection: close\r\n\r\n{payload}");
     let mut stream = tokio::time::timeout(std::time::Duration::from_secs(5), tokio::net::TcpStream::connect(&address)).await.context("Desktop didn't answer")?.with_context(|| format!("can't reach Desktop at {address}"))?;
     stream.write_all(request.as_bytes()).await?;
     let mut raw = Vec::new();
     tokio::time::timeout(std::time::Duration::from_secs(30), stream.read_to_end(&mut raw)).await.context("Desktop didn't answer")??;
     let (status, body) = parse_response(&raw)?;
-    if status == 404 || status == 405 {
-        bail!(TOO_OLD);
-    }
-    let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    Ok((status, serde_json::from_slice(&body).unwrap_or(Value::Null)))
+}
+
+/// The body on a 2xx; Desktop's own `error` message, or the bare status, on anything else.
+fn ok_or_error(status: u16, value: Value) -> Result<Value> {
     if !(200..300).contains(&status) {
         bail!("{}", value["error"].as_str().map(str::to_string).unwrap_or_else(|| format!("Desktop said {status}")));
     }

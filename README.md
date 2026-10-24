@@ -123,7 +123,8 @@ One compiled binary at runtime: no Python, no dimos needed to build or edit maps
     cargo test --workspace                      # all the non-UI logic and every endpoint
     (cd frontend && deno task typecheck && deno task test)  # the shared map's packing, the 2D view's touch gestures
     deno task check-endpoints [--write]         # dimos.yaml's provides: = the served openapi.json
-    cargo run -p dimos-app-server -- --port 7190 --frontend frontend/dist
+    cargo run -p dimos-app-server -- --port 7190 --frontend frontend/dist --recordings <a folder of recordings>
+                                                # started by Desktop instead, the dimos gateway says where recordings are
     (cd frontend && deno task dev)              # the page, against a running Desktop (DESKTOP_URL)
     nix build .#dimosApp                        # what Desktop builds
 

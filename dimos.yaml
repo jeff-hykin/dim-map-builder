@@ -2,10 +2,14 @@ title: Map Editor
 version: "0.2.1"
 spec-version: v1.4 # the dimos.yaml spec version this file follows
 uses:
-    # Dimensional cloud: who is logged in (logging in is Desktop's Settings → Dimensional account) and queue uploads of
-    # the recording (these need a Desktop with cloud uploads; an older Desktop doesn't serve them, so it won't install
-    # this version).
+    # The installed dimos's gateway: where recordings live, and Dimensional cloud (logging in is Desktop's Settings →
+    # Dimensional account). The cloud routes need a Desktop with cloud uploads; an older Desktop doesn't serve them, so
+    # it won't install this version.
     "@dimos-gateway":
+        # the recordings folder ({ path }): the one authority on where recordings live, asked at startup
+        # (server/src/main.rs), with DIMOS_APP's recordingsDir as the answer when this can't be reached
+        - GET /history/recordings
+        # who is logged in, and queue uploads of the recording
         - GET /cloud/account
         - GET /cloud/uploads
         - POST /cloud/uploads
