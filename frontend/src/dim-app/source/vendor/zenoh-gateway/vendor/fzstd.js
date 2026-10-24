@@ -1,7 +1,7 @@
 // deno-lint-ignore-file
 // deno-fmt-ignore-file
 // @ts-nocheck
-// https://github.com/jeff-hykin/zenoh-gateway client/vendor/fzstd.ts at 60b2995 (60b2995461b3f874f19038625cc477d7e07a5f26), types stripped by tools/vendor_zenoh_client.js; do not edit
+// https://github.com/jeff-hykin/zenoh-gateway client/vendor/fzstd.ts at 832e9b0 (832e9b0a8fe2dfa18d5bdc2d1a14c49cf7f8c468), types stripped by tools/vendor_zenoh_client.js; do not edit
 // license: ./fzstd.LICENSE
 // @ts-nocheck: vendored verbatim (only this header added)
 // fzstd v0.1.1 (https://github.com/101arrowz/fzstd, src/index.ts), MIT License, Copyright (c) 2020 Arjun Barrett.

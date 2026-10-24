@@ -1,7 +1,7 @@
 // deno-lint-ignore-file
 // deno-fmt-ignore-file
 // @ts-nocheck
-// https://github.com/jeff-hykin/zenoh-gateway client/zenoh_gateway.ts at 60b2995 (60b2995461b3f874f19038625cc477d7e07a5f26), types stripped by tools/vendor_zenoh_client.js; do not edit
+// https://github.com/jeff-hykin/zenoh-gateway client/zenoh_gateway.ts at 832e9b0 (832e9b0a8fe2dfa18d5bdc2d1a14c49cf7f8c468), types stripped by tools/vendor_zenoh_client.js; do not edit
 // license: ./LICENSE
 // zenoh-gateway browser client: one WebRTC data channel per subscription/publisher, see SPEC.md
 import { decompress as zstdDecompress } from "./vendor/fzstd.js";
@@ -49,6 +49,8 @@ const backedUpBytes = 64 * 1024;
 const resumeBytes = 16 * 1024;
 const gatherTimeoutMs = 3000;
 const openTimeoutMs = 10000;
+/** a video or audio subscription whose renegotiation failed on the connection still in use tries again after this (doubling while it keeps failing) */
+const renegotiationRetryMs = 1000;
 const pingTimeoutMs = 3000;
 const reconnectDelayMs = 1000;
 // consumption acks let the gateway stop sending while this page's JS is behind; at most one per channel per ackDelayMs
@@ -372,6 +374,8 @@ export class Subscription extends Endpoint {
     channelName;
     #warnedNoDecoder = false;
     #transceiver = null;
+    /** renegotiations failed in a row: each retry waits twice as long, up to 30 s */
+    #renegotiationFailures = 0;
     /** drops before the current channel (each new channel restarts seq at 0) */
     #droppedBefore = 0;
     #firstSeq = -1;
@@ -420,7 +424,9 @@ export class Subscription extends Endpoint {
             }
             // performance.now() based times to the connection's clock, and the gateway's clock to it
             const toLocal = (perfMs) => this.owner.now() - (performance.now() - perfMs);
-            const shown = toLocal(frame.expectedDisplayTime ?? frame.presentationTime);
+            // never before it was handed to the compositor: a headless Chrome (no display) reports an expectedDisplayTime
+            // whole vsyncs before even the callback, which read as a negative latency
+            const shown = toLocal(Math.max(frame.expectedDisplayTime ?? frame.presentationTime, frame.presentationTime));
             const received = frame.receiveTime === undefined ? undefined : toLocal(frame.receiveTime);
             const written = info.writtenMs - offsetMs;
             // the in-packet stamp, where the receiver reports it for this very frame (Chrome: NTP ms, gateway clock)
@@ -535,10 +541,23 @@ export class Subscription extends Endpoint {
                 this.owner._releaseTransceiver(peer, transceiver);
                 return;
             }
+            this.#renegotiationFailures = 0;
             this.#transceiver = transceiver;
             this.mediaStream = new MediaStream([transceiver.receiver.track]);
             this.#openChannel(peer, acceptance, transceiver.mid);
-        }, (error) => acceptance.reject(new Error(`zenoh-gateway: ${channelName} renegotiation for ${this.key} failed: ${error.message}`)));
+        }, (error) => {
+            acceptance.reject(new Error(`zenoh-gateway: ${channelName} renegotiation for ${this.key} failed: ${error.message}`));
+            // still the connection in use: try again (nothing else would; a replaced connection attaches every endpoint itself)
+            if (!this.closed && this.rejectionReason === null && acceptance === this.acceptance && peer === this.owner._peer && peer.connectionState !== "closed") {
+                const delay = Math.min(renegotiationRetryMs * 2 ** this.#renegotiationFailures++, 30_000);
+                console.warn(`zenoh-gateway: ${channelName} renegotiation for ${this.key} failed (${error.message}); retrying in ${delay} ms`);
+                setTimeout(() => {
+                    if (!this.closed && this.rejectionReason === null && acceptance === this.acceptance && peer === this.owner._peer && peer.connectionState !== "closed") {
+                        this.attach(peer);
+                    }
+                }, delay);
+            }
+        });
     }
     #openChannel(peer, acceptance, mid) {
         const label = JSON.stringify({ type: "sub", key: this.key, id: this.id, opts: this.options, ...(mid === null ? {} : { mid }) });
@@ -999,6 +1018,7 @@ export class ZenohGateway {
     constructor(url, options = {}) {
         this.url = url.replace(/\/+$/, "");
         this.options = { reconnect: true, freshAfterMs: 2000, statsIntervalMs: 1000, heartbeatHz: 0, heartbeatMisses: 3, ...options };
+        this.#linkBandwidth = this.options.linkBandwidthBytesPerSec;
         this.now = this.options.clock ?? (() => performance.timeOrigin + performance.now());
         if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
             document.addEventListener("visibilitychange", this.#onVisibility);
@@ -1127,12 +1147,22 @@ export class ZenohGateway {
             if (kind === "video") {
                 offerCaptureTime(transceiver);
             }
-            await peer.setLocalDescription(await peer.createOffer());
-            const offer = peer.localDescription;
-            const response = await this._request({ op: "renegotiate", channel, sdp: { type: offer?.type, sdp: offer?.sdp } }, openTimeoutMs);
-            await peer.setRemoteDescription(response.sdp);
-            if (response.mid !== transceiver.mid) {
-                throw new Error(`gateway bound mid ${String(response.mid)}, expected ${String(transceiver.mid)}`);
+            try {
+                await peer.setLocalDescription(await peer.createOffer());
+                const offer = peer.localDescription;
+                const response = await this._request({ op: "renegotiate", channel, sdp: { type: offer?.type, sdp: offer?.sdp } }, openTimeoutMs);
+                await peer.setRemoteDescription(response.sdp);
+                if (response.mid !== transceiver.mid) {
+                    throw new Error(`gateway bound mid ${String(response.mid)}, expected ${String(transceiver.mid)}`);
+                }
+            }
+            catch (error) {
+                // (a failed attempt's offer is rolled back and its m-line goes, so a retry doesn't leave one behind each time)
+                if (peer.signalingState === "have-local-offer") {
+                    await peer.setLocalDescription({ type: "rollback" }).catch(() => { });
+                }
+                this._releaseTransceiver(peer, transceiver);
+                throw error;
             }
             return transceiver;
         };
@@ -1221,6 +1251,9 @@ export class ZenohGateway {
             // a few quick samples so the gateway knows the clock offset before the first put
             for (let index = 0; index < initialClockPings; index++) {
                 await this.#controlPing();
+            }
+            if (this.#linkBandwidth !== undefined) {
+                await this._request({ op: "setLinkBandwidth", bytesPerSec: this.#linkBandwidth }, pingTimeoutMs);
             }
             await this.#redeclare();
         }
@@ -1468,6 +1501,16 @@ export class ZenohGateway {
         await listener._declare();
         this.#apiHandles.add(listener);
         return listener;
+    }
+    /** the link bandwidth this page gave the gateway (bytes/s), re-sent on every reconnect */
+    #linkBandwidth;
+    /** Tells the gateway the link's known bandwidth (bytes/s), used in place of its estimate (`undefined`: back to the
+     *  estimate); kept across reconnects. */
+    async setLinkBandwidth(bytesPerSec) {
+        this.#linkBandwidth = bytesPerSec;
+        if (this.state === "connected" || this.state === "degraded") {
+            await this._request({ op: "setLinkBandwidth", bytesPerSec: bytesPerSec ?? null }, pingTimeoutMs);
+        }
     }
     /** The gateway's zenoh session: its id, and the routers and peers it is connected to. */
     async info() {
