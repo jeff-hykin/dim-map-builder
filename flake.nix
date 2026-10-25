@@ -45,7 +45,7 @@
                         outputHash = {
                             aarch64-darwin = "sha256-g/Cxljo8x6lJfOMS5/eHRle491cXUN+Ty2bDWqZfnHI=";
                             x86_64-darwin = "";
-                            x86_64-linux = "sha256-UHGas9HqIgcuMMgGITTDW7mGb93EZH7dw7TW0SpmCJw=";
+                            x86_64-linux = "sha256-lQTZHR3mrCavdLvLWYTMKABGHX/QbN4ssrlGjKCLGLU=";
                             aarch64-linux = "";
                         }.${pkgs.stdenv.hostPlatform.system};
                     };
