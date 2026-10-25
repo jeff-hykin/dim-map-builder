@@ -1,7 +1,7 @@
 // deno-lint-ignore-file
 // deno-fmt-ignore-file
 // @ts-nocheck
-// https://github.com/jeff-hykin/zenoh-gateway client/zenoh_gateway.ts at 832e9b0 (832e9b0a8fe2dfa18d5bdc2d1a14c49cf7f8c468), types stripped by tools/vendor_zenoh_client.js; do not edit
+// https://github.com/jeff-hykin/zenoh-gateway client/zenoh_gateway.ts at 2104633 (210463326660b1b885803919d577803d6dff1484), types stripped by tools/vendor_zenoh_client.js; do not edit
 // license: ./LICENSE
 // zenoh-gateway browser client: one WebRTC data channel per subscription/publisher, see SPEC.md
 import { decompress as zstdDecompress } from "./vendor/fzstd.js";
@@ -115,6 +115,8 @@ const fieldsFlag = 2;
 const deleteFlag = 4;
 /** frame flag: the message starts with the sample's encoding and attachment (see `splitMeta`) */
 const metaFlag = 8;
+/** frame flag: the message (before decompression) starts with `u16 len | len bytes of its sample's header` (`decodeHeader`) */
+const headerFlag = 16;
 /** u16 encodingLen | encoding | u32 attachmentLen | attachment | payload */
 function splitMeta(message) {
     const view = new DataView(message.buffer, message.byteOffset, message.byteLength);
@@ -190,7 +192,7 @@ export function decodeFields(message) {
     }
     return fields;
 }
-/** Video metadata frame (28 bytes) sent on a video subscription's channel per frame. */
+/** Video metadata frame (64 bytes, then the picture's header if flags bit2) sent on a video subscription's channel per frame. */
 export function decodeVideoFrameInfo(bytes) {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     return {
@@ -204,7 +206,43 @@ export function decodeVideoFrameInfo(bytes) {
         ...(bytes.byteLength >= 44 ? { mediaTimeMs: view.getFloat64(28, true), writtenMs: view.getFloat64(36, true) } : {}),
         ...(bytes.byteLength >= 64 && (bytes[1] & 2) !== 0 ? { rtpTimestamp: view.getUint32(44, true) } : {}),
         ...(bytes.byteLength >= 64 ? { receivedMs: view.getFloat64(48, true), encodedMs: view.getFloat64(56, true) } : {}),
+        ...headerFields((bytes[1] & 4) !== 0 ? decodeHeader(bytes.subarray(64)) : undefined),
     };
+}
+function headerFields(decoded) {
+    if (decoded === undefined) {
+        return {};
+    }
+    const { header, encoding, attachment } = decoded;
+    return { stamp: header.stamp, frameId: header.frameId, header, ...(encoding === undefined ? {} : { encoding }), ...(attachment === undefined ? {} : { attachment }) };
+}
+/** A message header as the gateway sends it: `f64 stamp | u16 frameIdLen | frameId | i32 sec | u32 nanosec | u8 flags |
+ * u32 seq`, flags bit0: seq is set, bit1: `u16 encodingLen | encoding | u32 attachmentLen | attachment` (the zenoh
+ * sample's) follow; 0.5.31 sent only up to frameId. Undefined if it is cut short. */
+export function decodeHeader(bytes) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (bytes.byteLength < 10 || 10 + view.getUint16(8, true) > bytes.byteLength) {
+        return undefined;
+    }
+    const stamp = view.getFloat64(0, true);
+    const end = 10 + view.getUint16(8, true);
+    const frameId = keyDecoder.decode(bytes.subarray(10, end));
+    if (bytes.byteLength < end + 13) {
+        const sec = Math.floor(stamp);
+        return { header: { stamp, sec, nanosec: Math.min(Math.round((stamp - sec) * 1e9), 999_999_999), frameId } };
+    }
+    const flags = bytes[end + 8];
+    const header = { stamp, sec: view.getInt32(end, true), nanosec: view.getUint32(end + 4, true), frameId, ...((flags & 1) !== 0 ? { seq: view.getUint32(end + 9, true) } : {}) };
+    if ((flags & 2) === 0) {
+        return { header };
+    }
+    try {
+        const { encoding, attachment } = splitMeta(bytes.subarray(end + 13));
+        return { header, encoding, ...(attachment === undefined ? {} : { attachment }) };
+    }
+    catch {
+        return undefined;
+    }
 }
 const absCaptureTimeUri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time";
 /** ms from the NTP epoch (1900) to the unix epoch */
@@ -452,6 +490,11 @@ export class Subscription extends Endpoint {
             element.cancelVideoFrameCallback(handle);
         };
     }
+    /** The metadata of the frame a video element shows (a requestVideoFrameCallback's `rtpTimestamp`), e.g. its `stamp`
+     * and `frameId` to place the picture on screen in its own TF frame; undefined if it is not among the latest 512. */
+    videoFrameInfo(rtpTimestamp) {
+        return this.#videoTimes.get(rtpTimestamp)?.info;
+    }
     /** End-to-end latency of the frames a watched video element showed lately (see `watchVideoLatency`): its latest 300,
      * or those of the last `windowMs`; null before any. */
     videoLatency(windowMs = Infinity) {
@@ -560,7 +603,10 @@ export class Subscription extends Endpoint {
         });
     }
     #openChannel(peer, acceptance, mid) {
-        const label = JSON.stringify({ type: "sub", key: this.key, id: this.id, opts: this.options, ...(mid === null ? {} : { mid }) });
+        // (a gateway before 0.5.32 refuses the option it doesn't know)
+        const { metadata, ...options } = this.options;
+        const opts = this.owner.features.includes("metadata") ? { ...options, metadata: metadata ?? true } : options;
+        const label = JSON.stringify({ type: "sub", key: this.key, id: this.id, opts, ...(mid === null ? {} : { mid }) });
         const channel = peer.createDataChannel(label, channelInit(this.options.delivery, this.options.maxAge));
         channel.binaryType = "arraybuffer";
         channel.onmessage = (event) => {
@@ -645,6 +691,9 @@ export class Subscription extends Endpoint {
         try {
             if (this.channelName !== "data") {
                 message.video = this.channelName.startsWith("video-") ? decodeVideoFrameInfo(message.bytes) : undefined;
+                message.header ??= message.video?.header;
+                message.encoding ??= message.video?.encoding;
+                message.attachment ??= message.video?.attachment;
                 message.mediaStream = this.mediaStream ?? undefined;
                 return true;
             }
@@ -670,6 +719,19 @@ export class Subscription extends Endpoint {
         }
     }
     #deliver(message, flags) {
+        if ((flags & headerFlag) !== 0) {
+            const length = message.bytes.byteLength >= 2 ? message.bytes[0] | (message.bytes[1] << 8) : Infinity;
+            const decoded = 2 + length <= message.bytes.byteLength ? decodeHeader(message.bytes.subarray(2, 2 + length)) : undefined;
+            if (decoded === undefined) {
+                this.decodeErrors++;
+                console.error(`zenoh-gateway: bad message header on ${message.key}`);
+                return;
+            }
+            message.header = decoded.header;
+            message.encoding = decoded.encoding;
+            message.attachment = decoded.attachment;
+            message.bytes = message.bytes.subarray(2 + length);
+        }
         if ((flags & zstdFlag) !== 0) {
             try {
                 message.bytes = zstdDecompress(message.bytes);
@@ -979,6 +1041,8 @@ export class ZenohGateway {
     congestion = null;
     /** the message encodings the gateway runs, fetched on connect */
     encodings = [];
+    /** what the gateway supports beyond 0.5.31 (e.g. "metadata": the subscribe option), fetched with the encodings */
+    features = [];
     /** the ICE servers in use (the gateway's unless given) */
     iceServers = [];
     /** leases held, by group */
@@ -1247,7 +1311,9 @@ export class ZenohGateway {
             }
             await peer.setRemoteDescription(await response.json());
             await waitOpen(control, openTimeoutMs);
-            this.encodings = Object.freeze((await this._request({ op: "encodings" }, pingTimeoutMs)).encodings);
+            const listed = await this._request({ op: "encodings" }, pingTimeoutMs);
+            this.encodings = Object.freeze(listed.encodings);
+            this.features = Object.freeze((listed.features ?? []));
             // a few quick samples so the gateway knows the clock offset before the first put
             for (let index = 0; index < initialClockPings; index++) {
                 await this.#controlPing();

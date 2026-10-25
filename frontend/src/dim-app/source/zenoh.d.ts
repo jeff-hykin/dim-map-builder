@@ -1,10 +1,27 @@
 // Types for zenoh.js
 export type ConnectionState = "connecting" | "connected" | "degraded" | "lost"
+/** A message's own header (ROS `std_msgs/Header`, dimos LCM's), sent with encoded messages by zenoh-gateway >= 0.5.32. */
+export interface ZenohMessageHeader {
+    /** seconds since the epoch (to about a microsecond; `sec` + `nanosec` are exact) */
+    stamp: number
+    sec: number
+    nanosec: number
+    /** the TF frame it was taken in */
+    frameId: string
+    /** its sequence number, where the type has one (dimos LCM does, ROS 2 doesn't) */
+    seq?: number
+}
 export interface ZenohMessage {
     key: string
     bytes: Uint8Array
     timestamp: number
     seq: number
+    /** the sample's own header on encoded messages, unless subscribed with `metadata: false` (zenoh-gateway >= 0.5.32; video >= 0.5.31) */
+    header?: ZenohMessageHeader
+    /** the sample's zenoh encoding, when not the default (raw messages; encoded ones with `header`) */
+    encoding?: string
+    /** the sample's zenoh attachment (raw messages; encoded ones with `header`) */
+    attachment?: Uint8Array
     [field: string]: unknown
 }
 export interface ZenohInfo {
@@ -20,6 +37,8 @@ export interface ZenohInfo {
 export interface SubscribeOptions {
     delivery?: "latest" | "reliable"
     priority?: number
+    /** encoded messages come with `msg.header` (default true where the gateway lists the feature); false saves its few bytes */
+    metadata?: boolean
     [option: string]: unknown
 }
 export interface PayloadOptions extends SubscribeOptions {

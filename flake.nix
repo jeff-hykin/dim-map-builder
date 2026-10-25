@@ -43,7 +43,7 @@
                         outputHashMode = "recursive";
                         outputHashAlgo = "sha256";
                         outputHash = {
-                            aarch64-darwin = "sha256-oO+P8sfp+UkDIpcmAzY4FqTDhNeop0Y4AHHbxGjwf+Q=";
+                            aarch64-darwin = "sha256-g/Cxljo8x6lJfOMS5/eHRle491cXUN+Ty2bDWqZfnHI=";
                             x86_64-darwin = "";
                             x86_64-linux = "sha256-UHGas9HqIgcuMMgGITTDW7mGb93EZH7dw7TW0SpmCJw=";
                             aarch64-linux = "";
@@ -53,7 +53,7 @@
                     pageFiles = frontendFiles [ ./frontend/deno.json ./frontend/deno.lock ./frontend/tsconfig.json ./frontend/index.html ./frontend/vite.config.ts ./frontend/vite.share.config.ts ./frontend/dev ./frontend/tools ./frontend/src ./frontend/public ];
                     # both vite builds: the page, then the shared map's viewer into the same dist
                     viteBuild = "deno run -A --cached-only --node-modules-dir=manual npm:vite build --logLevel warn && deno run -A --cached-only --node-modules-dir=manual npm:vite build -c vite.share.config.ts --logLevel warn";
-                    # dimos-react as esm.sh builds its tag (frontend/tools/esm_fetch.ts): a vite build with network that
+                    # dimos-react's source at its tag (frontend/tools/esm_fetch.ts): a vite build with network that
                     # keeps only what it fetched, so fixed-output; the same on every system. `deno task update-hashes` refreshes it.
                     frontendEsm = pkgs.stdenvNoCC.mkDerivation {
                         name = "dim-map-builder-frontend-esm";
@@ -71,10 +71,10 @@
                         dontFixup = true;
                         outputHashMode = "recursive";
                         outputHashAlgo = "sha256";
-                        outputHash = "sha256-7aHVZWHja8ajIkhsYWAj72wjqyRp5D+QaSGPFUXceOs=";
+                        outputHash = "sha256-ZP8kpe3m7yKpPlKtNCMrNz7rYYchKyDy5FJggEnVFiA=";
                     };
 
-                    # the page: React + Vite against those modules and that esm.sh cache, offline
+                    # the page: React + Vite against those modules and that dimos-react cache, offline
                     frontend = pkgs.stdenvNoCC.mkDerivation {
                         name = "dim-map-builder-frontend";
                         src = pageFiles;
