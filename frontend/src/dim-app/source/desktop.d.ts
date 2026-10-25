@@ -24,6 +24,8 @@ export type EmptyStateAction = {
     params?: OpenAppParams
     appTitle?: string
     primary?: boolean
+    /** the button's data-ui, for a press log; the "Install <app>" button that replaces it gets `<ui>_install` */
+    ui?: string
 }
 export type EmptyStateOptions = {
     title: string

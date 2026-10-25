@@ -1,6 +1,6 @@
 title: Map Editor
-version: "0.2.2"
-spec-version: v1.4 # the dimos.yaml spec version this file follows
+version: "0.3.0"
+spec-version: v1.5 # the dimos.yaml spec version this file follows
 uses:
     # The installed dimos's gateway: where recordings live, and Dimensional cloud (logging in is Desktop's Settings →
     # Dimensional account). The cloud routes need a Desktop with cloud uploads; an older Desktop doesn't serve them, so
@@ -17,20 +17,31 @@ uses:
     # Desktop's shared recordings folder: the recording picker lists it and reads each recording's streams; a dropped
     # recording gets a free path in it.
     "@desktop-gateway":
-        - GET /recordings
-        - GET /recordings/{id}
-        - POST /recordings
-        # notifications (dim-app notify.js), with this app's icon as the default
-        - POST /ui/notifications
-        - GET /info/apps/{pkg}/icon
-        # page errors → Desktop's error feed (core/errors.js)
-        - POST /ui/errors
-        # dim-app desktop.js: is the app an AppButton opens installed
-        - GET /info/apps
-        # the dim-app SDK's zenoh client finds the zenoh bridge and this app's namespace here
-        - GET /management/gateways/zenoh
-        # the backend's job/session events relay to the page through Desktop (server/src/desktop.rs)
-        - POST /ui/apps/{pkg}/frontend/{topic}
+        # what this server reads of DIMOS_APP; `app check` says when Desktop doesn't set one, and a launch that
+        # can't resolve one says so in this app's own log
+        env:
+            DIMOS_APP.socket: the unix socket this server binds
+            DIMOS_APP.name: names this install in its links
+            DIMOS_APP.dataDir: its own folder, for the maps it keeps
+            DIMOS_APP.desktopUrl: Desktop's loopback origin, which the gateway is asked through
+            DIMOS_APP.recordingsDir:
+                required: false
+                description: where recordings are read from when the gateway can't say
+        endpoints:
+            - GET /recordings
+            - GET /recordings/{id}
+            - POST /recordings
+            # notifications (dim-app notify.js), with this app's icon as the default
+            - POST /ui/notifications
+            - GET /info/apps/{pkg}/icon
+            # page errors → Desktop's error feed (core/errors.js)
+            - POST /ui/errors
+            # dim-app desktop.js: is the app an AppButton opens installed
+            - GET /info/apps
+            # the dim-app SDK's zenoh client finds the zenoh bridge and this app's namespace here
+            - GET /management/gateways/zenoh
+            # the backend's job/session events relay to the page through Desktop (server/src/desktop.rs)
+            - POST /ui/apps/{pkg}/frontend/{topic}
     # the dim-app SDK's zenoh client (backend state, events): the zenoh bridge and how it finds it
     "@zenoh-gateway": ">=0.5 <0.6"
 # Desktop's nix builds of this app pull from this cache (CI fills it)

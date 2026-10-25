@@ -308,7 +308,7 @@ class AppZenoh {
 
     /** Desktop's events `<ns>/desktop/events/<type>` ("*" = every type): `callback(event)`. */
     subscribeDesktop(type, callback, options = {}) {
-        const chunk = type === "*" ? "**" : checkTopic(type)
+        const chunk = type === "*" ? "**" : checkTopic(type, { wildcards: true })
         return this.#subscribeUnder(
             `desktop:${chunk}`,
             (info) => `${info.desktop ?? `${info.namespace}/desktop`}/events/${chunk}`,
@@ -317,7 +317,11 @@ class AppZenoh {
         )
     }
 
-    /** The dimos server's events `<ns>/dimos/events/<type>` ("*" = every type): `callback(event)`. */
+    /**
+     * The dimos server's events `<ns>/dimos/events/<type>` ("*" = every type): `callback(event)`. A type may have more
+     * than one chunk, and may end in a wildcard: the config event is one topic per setting, so `"config/recordingsDir"`
+     * is the one setting and `"config/**"` is all of them.
+     */
     subscribeDimos(type, callback, options = {}) {
         const chunk = type === "*" ? "**" : checkTopic(type)
         return this.#subscribeUnder(

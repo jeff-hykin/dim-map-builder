@@ -33,7 +33,9 @@ const ordered = (value: Record<string, unknown>, first: string[]) =>
 const operation = (op: Record<string, unknown>) => {
     const out = ordered(op, ["summary", "description", "x-when", "x-dimos-role", "parameters", "requestBody"])
     if (Array.isArray(out.parameters)) {
-        out.parameters = out.parameters.map((p) => ordered(p, ["name", "in", "required", "schema", "description"]))
+        out.parameters = out.parameters.map((p: Record<string, unknown>) =>
+            ordered(p, ["name", "in", "required", "schema", "description"])
+        )
     }
     return out
 }
@@ -106,3 +108,19 @@ if (JSON.stringify(sorted(declared)) !== JSON.stringify(sorted(served))) {
     Deno.exit(1)
 }
 console.log(`dimos.yaml lists all ${need.size} operations`)
+// server/Cargo.toml's version is the app's own: `CARGO_PKG_VERSION` is what the server logs at startup and what
+// `app_version` in a recording's metadata is. The repo bumps dimos.yaml on release, so the crate has to move with it —
+// it sat at 0.1.0 while dimos.yaml said 0.2.2, stamping a version that never shipped onto everything it wrote.
+// Checked here rather than in the build, because the nix build narrows its source to the crate and so cannot read
+// dimos.yaml. `dimos-desktop app check .` reports the same drift from the outside (Desktop 0.2.227).
+const manifest = parse(await Deno.readTextFile(new URL("../dimos.yaml", import.meta.url))) as { version?: string }
+const cargoToml = await Deno.readTextFile(new URL("../server/Cargo.toml", import.meta.url))
+const crateVersion = cargoToml.match(/^\[package\][^[]*?^version\s*=\s*"([^"]+)"/ms)?.[1]
+if (crateVersion !== manifest.version) {
+    console.error(
+        `server/Cargo.toml says version ${crateVersion}, dimos.yaml says ${manifest.version}: that version is what ` +
+            `the server reports of itself and writes into a recording's app_version, so a release bumps both`,
+    )
+    Deno.exit(1)
+}
+console.log(`server/Cargo.toml and dimos.yaml agree on ${crateVersion}`)
