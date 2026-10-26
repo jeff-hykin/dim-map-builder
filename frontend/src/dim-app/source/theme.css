@@ -77,17 +77,17 @@
 :where(:root) {
     color-scheme: dark;
     --bg: #05070d;
-    --fg: #ece8f0;
-    --muted-fg: #8e8898;
+    --fg: #e6eaf2;
+    --muted-fg: #848b9b;
     --primary: #7cc8ec;
     --primary-fg: #05070d;
     --ok: #8fd4a8;
     --warn: #e8bf6a;
     --danger: #f2707a;
     --info: #8fcfe0;
-    --surface: #0e0c13;
-    --raised: #0e0c13;
-    --input-bg: #0c0b10;
+    --surface: #0a0d14;
+    --raised: #0a0d14;
+    --input-bg: #0a0c10;
     --hover: rgba(255, 255, 255, 0.04);
     --sel: color-mix(in srgb, var(--primary) 13%, transparent);
     --border: rgba(255, 255, 255, 0.1);
