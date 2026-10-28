@@ -141,6 +141,12 @@ impl Recording {
         Ok(Recording { path: path.to_path_buf(), backend })
     }
 
+    /// An .mcap topic's channels' `key` metadata (None for a channel without it); empty for a .db or no such topic.
+    pub fn channel_metadata(&self, topic: &str, key: &str) -> Result<Vec<Option<String>>> {
+        let Backend::Mcap(file) = &self.backend else { return Ok(Vec::new()) };
+        Ok(file.channel_infos()?.into_iter().filter(|c| c.topic == topic).map(|c| c.metadata.get(key).cloned()).collect())
+    }
+
     pub fn format(&self) -> Format {
         match self.backend {
             Backend::Db(..) => Format::Db,

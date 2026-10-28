@@ -96,9 +96,10 @@ pub fn download_asset(repo: &str, asset: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Whether `binary` takes an .mcap (`--recording`, icp_stitch fe7449e on); an older copy only runs on a db.
-pub fn reads_mcap(binary: &Path) -> bool {
-    Command::new(binary).arg("--help").stdin(Stdio::null()).stderr(Stdio::null()).output().is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("--recording"))
+/// Whether `binary` runs on an .mcap with everything the Map Editor hands it (the Map Editor's tags, `--odom-from-tf`,
+/// `--lidar-every`: icp_stitch b8889c7 on); an older copy only runs on a temporary db.
+pub fn runs_in_place(binary: &Path) -> bool {
+    Command::new(binary).arg("--help").stdin(Stdio::null()).stderr(Stdio::null()).output().is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("--odom-from-tf"))
 }
 
 /// How far through its run icp_stitch is, from what it prints: (stage index of 4, fraction within it, note).

@@ -191,22 +191,43 @@ pub fn run_tf(data_dir: &Path, path: &Path, options: &CorrectOptions, tag_option
             let share = share.part(0.0, 0.97, &HIGH_WEIGHTS);
             let binary = crate::icp_stitch::binary(data_dir).context("getting icp_stitch")?;
             let log = data_dir.join("logs").join(format!("icp_stitch-{}.log", (now_seconds() * 1000.0) as u64));
-            let in_place = correct::stitch_odometry_topic(&recording, &plan, options, tags_view)?.filter(|_| crate::icp_stitch::reads_mcap(&binary));
+            let in_place = correct::stitch_odometry(&recording, &plan, options)?.filter(|_| crate::icp_stitch::runs_in_place(&binary));
             let (keyframes, sightings, mut report, output) = match in_place {
                 // on the .mcap itself, no copy: its outputs stay in it as derived topics (/<odometry>_corrected is the
                 // corrected Odometry stream benchmarks read), next to the edge written below
-                Some(odometry_topic) => {
+                Some(odometry) => {
+                    let tags = match tags_view.filter(|(list, _)| !list.is_empty()) {
+                        Some((_, frame)) => {
+                            let camera = tags::pick_camera(&recording, "").ok();
+                            let (camera_info, _) = tags::camera_info(&recording, camera.as_deref().unwrap_or(""), "")?;
+                            Some(correct::StitchTags { stream: tags::RAW_STREAM, camera_info, frame })
+                        }
+                        None => None,
+                    };
+                    let suffix = correct::stitch_suffix(&recording, &odometry)?;
+                    let args = correct::stitch_args_in_place(&plan, options, path, &odometry, &suffix, tags.as_ref());
                     drop(recording);
-                    let args = correct::stitch_args_in_place(&plan, options, path, &odometry_topic);
                     let output = crate::icp_stitch::run(&binary, &args, &log, &|p| share.send(p), cancel)?;
                     recording = Recording::open(path)?;
-                    let keyframes = correct::read_stitch_output_in_place(&recording, &odometry_topic)?;
+                    let keyframes = correct::read_stitch_output_in_place(&recording, &tree, &plan, &odometry, &suffix)?;
                     let mut report = correct::SolveReport::default();
-                    report.scans = recording.streams()?.iter().find(|s| s.name == plan.cloud_stream).map_or(0, |s| s.count as usize);
+                    let count = recording.streams()?.iter().find(|s| s.name == plan.cloud_stream).map_or(0, |s| s.count as usize);
                     report.scans_skipped = crate::icp_stitch::scans_skipped(&output);
-                    report.scans = report.scans.saturating_sub(report.scans_skipped);
-                    report.notes.push(format!("icp_stitch ran on the recording itself from {odometry_topic}; its corrected copy is {}", correct::corrected_topic(&odometry_topic)));
-                    (keyframes, Vec::new(), report, output)
+                    report.scans = count.div_ceil(options.every.max(1)).saturating_sub(report.scans_skipped);
+                    let from = match &odometry {
+                        correct::StitchOdometry::Topic(topic) => topic.clone(),
+                        correct::StitchOdometry::Tf => format!("tf's {} → {}", plan.parent, plan.odometry_child),
+                    };
+                    report.notes.push(format!("icp_stitch ran on the recording itself from {from}; its corrected copy is {}", odometry.corrected_topic(&suffix)));
+                    // the tag spread before / after, from the raw trajectory at the corrected poses' times
+                    let sightings = match tags_view {
+                        Some((detections, frame)) => {
+                            let trajectory: Vec<(f64, mapping::tf::Iso)> = keyframes.iter().filter_map(|k| tree.lookup(&plan.parent, &plan.sensor_frame, k.ts, options.tf_tolerance).map(|pose| (k.ts, pose))).collect();
+                            correct::tag_sightings(&tree, &plan, detections, frame, &trajectory, options, &mut report.notes)
+                        }
+                        None => Vec::new(),
+                    };
+                    (keyframes, sightings, report, output)
                 }
                 None => {
                     let work = TempDir(data_dir.join("work").join(format!("icp_stitch-{}", (now_seconds() * 1000.0) as u64)));
