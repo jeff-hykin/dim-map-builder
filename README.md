@@ -35,8 +35,9 @@ everything else is optional and in any order.
      in the biggest tree, nearest its root; a cloud already in its root frame asks for the sensor's frame and is moved
      back into it first. Optional AprilTag landmarks (and tags to leave out). **Faster** = the app's loop closure (the
      PGO port) and one pose graph solved here; **Higher quality** = [icp_stitch](https://github.com/jeff-hykin/icp_stitch)
-     (gsc_pgo's tag PGO + ICP stitching on GTSAM; its release binary, or `ICP_STITCH_BIN`) run on a temporary db in the
-     data folder, with its stitching knobs under Advanced.
+     (gsc_pgo's tag PGO + ICP stitching on GTSAM; its release binary, or `ICP_STITCH_BIN`) run on the `.mcap` itself
+     when its recorded Odometry topic is the edge being corrected and no tag factors are used (else on a temporary db in
+     the data folder), with its stitching knobs under Advanced.
   3. **Global map**: every scan placed through the corrected tf (on by default), ray traced (on by default; the ray
      tracer's tunables under Advanced), decimated (a final voxel and stray-point removal), written into the recording as
      `global_map_aggregated` (one cloud at its start) and beside it as `<name>_global_map_aggregated.pc2.lcm`; it becomes

@@ -67,8 +67,11 @@ Generate's steps (the Generate dialog, or `POST api/sessions/{id}/generate/...`)
 place: a `.db` has the stream replaced, an `.mcap` gets a newer channel appended on the same topic (channel metadata
 `map_builder_generation` = unix seconds; readers here take the newest, and older ones are left as they were, since an
 mcap is only ever appended to). Nothing is left beside the recording but the two files asked for: the `.pc2.lcm` and,
-when asked for, the `.rrd`. The high-quality tf correction runs icp_stitch on a temporary db in the app's data
-folder, deleted when the step ends.
+when asked for, the `.rrd`. The high-quality tf correction runs icp_stitch on an `.mcap` itself when the recording's
+Odometry topic is the corrected edge's odometry and no tag factors are used (`stitch.inPlace`, default on), and its
+derived topics stay in the file next to the edge: `/<odometry>_corrected` (the corrected Odometry), `/tf_corrected`,
+`/pose_graph`, `/tf_deformation_nodes_corrected` (ROS 2 CDR, replaced by the next run); otherwise it runs on a temporary
+db in the app's data folder, deleted when the step ends.
 
 | Stream / channel | dimos type | Content |
 | --- | --- | --- |
