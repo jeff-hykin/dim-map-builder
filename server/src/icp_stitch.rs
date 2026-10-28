@@ -1,6 +1,7 @@
 //! The high-quality tf correction runs icp_stitch (github.com/jeff-hykin/icp_stitch: gsc_pgo's offline tag PGO + ICP
-//! stitching, in Rust on GTSAM) on a temporary memory2 db the correction writes (mapping::correct): its release
-//! binary, fetched into the data dir and re-fetched when the release is rebuilt, or ICP_STITCH_BIN. It only ever touches the temporary db, so Cancel kills it at any point.
+//! stitching, in Rust on GTSAM) on the .mcap itself or a temporary memory2 db the correction writes (mapping::correct):
+//! its release binary, fetched into the data dir and re-fetched when the release is rebuilt, or ICP_STITCH_BIN. Cancel
+//! sends SIGTERM, on which icp_stitch puts an .mcap it was writing back to its last summary before exiting.
 use anyhow::{bail, Context, Result};
 use mapping::build::{Cancelled, Progress};
 use std::io::{BufRead, BufReader};
@@ -95,6 +96,11 @@ pub fn download_asset(repo: &str, asset: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Whether `binary` takes an .mcap (`--recording`, icp_stitch fe7449e on); an older copy only runs on a db.
+pub fn reads_mcap(binary: &Path) -> bool {
+    Command::new(binary).arg("--help").stdin(Stdio::null()).stderr(Stdio::null()).output().is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("--recording"))
+}
+
 /// How far through its run icp_stitch is, from what it prints: (stage index of 4, fraction within it, note).
 pub fn parse_line(line: &str) -> Option<(usize, f64, String)> {
     let line = line.trim();
@@ -160,7 +166,8 @@ pub fn run(binary: &Path, args: &[String], log: &Path, report: &dyn Fn(Progress)
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
         if cancel.load(Ordering::Relaxed) && !killed {
-            let _ = child.kill();
+            // SIGTERM, not SIGKILL: icp_stitch restores an .mcap it was writing, and the loop waits for it to exit
+            unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
             killed = true;
         }
     }
@@ -196,6 +203,11 @@ pub fn summary_lines(output: &str) -> Vec<String> {
     output.lines().map(str::trim).filter(|l| l.starts_with("PGO:") || l.starts_with("ICP stage: accepted") || l.starts_with("tags with no loop-closure")).map(|l| format!("icp_stitch: {l}")).collect()
 }
 
+/// How many scans it left out for lying outside the odometry ("skipping 3 of 600 lidar scans outside ...").
+pub fn scans_skipped(output: &str) -> usize {
+    output.lines().find_map(|l| l.trim().strip_prefix("skipping ")).and_then(|rest| rest.split_whitespace().next()).and_then(|n| n.parse().ok()).unwrap_or(0)
+}
+
 /// How many ICP stitches it accepted.
 pub fn accepted(output: &str) -> usize {
     output.lines().find_map(|l| l.trim().strip_prefix("ICP stage: accepted ")).and_then(|rest| rest.split('/').next()).and_then(|n| n.trim().parse().ok()).unwrap_or(0)
@@ -221,5 +233,7 @@ mod tests {
         assert_eq!(parse_line("solving stage 2 (tag PGO + ICP closures)...").unwrap().0, 3);
         assert_eq!(accepted("ICP stage: accepted 37/120 loop closures\n"), 37);
         assert!(parse_line("recording: /x").is_none());
+        assert_eq!(scans_skipped("skipping 3 of 600 lidar scans outside the odometry's time range [1, 2] (no pose)\n"), 3);
+        assert_eq!(scans_skipped("PGO: 10 keyframes\n"), 0);
     }
 }

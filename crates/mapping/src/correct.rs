@@ -13,7 +13,8 @@
 //!   then one pose graph (gsc_pgo's anisotropic odometry noise) with them and, when asked, AprilTag landmark factors
 //!   (gsc_pgo offline_pgo.py's quality-weighted factors) is solved here (graph.rs);
 //! - high: the icp_stitch tool (gsc_pgo's offline pipeline in Rust, GTSAM): tag PGO, then ICP stitching between every
-//!   pair of revisited submaps (thinned to one per `closure_spacing` m of path), re-solved. It runs on a temporary
+//!   pair of revisited submaps (thinned to one per `closure_spacing` m of path), re-solved. On an .mcap whose recorded
+//!   Odometry topic is the odometry edge it runs on the .mcap itself (`stitch_odometry_topic`), else on a temporary
 //!   memory2 db holding just what it needs (the trajectory, the scans in the sensor frame, the camera's extrinsic and
 //!   the tags), deleted afterwards; the server runs the binary (`server/src/icp_stitch.rs`).
 use crate::apriltag::{rejected_by, Detection, GlimpseGates};
@@ -66,6 +67,8 @@ pub struct StitchOptions {
     pub lm_max_iterations: usize,
     /// the scans handed to icp_stitch are thinned to this voxel first (m; well under icp_voxel_m)
     pub scan_voxel: f64,
+    /// run icp_stitch on the .mcap itself when it can (stitch_odometry_topic); false = always on a temporary db
+    pub in_place: bool,
 }
 
 impl Default for StitchOptions {
@@ -84,6 +87,7 @@ impl Default for StitchOptions {
             submap_half_s: 1.0,
             lm_max_iterations: 200,
             scan_voxel: 0.05,
+            in_place: true,
         }
     }
 }
@@ -627,8 +631,6 @@ pub fn write_stitch_inputs(
 
 /// icp_stitch's command line for the temporary db.
 pub fn stitch_args(plan: &Plan, options: &CorrectOptions, work: &Path, camera_frame: Option<&str>) -> Vec<String> {
-    let s = &options.stitch;
-    let n = &options.odometry;
     let mut args: Vec<String> = vec![
         "--db".into(),
         work.display().to_string(),
@@ -641,8 +643,6 @@ pub fn stitch_args(plan: &Plan, options: &CorrectOptions, work: &Path, camera_fr
         "--world-frame".into(),
         plan.parent.clone(),
         "--no-lidar".into(),
-        "--closure-spacing".into(),
-        s.closure_spacing.to_string(),
     ];
     if let Some(frame) = camera_frame {
         args.extend(["--tag-frame".into(), frame.into()]);
@@ -650,6 +650,43 @@ pub fn stitch_args(plan: &Plan, options: &CorrectOptions, work: &Path, camera_fr
             args.extend(["--ignore-tags".into(), options.exclude_tags.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",")]);
         }
     }
+    args.extend(tuning_args(options));
+    args
+}
+
+/// icp_stitch's command line on the .mcap itself (stitch_odometry_topic): its recorded odometry and the plan's scans,
+/// no tags (with "" for both it neither reads nor detects any), and of its outputs only the derived topics that stay
+/// small (`/<odometry>_corrected`, `/tf_corrected`, `pose_graph`, deformation nodes): no corrected scans, accumulated
+/// maps, or `.pc2.lcm` / `.rrd` beside the recording.
+pub fn stitch_args_in_place(plan: &Plan, options: &CorrectOptions, mcap: &Path, odometry_topic: &str) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "--recording".into(),
+        mcap.display().to_string(),
+        "--odom".into(),
+        odometry_topic.trim_start_matches('/').into(),
+        "--lidar".into(),
+        plan.cloud_stream.clone(),
+        "--odom-tf".into(),
+        format!("{}:{}", plan.parent, plan.odometry_child),
+        "--world-frame".into(),
+        plan.parent.clone(),
+        "--tags".into(),
+        String::new(),
+        "--camera".into(),
+        String::new(),
+        "--no-lidar".into(),
+        "--no-accum".into(),
+        "--no-lcm".into(),
+        "--no-rrd".into(),
+    ];
+    args.extend(tuning_args(options));
+    args
+}
+
+fn tuning_args(options: &CorrectOptions) -> Vec<String> {
+    let s = &options.stitch;
+    let n = &options.odometry;
+    let mut args: Vec<String> = vec!["--closure-spacing".into(), s.closure_spacing.to_string()];
     for (flag, value) in [
         ("--keyframe-translation-m", options.keyframe_translation_m),
         ("--keyframe-rotation-deg", options.keyframe_rotation_deg),
@@ -675,18 +712,61 @@ pub fn stitch_args(plan: &Plan, options: &CorrectOptions, work: &Path, camera_fr
     args
 }
 
-/// icp_stitch's corrected trajectory (`<odom>_corrected`), matched to the raw one by time: keyframes for
-/// correction_at.
-pub fn read_stitch_output(work: &Path, trajectory: &[(f64, Iso)]) -> Result<Vec<Keyframe>> {
-    let recording = Recording::open(work)?;
-    let name = format!("{STITCH_TRAJECTORY}_corrected");
-    let mut corrected = Vec::new();
-    recording.for_each(&name, |ts, message, _| {
-        if let Message::Odometry(odometry) = message {
-            corrected.push((ts, iso(odometry.pose.position, odometry.pose.orientation)));
+/// The recorded Odometry topic whose messages are the plan's odometry edge (parent → odometry_child), when the high
+/// solve can run icp_stitch on the .mcap itself; None keeps the temporary db: a `.db`, `in_place` off, a cloud moved
+/// back out of its root frame, `every` > 1, tag factors (icp_stitch reads an .mcap's tags only as CDR
+/// AprilTagDetection, and ours are LCM PoseStamped + `/tags` JSON), or no such topic.
+pub fn stitch_odometry_topic(recording: &Recording, plan: &Plan, options: &CorrectOptions, tags: Option<(&[Detection], &str)>) -> Result<Option<String>> {
+    let has_tag_factors = tags.is_some_and(|(list, _)| list.iter().any(|d| !options.exclude_tags.contains(&d.marker_id)));
+    if !options.stitch.in_place || recording.format() != dimos_recording::Format::Mcap || plan.compensate || options.every > 1 || has_tag_factors {
+        return Ok(None);
+    }
+    let frame = |name: &str| name.trim_start_matches('/').to_string();
+    for stream in recording.streams()? {
+        if stream.kind != dimos_recording::Kind::Odometry || stream.count == 0 || stream.derived_from.is_some() || stream.name.ends_with("_corrected") {
+            continue;
         }
-        Ok(true)
-    }).with_context(|| format!("icp_stitch wrote no {name}"))?;
+        let mut edge = None;
+        recording.for_each(&stream.name, |_, message, _| {
+            if let Message::Odometry(odometry) = message {
+                edge = Some((frame(&odometry.header.frame_id), frame(&odometry.child_frame_id)));
+            }
+            Ok(edge.is_none())
+        })?;
+        if edge.is_some_and(|(parent, child)| parent == plan.parent && child == plan.odometry_child) {
+            return Ok(Some(stream.name));
+        }
+    }
+    Ok(None)
+}
+
+/// The topic icp_stitch writes an odometry topic's corrected copy to.
+pub fn corrected_topic(odometry_topic: &str) -> String {
+    format!("/{}_corrected", odometry_topic.trim_start_matches('/'))
+}
+
+/// icp_stitch's corrected odometry in the .mcap (`/<odometry>_corrected`), matched to the recorded odometry by header
+/// stamp: keyframes for correction_at.
+pub fn read_stitch_output_in_place(recording: &Recording, odometry_topic: &str) -> Result<Vec<Keyframe>> {
+    let poses = |topic: &str| -> Result<Vec<(f64, Iso)>> {
+        let mut out = Vec::new();
+        recording.for_each(topic, |ts, message, _| {
+            if let Message::Odometry(odometry) = message {
+                let stamp = odometry.header.ts();
+                out.push((if stamp > 0.0 { stamp } else { ts }, iso(odometry.pose.position, odometry.pose.orientation)));
+            }
+            Ok(true)
+        })?;
+        out.sort_by(|a, b| a.0.total_cmp(&b.0));
+        Ok(out)
+    };
+    let name = corrected_topic(odometry_topic);
+    let corrected = poses(&name).with_context(|| format!("icp_stitch wrote no {name}"))?;
+    match_keyframes(&poses(odometry_topic)?, corrected)
+}
+
+/// Pairs each corrected pose with the raw one at its time.
+fn match_keyframes(trajectory: &[(f64, Iso)], corrected: Vec<(f64, Iso)>) -> Result<Vec<Keyframe>> {
     let mut keyframes = Vec::with_capacity(corrected.len());
     for (ts, x) in corrected {
         let index = trajectory.partition_point(|(t, _)| *t < ts - 1e-6);
@@ -699,6 +779,21 @@ pub fn read_stitch_output(work: &Path, trajectory: &[(f64, Iso)]) -> Result<Vec<
         bail!("icp_stitch's corrected trajectory didn't line up with the scans ({} matched)", keyframes.len());
     }
     Ok(keyframes)
+}
+
+/// icp_stitch's corrected trajectory (`<odom>_corrected`), matched to the raw one by time: keyframes for
+/// correction_at.
+pub fn read_stitch_output(work: &Path, trajectory: &[(f64, Iso)]) -> Result<Vec<Keyframe>> {
+    let recording = Recording::open(work)?;
+    let name = format!("{STITCH_TRAJECTORY}_corrected");
+    let mut corrected = Vec::new();
+    recording.for_each(&name, |ts, message, _| {
+        if let Message::Odometry(odometry) = message {
+            corrected.push((ts, iso(odometry.pose.position, odometry.pose.orientation)));
+        }
+        Ok(true)
+    }).with_context(|| format!("icp_stitch wrote no {name}"))?;
+    match_keyframes(trajectory, corrected)
 }
 
 #[cfg(test)]
@@ -736,6 +831,39 @@ mod tests {
         let registered = plan(&analysis, &CorrectOptions { cloud_stream: "registered".into(), sensor_frame: "mid360_link".into(), grandparent: "map".into(), ..Default::default() }).unwrap();
         assert!(registered.compensate);
         assert_eq!(registered.grandparent, "map");
+    }
+
+    /// an .mcap whose Odometry topic is the plan's odometry edge runs icp_stitch in place; its corrected copy is read back
+    #[test]
+    fn the_high_solve_runs_in_place_on_an_mcap_with_the_odometry_edge() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("r.mcap");
+        let odometry = |ts: f64, parent: &str, child: &str, x: f64| lcm::encode_odometry(&Odometry { header: Header::at(ts, parent), child_frame_id: child.into(), pose: Pose { position: [x, 0.0, 0.0], orientation: [0.0, 0.0, 0.0, 1.0] } });
+        let mut messages = Vec::new();
+        for step in 0..4 {
+            let ts = 1.0 + step as f64;
+            messages.push(("/other_odom", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "map", "base", 0.0)));
+            messages.push(("/pointlio_odometry", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "odom", "body", step as f64)));
+            messages.push(("/pointlio_odometry_corrected", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "odom", "body_corrected", step as f64 + 0.5)));
+        }
+        dimos_recording::mcap_io::write_fixture(&path, &messages);
+        let recording = Recording::open(&path).unwrap();
+        let plan = Plan { cloud_stream: "/lidar".into(), sensor_frame: "lidar".into(), parent: "odom".into(), odometry_child: "body".into(), grandparent: "world".into(), ..Default::default() };
+        let options = CorrectOptions { quality: Quality::High, ..Default::default() };
+        assert_eq!(stitch_odometry_topic(&recording, &plan, &options, None).unwrap().as_deref(), Some("/pointlio_odometry"));
+        let args = stitch_args_in_place(&plan, &options, &path, "/pointlio_odometry");
+        assert!(args.windows(2).any(|w| w[0] == "--odom" && w[1] == "pointlio_odometry"));
+        assert!(args.windows(2).any(|w| w[0] == "--odom-tf" && w[1] == "odom:body"));
+        // tag factors, the toggle off, or no topic on that edge keep the temporary db
+        let detection = Detection { ts: 1.0, marker_id: 3, t_cam_marker: [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], sharpness: 100.0, reproj_px: 0.5, tag_px: 50.0, distance_m: 1.0, view_angle_deg: 0.0, lin_speed: 0.0, ang_speed: 0.0, observations: 1 };
+        assert!(stitch_odometry_topic(&recording, &plan, &options, Some((std::slice::from_ref(&detection), "camera"))).unwrap().is_none());
+        assert!(stitch_odometry_topic(&recording, &plan, &options, Some((&[], "camera"))).unwrap().is_some());
+        let off = CorrectOptions { stitch: StitchOptions { in_place: false, ..Default::default() }, ..options.clone() };
+        assert!(stitch_odometry_topic(&recording, &plan, &off, None).unwrap().is_none());
+        assert!(stitch_odometry_topic(&recording, &Plan { odometry_child: "lidar".into(), ..plan.clone() }, &options, None).unwrap().is_none());
+        let keyframes = read_stitch_output_in_place(&recording, "/pointlio_odometry").unwrap();
+        assert_eq!(keyframes.len(), 4);
+        assert!(keyframes.iter().all(|k| ((k.corrected * k.raw.inverse()).translation.vector.x - 0.5).abs() < 1e-9));
     }
 
     /// clouds published already registered in odom (the root) give the same scans, moved back into the sensor frame

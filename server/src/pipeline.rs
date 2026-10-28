@@ -190,14 +190,34 @@ pub fn run_tf(data_dir: &Path, path: &Path, options: &CorrectOptions, tag_option
         Quality::High => {
             let share = share.part(0.0, 0.97, &HIGH_WEIGHTS);
             let binary = crate::icp_stitch::binary(data_dir).context("getting icp_stitch")?;
-            let work = TempDir(data_dir.join("work").join(format!("icp_stitch-{}", (now_seconds() * 1000.0) as u64)));
-            std::fs::create_dir_all(&work.0)?;
-            let db = work.0.join("work.db");
-            let (trajectory, sightings, mut report) = correct::write_stitch_inputs(&recording, &tree, &plan, options, tags_view, &db, &mut |p| share.send(p), cancel)?;
-            let args = correct::stitch_args(&plan, options, &db, tags_view.map(|(_, frame)| frame));
             let log = data_dir.join("logs").join(format!("icp_stitch-{}.log", (now_seconds() * 1000.0) as u64));
-            let output = crate::icp_stitch::run(&binary, &args, &log, &|p| share.send(p), cancel)?;
-            let keyframes = correct::read_stitch_output(&db, &trajectory)?;
+            let in_place = correct::stitch_odometry_topic(&recording, &plan, options, tags_view)?.filter(|_| crate::icp_stitch::reads_mcap(&binary));
+            let (keyframes, sightings, mut report, output) = match in_place {
+                // on the .mcap itself, no copy: its outputs stay in it as derived topics (/<odometry>_corrected is the
+                // corrected Odometry stream benchmarks read), next to the edge written below
+                Some(odometry_topic) => {
+                    drop(recording);
+                    let args = correct::stitch_args_in_place(&plan, options, path, &odometry_topic);
+                    let output = crate::icp_stitch::run(&binary, &args, &log, &|p| share.send(p), cancel)?;
+                    recording = Recording::open(path)?;
+                    let keyframes = correct::read_stitch_output_in_place(&recording, &odometry_topic)?;
+                    let mut report = correct::SolveReport::default();
+                    report.scans = recording.streams()?.iter().find(|s| s.name == plan.cloud_stream).map_or(0, |s| s.count as usize);
+                    report.scans_skipped = crate::icp_stitch::scans_skipped(&output);
+                    report.scans = report.scans.saturating_sub(report.scans_skipped);
+                    report.notes.push(format!("icp_stitch ran on the recording itself from {odometry_topic}; its corrected copy is {}", correct::corrected_topic(&odometry_topic)));
+                    (keyframes, Vec::new(), report, output)
+                }
+                None => {
+                    let work = TempDir(data_dir.join("work").join(format!("icp_stitch-{}", (now_seconds() * 1000.0) as u64)));
+                    std::fs::create_dir_all(&work.0)?;
+                    let db = work.0.join("work.db");
+                    let (trajectory, sightings, report) = correct::write_stitch_inputs(&recording, &tree, &plan, options, tags_view, &db, &mut |p| share.send(p), cancel)?;
+                    let args = correct::stitch_args(&plan, options, &db, tags_view.map(|(_, frame)| frame));
+                    let output = crate::icp_stitch::run(&binary, &args, &log, &|p| share.send(p), cancel)?;
+                    (correct::read_stitch_output(&db, &trajectory)?, sightings, report, output)
+                }
+            };
             report.loops = crate::icp_stitch::accepted(&output);
             report.notes.extend(crate::icp_stitch::summary_lines(&output));
             report.keyframes = output.lines().find_map(|l| l.trim().strip_prefix("PGO: ")).and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()).unwrap_or(0);
