@@ -155,7 +155,7 @@
                             pname = "dim-map-builder-server-${arch}-linux";
                             cargoExtraArgs = "--locked -p dimos-app-server --target ${target}";
                             extra = {
-                                nativeBuildInputs = [ pkgs.cargo-zigbuild pkgs.zig ];
+                                nativeBuildInputs = [ pkgs.cargo-zigbuild pkgs.zig_0_15 ]; # zig 0.16 links zstd-sys/lz4-sys to blank undefined symbols on a Linux host
                                 cargoBuildCommand = "cargo zigbuild --profile release";
                                 # cargo fingerprints the linker, CC and AR paths, so they are nix-store shims (the same in every build, whichever nixbld user runs it) that hand off to the wrappers zigbuild writes in this build's own $TMPDIR; zigbuild leaves a CC / linker it finds set alone
                                 # (not one shared dir: zigbuild writes its wrappers 0700, so a second nixbld user, as in CI's parallel builds, can't run them)
