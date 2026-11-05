@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const STATE_STREAM: &str = "map/pipeline";
-pub const GLOBAL_MAP_STREAM: &str = "global_map_aggregated";
+pub const GLOBAL_MAP_STREAM: &str = "map_cloud";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

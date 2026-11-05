@@ -2,7 +2,7 @@
 // 0. odometry with Point-LIO, for a lidar + IMU that nothing moves yet (odom → the lidar's tree on the tf, deskewed
 // scans), 1. fiducial markers from images, AprilTag or ArUco (raw_april_tags, april_tags), 2. a corrected tf tree (loop
 // closure, with the tags, written as the edge above the odometry: world → odom), 3. the global map (through the
-// corrected tf, ray traced, decimated: global_map_aggregated + a .pc2.lcm beside the recording, optionally an .rrd).
+// corrected tf, ray traced, decimated: map_cloud + a .pc2.lcm beside the recording, optionally an .rrd).
 // Each step is collapsed to its title and a checkbox: Generate runs the checked ones (the server runs an earlier one
 // a later one needs first). Fiducials only feed the tf correction, so they go with it; nothing can be corrected
 // before Point-LIO places the scans. The defaults work for most recordings: press "Generate corrected map".
@@ -350,7 +350,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
         : "not in the recording yet"
     const globalStatus = status?.globalMap.present
         ? <>
-            {`global_map_aggregated: ${status.globalMap.record?.points?.toLocaleString() ?? "?"} points in ${status.globalMap.record?.worldFrame ?? "?"}${status.globalMap.lcmExists ? " · .pc2.lcm beside it" : ""}${status.globalMap.rrdExists ? " · .rrd beside it" : ""}`}
+            {`map_cloud: ${status.globalMap.record?.points?.toLocaleString() ?? "?"} points in ${status.globalMap.record?.worldFrame ?? "?"}${status.globalMap.lcmExists ? " · .pc2.lcm beside it" : ""}${status.globalMap.rrdExists ? " · .rrd beside it" : ""}`}
             {status.globalMap.stale ? <> <Badge tone="warn">the tf changed since</Badge></> : null}
         </>
         : "not in the recording yet"

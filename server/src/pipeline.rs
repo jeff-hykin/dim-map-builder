@@ -318,7 +318,6 @@ pub fn run_global(data_dir: &Path, path: &Path, options: &GlobalOptions, point_l
     let build_share = share.part(0.0, if rrd { 0.75 } else { 0.95 }, if build.loop_closure { &BUILD_WEIGHTS } else { &BUILD_WEIGHTS_NO_LOOPS });
     let result = mapping::build::build(&recording, &build, &mut |p| build_share.send(Progress { overall: None, ..p }), cancel)?;
     let decimated = mapping::global::decimate(&result.points, result.voxel_size, &options.decimation);
-    let (start, _) = recording.time_range()?.context("the recording is empty")?;
     let mut rrd_path = None;
     if rrd {
         let rrd_share = share.part(0.75, 0.97, &[]);
@@ -329,7 +328,7 @@ pub fn run_global(data_dir: &Path, path: &Path, options: &GlobalOptions, point_l
     }
     drop(recording);
     share.send(Progress { overall: Some(0.98), stage: "Writing the global map".into(), stage_index: 0, stage_count: 1, done: 0, total: 1, note: format!("{} points", decimated.len()) });
-    let lcm = mapping::global::write(path, &decimated, &result.world_frame, start, generation())?;
+    let lcm = mapping::global::write(path, &decimated, &result.world_frame, generation())?;
     let record = GlobalRecord {
         at: now_seconds(),
         points: decimated.len(),
@@ -341,7 +340,7 @@ pub fn run_global(data_dir: &Path, path: &Path, options: &GlobalOptions, point_l
         rrd_path,
     };
     pipeline::update(path, |state| state.global_map = Some(record.clone()))?;
-    notes.push(format!("global_map_aggregated: {} points (from {} voxels), {}", decimated.len(), result.points.len(), lcm.display()));
+    notes.push(format!("map_cloud: {} points (from {} voxels), {}", decimated.len(), result.points.len(), lcm.display()));
     Ok((result, record, notes))
 }
 
@@ -524,7 +523,7 @@ impl App {
             let chained = notes.iter().any(|n| n.starts_with("no corrected tf"));
             app.install_map(&session_id, result, options.build.clone(), notes, started)?;
             Ok(format!(
-                "Global map{}: {} points in {}, written as global_map_aggregated and {}",
+                "Global map{}: {} points in {}, written as map_cloud and {}",
                 if chained { " (the tf was corrected first)" } else { "" },
                 record.points,
                 record.world_frame,

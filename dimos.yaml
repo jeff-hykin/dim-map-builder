@@ -1,5 +1,5 @@
 title: Map Editor
-version: "0.3.2"
+version: "0.3.3"
 spec-version: v1.5 # the dimos.yaml spec version this file follows
 uses:
     # The installed dimos's gateway: where recordings live, and Dimensional cloud (logging in is Desktop's Settings →
@@ -329,7 +329,7 @@ provides:
                     an open job, or a big .mcap's tf in a read job or the preview's first stage; ask again when that job ends):
                     what it has (image / CameraInfo streams, raw_april_tags and april_tags counts and marker ids, the tf tree
                     analyzed: frames, which edges move, cloud streams and the default one to correct, the edge the correction
-                    would write, whether a corrected tf is in it and is stale, global_map_aggregated / .pc2.lcm / .rrd), each
+                    would write, whether a corrected tf is in it and is stale, map_cloud / .pc2.lcm / .rrd), each
                     step's defaults (and the marker dictionaries step 1 knows) and what each ran with last.
                 x-when: you need to see which generation steps a recording has done and what each would run with
                 parameters:
@@ -465,7 +465,7 @@ provides:
                 description: >-
                     Step 3, the global map, in the background: built through the corrected tf (useCorrectedTf, default true:
                     runs step 2 first when the recording has none) with ray tracing, decimated, written into the recording
-                    as global_map_aggregated (one cloud at its start) and beside it as <name>_global_map_aggregated.pc2.lcm;
+                    as map_cloud (one cloud, stamped when written: dimos relocalization's premap) and beside it as <name>_map_cloud.pc2.lcm;
                     it becomes the map in the editor. Options: useCorrectedTf, build {voxelSize, rayTracing, ray {...}, ...},
                     decimation {voxel, removeOutliers, neighbors, stdRatio}, rrd {enabled, streams [{name, enabled, hz}],
                     map, tags, trajectory} (an .rrd beside the recording).

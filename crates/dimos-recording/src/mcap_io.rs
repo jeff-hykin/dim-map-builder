@@ -8,6 +8,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 pub const LCM_TYPE_KEY: &str = "lcm_type";
+/// The channel metadata dimos's McapStore decodes an `lcm` channel by (the payload class, as a .db stream's config names it)
+pub const DIMOS_PAYLOAD_TYPE_KEY: &str = "dimos.payload_type";
 /// channel metadata naming the topic a channel was made from (a corrected copy of a lidar names the raw one)
 pub const DERIVED_FROM_KEY: &str = "derived_from";
 /// channel metadata on what the Map Editor's generation steps append: when it was written (unix seconds). An mcap is
@@ -203,6 +205,7 @@ pub fn append(path: &Path, channels: &[NewChannel]) -> Result<()> {
     for channel in channels {
         let mut metadata = BTreeMap::new();
         metadata.insert(LCM_TYPE_KEY.to_string(), channel.kind.clone());
+        metadata.insert(DIMOS_PAYLOAD_TYPE_KEY.to_string(), crate::db::payload_module(&channel.kind));
         let id = appender.channel(&channel.topic, 0, "lcm", &metadata);
         for (ts, payload) in &channel.messages {
             appender.write(id, (ts.max(0.0) * 1e9) as u64, payload.clone())?;
@@ -225,7 +228,11 @@ pub struct GeneratedChannel {
 impl GeneratedChannel {
     /// An LCM channel of dimos type `kind`, stamped with generation `generation`.
     pub fn lcm(topic: &str, kind: &str, generation: f64, messages: Vec<(f64, Vec<u8>)>) -> GeneratedChannel {
-        let metadata = BTreeMap::from([(LCM_TYPE_KEY.to_string(), kind.to_string()), (GENERATION_KEY.to_string(), format!("{generation:.6}"))]);
+        let metadata = BTreeMap::from([
+            (LCM_TYPE_KEY.to_string(), kind.to_string()),
+            (DIMOS_PAYLOAD_TYPE_KEY.to_string(), crate::db::payload_module(kind)),
+            (GENERATION_KEY.to_string(), format!("{generation:.6}")),
+        ]);
         GeneratedChannel { topic: topic.into(), encoding: "lcm".into(), schema: None, metadata, messages }
     }
 }
@@ -319,6 +326,19 @@ mod tests {
         .unwrap();
         assert_eq!(seen, vec![(1.5, vec![3])]);
         assert_eq!(file.channel_infos().unwrap().iter().filter(|c| c.topic == "raw_april_tags").count(), 2);
+    }
+
+    #[test]
+    fn appended_lcm_channels_name_their_dimos_payload_class() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.mcap");
+        write_fixture(&path, &[("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1.0, vec![1, 2])]);
+        append_generated(&path, &[GeneratedChannel::lcm("map_cloud", "sensor_msgs.PointCloud2", 10.0, vec![(1.0, vec![1])])]).unwrap();
+        append(&path, &[NewChannel { topic: "map/path".into(), kind: "nav_msgs.Path".into(), messages: vec![(1.0, vec![1])] }]).unwrap();
+        let infos = McapFile::open(&path).unwrap().channel_infos().unwrap();
+        let payload = |topic: &str| infos.iter().find(|c| c.topic == topic).and_then(|c| c.metadata.get(DIMOS_PAYLOAD_TYPE_KEY).cloned());
+        assert_eq!(payload("map_cloud").as_deref(), Some("dimos.msgs.sensor_msgs.PointCloud2.PointCloud2"));
+        assert_eq!(payload("map/path").as_deref(), Some("dimos.msgs.nav_msgs.Path.Path"));
     }
 
     #[test]

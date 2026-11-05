@@ -12,7 +12,7 @@ use std::num::NonZero;
 pub const DEFAULT_VOXEL: f32 = 0.05;
 pub const MIN_VOXEL: f32 = 0.02;
 
-/// `global_map`, `/global_map` or `/robot/global_map`; not `global_map_aggregated` (Generate's own output)
+/// `global_map`, `/global_map` or `/robot/global_map`; not `map_cloud` (Generate's own output)
 pub fn is_global_map(name: &str) -> bool {
     name.rsplit('/').next() == Some("global_map")
 }
@@ -74,7 +74,7 @@ mod tests {
         for name in ["global_map", "/global_map", "/robot/global_map"] {
             assert!(is_global_map(name), "{name}");
         }
-        for name in ["global_map_aggregated", "/global_map_aggregated", "/global_map/tags", "/lidar", "map/voxels", "/my_global_map"] {
+        for name in ["map_cloud", "/map_cloud", "global_map_aggregated", "/global_map/tags", "/lidar", "map/voxels", "/my_global_map"] {
             assert!(!is_global_map(name), "{name}");
         }
     }

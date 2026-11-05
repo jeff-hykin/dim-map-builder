@@ -8,6 +8,8 @@
 //!   map/views        std_msgs.String          JSON: the saved 2D views (each a storey and a height band)
 //!   map/slice        std_msgs.String          JSON: the slicer's view {zMin, zMax, yaw, xMin, xMax, yMin, yMax} or null
 //!   map/floor_<n>    nav_msgs.OccupancyGrid   storey n's occupancy grid, when exported; origin z = the floor
+//! and the edited map again as `map_cloud` (the stream dimos's relocalization loads its premap from: the last one wins,
+//! so a Save replaces what Generate wrote there).
 //! Saving again replaces them in a .db (and drops the `map_builder_*` streams older versions wrote); in an .mcap it
 //! appends a newer message to each, in place (no copy of the recording), and loading takes the newest. Opening a recording that
 //! has them (and no working session) restores the session from them; older `map_builder` saves still open.
@@ -94,6 +96,7 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
     };
     let annotations_payload = lcm::encode_string(&serde_json::to_string(&state)?);
     let mut writes: Vec<(String, String, Vec<u8>)> = vec![
+        (mapping::pipeline::GLOBAL_MAP_STREAM.into(), lcm::POINT_CLOUD2_TYPE.into(), map_payload.clone()),
         (map_name, lcm::POINT_CLOUD2_TYPE.into(), map_payload),
         (path_name, lcm::PATH_TYPE.into(), path_payload),
         (annotations_name, lcm::STRING_TYPE.into(), annotations_payload),
@@ -250,7 +253,8 @@ mod tests {
             assert!(streams.contains(&format!("map/{suffix}")), "{format}: {streams:?}");
         }
         assert!(streams.iter().any(|s| s.ends_with("lidar")), "the original data is still there");
-        assert_eq!(streams.len(), 7);
+        assert!(streams.iter().any(|s| s == mapping::pipeline::GLOBAL_MAP_STREAM), "the map is dimos's premap too: {streams:?}");
+        assert_eq!(streams.len(), 8);
 
         let (restored, map) = load(&recording, Session::default()).unwrap().unwrap();
         assert_eq!(map.points.len(), visible);

@@ -40,7 +40,7 @@ everything else is optional and in any order.
      temporary db in the data folder), with its stitching knobs under Advanced.
   3. **Global map**: every scan placed through the corrected tf (on by default), ray traced (on by default; the ray
      tracer's tunables under Advanced), decimated (a final voxel and stray-point removal), written into the recording as
-     `global_map_aggregated` (one cloud at its start) and beside it as `<name>_global_map_aggregated.pc2.lcm`; it becomes
+     `map_cloud` (one cloud, stamped when written: the premap dimos relocalization loads) and beside it as `<name>_map_cloud.pc2.lcm`; it becomes
      the map in the editor. Optionally an `.rrd` beside the recording too: the map, the paths, each AprilTag drawn as its
      own pattern with its id, and the streams picked at the rates picked (color images at 2 Hz by default).
 - **Already has a map** (a `global_map` PointCloud2: dimos's `global_map` stream, `/global_map` or `<ns>/global_map`):
