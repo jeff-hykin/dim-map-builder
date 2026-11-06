@@ -1,7 +1,7 @@
 // Errors → Desktop's agent. A page reports what went wrong to Desktop's error feed (`POST /gateways/desktop/ui/errors`), which a
 // connected agent sees (its `recent_errors` tool, and the newest unacknowledged ones in `desktop_context`).
 //
-//     import { captureErrors, reportError } from "https://esm.sh/gh/jeff-hykin/dim-app@v0.7.0/errors.js"
+//     import { captureErrors, reportError } from "https://esm.sh/gh/dimensionalOS/ddtk@v0.7.0/errors.js"
 //     captureErrors()                                   // uncaught errors + unhandled rejections, once per page
 //     reportError("Couldn't save the map", String(e))   // a handled failure the user (and agent) should know about
 //

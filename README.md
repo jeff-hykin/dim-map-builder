@@ -102,9 +102,9 @@ This version needs a dimOS Desktop whose dimos gateway is API 4.0 (the `/gateway
 provide them won't install it. Page errors also go to Desktop's error feed (`POST /gateways/desktop/ui/errors`, dim-app
 `errors.js`) so its agent sees them; an older Desktop just drops those.
 
-In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (branch `dimos-desktop2`), or
+In Desktop: App Store → add `https://github.com/dimensionalOS/dim-map-editor` (branch `dimos-desktop2`), or
 
-    dimos-desktop install --name dim-map-builder https://github.com/jeff-hykin/dim-map-builder
+    dimos-desktop install --name dim-map-builder https://github.com/dimensionalOS/dim-map-editor
 
 ## Layout
 
@@ -114,7 +114,7 @@ In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (b
 | `crates/mapping` | the map math: the ray-traced voxel map (dimos's `dimos-voxel-ray-tracing` crate, a git dependency), tf tree, ICP, loop closure (a port of dimos's PGO), cleanup selections, floors, floor plans, the staged build |
 | `server` | `dimos-app-server`: sessions, jobs, every action as an endpoint (`api.rs`, one table that is also `/openapi.json`), save/restore |
 | `scripts/check_endpoints.ts` | checks dimos.yaml's `provides:` against the server's `--openapi-json` (`--write` regenerates it) |
-| `frontend` | the page: React + Vite, built from [dimos-react](https://github.com/jeff-hykin/dimos-react) (every control, panel and dialog, Desktop's theme, and the 3D view: its renderer, point styles and palettes); `src/core/scene.ts` is the editor on top of that view; `src/share` the shared-map page (`vite.share.config.ts` builds its viewer) |
+| `frontend` | the page: React + Vite, built from [dimos-react](https://github.com/dimensionalOS/dimos-react) (every control, panel and dialog, Desktop's theme, and the 3D view: its renderer, point styles and palettes); `src/core/scene.ts` is the editor on top of that view; `src/share` the shared-map page (`vite.share.config.ts` builds its viewer) |
 | `docs` | [schema.md](docs/schema.md) (what's saved), [api.md](docs/api.md) (the endpoints) |
 
 One compiled binary at runtime: no Python, no dimos needed to build or edit maps.

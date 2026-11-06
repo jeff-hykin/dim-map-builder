@@ -1,7 +1,7 @@
 // deno-lint-ignore-file
 // deno-fmt-ignore-file
 // @ts-nocheck
-// https://github.com/jeff-hykin/zenoh-gateway client/zenoh_gateway.ts at 2104633 (210463326660b1b885803919d577803d6dff1484), types stripped by tools/vendor_zenoh_client.js; do not edit
+// https://github.com/dimensionalOS/zenoh-gateway client/zenoh_gateway.ts at 2104633 (210463326660b1b885803919d577803d6dff1484), types stripped by tools/vendor_zenoh_client.js; do not edit
 // license: ./LICENSE
 // zenoh-gateway browser client: one WebRTC data channel per subscription/publisher, see SPEC.md
 import { decompress as zstdDecompress } from "./vendor/fzstd.js";
