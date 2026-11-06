@@ -308,7 +308,7 @@ impl Recording {
     }
 
     /// Every transform with the log time of the message that carried it (to tell a header stamp's clock). In an .mcap
-    /// an edge the Map Editor wrote (a channel naming it in `EDGE_KEY`) comes from the newest such channel only.
+    /// an edge the Map Editor wrote (a channel naming it in `EDGE_KEY`) comes from the newest channel naming it only.
     pub fn tf_edges_logged(&self) -> Result<Vec<(f64, TfEdge)>> {
         self.tf_edges_logged_with(None)
     }
@@ -342,8 +342,9 @@ impl Recording {
             let infos = file.channel_infos()?;
             let mut overrides: std::collections::HashMap<String, (f64, u16)> = std::collections::HashMap::new();
             for info in &infos {
-                if let (Some(edge), Some(generation)) = (info.metadata.get(mcap_io::EDGE_KEY), info.generation()) {
-                    let entry = overrides.entry(edge.clone()).or_insert((generation, info.id));
+                let Some(generation) = info.generation() else { continue };
+                for edge in info.edges() {
+                    let entry = overrides.entry(edge).or_insert((generation, info.id));
                     if generation > entry.0 {
                         *entry = (generation, info.id);
                     }

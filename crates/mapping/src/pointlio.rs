@@ -413,12 +413,13 @@ pub fn write(path: &Path, tree: &TfTree, estimate: &Estimate, spool: Option<&Pat
             dimos_recording::db::write_stream(&mut connection, ODOMETRY_TOPIC.trim_start_matches('/'), lcm::ODOMETRY_TYPE, &odometry)?;
         }
         Format::Mcap => {
-            let mut appender = dimos_recording::mcap_append::Appender::open(path)?;
+            // both replaced: scans deskewed along the old poses don't go with new ones
+            let mut appender = dimos_recording::mcap_io::replacing(path, &[ODOMETRY_TOPIC, CLOUD_TOPIC], &[])?;
             let metadata = |kind: &str| BTreeMap::from([(LCM_TYPE_KEY.to_string(), kind.to_string()), (GENERATION_KEY.to_string(), format!("{generation:.6}"))]);
-            let odometry_channel = appender.new_channel(ODOMETRY_TOPIC, 0, "lcm", &metadata(lcm::ODOMETRY_TYPE));
+            let odometry_channel = appender.channel(ODOMETRY_TOPIC, 0, "lcm", &metadata(lcm::ODOMETRY_TYPE));
             let mut cloud_metadata = metadata(lcm::POINT_CLOUD2_TYPE);
             cloud_metadata.insert(DERIVED_FROM_KEY.to_string(), estimate.inputs.lidar.clone());
-            let cloud_channel = spool.map(|_| appender.new_channel(CLOUD_TOPIC, 0, "lcm", &cloud_metadata));
+            let cloud_channel = spool.map(|_| appender.channel(CLOUD_TOPIC, 0, "lcm", &cloud_metadata));
             let mut reader = spool.map(|path| std::fs::File::open(path).map(BufReader::new)).transpose()?;
             for (t, payload) in odometry {
                 if let (Some(reader), Some(channel)) = (reader.as_mut(), cloud_channel) {

@@ -64,9 +64,13 @@ session for it restores the map, the transform, every annotation, the saved view
 # What Generate writes
 
 Generate's steps (the Generate dialog, or `POST api/sessions/{id}/generate/...`) also write into the recording in
-place: a `.db` has the stream replaced, an `.mcap` gets a newer channel appended on the same topic (channel metadata
-`map_builder_generation` = unix seconds; readers here take the newest, and older ones are left as they were, since an
-mcap is only ever appended to). Nothing is left beside the recording but the two files asked for: the `.pc2.lcm` and,
+place: a `.db` has the stream replaced, an `.mcap` has the topic replaced on its one channel (channel metadata
+`map_builder_generation` = unix seconds): the step's new messages are appended and the previous run's chunks are cut
+off the end of the file, or, inside it, covered by a filler record (opcode `0x80`, which every mcap reader skips) and
+dropped from the index, so every reader (dimos, Foxglove, the Recordings app) sees one copy. The Map Editor never adds
+a second channel to a topic: a recorded topic of the same name is refused, never replaced. A file written by an older
+version (several channels on one topic, an edge on a second channel of `/tf`) still reads right (the newest wins) and
+is brought to one channel per topic by the next step written into it. Nothing is left beside the recording but the two files asked for: the `.pc2.lcm` and,
 when asked for, the `.rrd`. The high-quality tf correction runs icp_stitch on an `.mcap` itself (`stitch.inPlace`,
 default on): the odometry is the recording's Odometry topic on the corrected edge's odometry, else that tf edge
 (`tf_odometry`), and `raw_april_tags` are its tags. Its derived topics stay in the file next to the edge:
@@ -77,11 +81,11 @@ than the odometry's parent) runs on a temporary db in the app's data folder, del
 
 | Stream / channel | dimos type | Content |
 | --- | --- | --- |
-| the tf topic, `/pointlio_odometry` | `tf2_msgs.TFMessage`, `nav_msgs.Odometry` | Step 0 (Point-LIO, for a lidar + IMU with no odometry): the lidar rig's pose at the end of every scan, as the edge `odom → <the root of the lidar's static tree>` (written like step 2's edge) and as Odometry (`odom` → that root; a `.db` stream `pointlio_odometry`), on the log clock |
+| `/map/tf`, `/pointlio_odometry` | `tf2_msgs.TFMessage`, `nav_msgs.Odometry` | Step 0 (Point-LIO, for a lidar + IMU with no odometry): the lidar rig's pose at the end of every scan, as the edge `odom → <the root of the lidar's static tree>` (written like step 2's edge) and as Odometry (`odom` → that root; a `.db` stream `pointlio_odometry`), on the log clock |
 | `/pointlio_lidar` (`.mcap`) | `sensor_msgs.PointCloud2` | Step 0: every scan motion-compensated by Point-LIO's per-point states (blind-range and every-3rd-point filtered as Point-LIO reads it), in the lidar's frame at the scan's end; channel metadata `derived_from` names the raw lidar, which the build and the tf correction's default then step aside for |
 | `raw_april_tags` | `geometry_msgs.PoseStamped` | Step 1: every marker glimpse (AprilTag or ArUco, whichever dictionary step 1 ran with): the tag's pose in the camera's optical frame (`frame_id`), at the image's time. `.db` row tags (and pose columns = the same pose, as dimos's `add_april.py` writes): `marker_id`, `sharpness`, `reproj_px`, `tag_px`, `distance_m`, `view_angle_deg`, `lin_speed`, `ang_speed` (the camera's speed from tf; -1 unknown). `.mcap`: the same JSON object per message on `raw_april_tags/tags` (`std_msgs.String`) |
 | `april_tags` | `geometry_msgs.PoseStamped` | Step 1: the glimpses that pass the quality gates, grouped per marker visit (a gap of more than 5 s starts a new one), each group reduced to one Huber-refined medoid pose; tags `marker_id`, `n_observations` |
-| `tf` (`.db`) / the tf topic (`.mcap`) | `tf2_msgs.TFMessage` | Step 2: the drift correction as one edge, grandparent → parent (e.g. `world → odom`), at 10 Hz over the whole recording and at every keyframe, one transform per message (rows tagged `child_frame`). In a `.db` every transform of that edge already there is dropped from the tf streams (a message left empty is deleted), the way dtk's `db_tf_*` tools edit tf. In an `.mcap` the samples are a new channel on the tf topic with metadata `map_builder_edge: "<parent>><child>"`; readers here take that edge from the newest such channel only (other readers see the old samples too) |
+| `tf` (`.db`) / `/map/tf` (`.mcap`) | `tf2_msgs.TFMessage` | Step 2: the drift correction as one edge, grandparent → parent (e.g. `world → odom`), at 10 Hz over the whole recording and at every keyframe, one transform per message (rows tagged `child_frame`). In a `.db` every transform of that edge already there is dropped from the tf streams (a message left empty is deleted), the way dtk's `db_tf_*` tools edit tf. In an `.mcap` every edge the Map Editor writes is on the one channel of `/map/tf` (encoded like the recording's tf, cdr or lcm), with metadata `map_builder_edge: "<parent>><child>,..."`; writing an edge rewrites that channel with the other edges carried over. Readers here take those edges from it instead of the recording's own tf. Foxglove reads it (it merges every tf topic); dimos's `StreamTF` and the Recordings app read only `tf`/`tf_static`, so they don't see it |
 | `map_cloud` | `sensor_msgs.PointCloud2` | Step 3: the global map (through the corrected tf, ray traced, decimated, stray points removed), one message stamped when it was written, in the world frame; Save writes the edited map there again (frame `map`). dimos relocalization loads the last `map_cloud` as its premap. Also written beside the recording as `<name>_map_cloud.pc2.lcm` (that one LCM-encoded PointCloud2) |
 | `map/pipeline` | `std_msgs.String` | JSON: what each step last ran with, when, and what it found (so a later step knows whether it needs an earlier one, and the dialog shows it) |
 

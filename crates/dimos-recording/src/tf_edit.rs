@@ -1,14 +1,16 @@
 //! Writing one tf edge into a recording, in place, the way dtk's `db_tf_*` tools edit tf: in a `.db` every tf
 //! message that carries the edge loses it (a message left empty is deleted), and the new samples go onto the `tf`
 //! stream one transform per message at their own timestamps, each row tagged with its `child_frame`. An `.mcap` is
-//! only ever appended to: the samples go on a new channel of the tf topic that names the edge (`EDGE_KEY`), and
-//! readers here (`Recording::tf_edges_logged`) take that edge from the newest such channel only.
+//! only ever appended to, and never gets a second channel on its own tf topic: every edge the Map Editor wrote goes on
+//! one channel of `EDGE_TOPIC` (`/map/tf`), naming them (`EDGE_KEY`). Writing an edge rewrites that channel whole (its
+//! other edges carried over) and retires the old one, so a re-run doesn't stack a second copy of an edge. Readers here
+//! (`Recording::tf_edges_logged`) take those edges from it instead of anywhere else in the recording.
 use crate::db::{self, NewRow};
 use crate::lcm::{self, Header, TfEdge};
-use crate::mcap_io::{self, GeneratedChannel, EDGE_KEY, GENERATION_KEY, LCM_TYPE_KEY};
+use crate::mcap_io::{self, GeneratedChannel, McapFile, EDGE_KEY, EDGE_TOPIC, GENERATION_KEY, LCM_TYPE_KEY};
 use crate::{Format, Kind, Recording};
 use anyhow::{bail, Context, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::Path;
 
@@ -123,41 +125,81 @@ fn replace_in_db(path: &Path, parent: &str, child: &str, samples: &[Sample]) -> 
 }
 
 fn replace_in_mcap(path: &Path, parent: &str, child: &str, samples: &[Sample], generation: f64) -> Result<EdgeWrite> {
-    let file = mcap_io::McapFile::open(path)?;
-    let infos = file.channel_infos()?;
-    let tf_channels: Vec<_> = infos.iter().filter(|c| Kind::of(&c.kind) == Kind::Tf).collect();
-    // the recording's dynamic tf topic and its encoding (cdr: the schema is reused)
-    let base = tf_channels.iter().find(|c| !c.topic.trim_start_matches('/').ends_with("static") && !c.metadata.contains_key(EDGE_KEY)).or(tf_channels.first()).copied();
-    let topic = base.map_or("/tf".to_string(), |c| c.topic.clone());
-    let mut replaced = 0;
     let recording = Recording::open(path)?;
-    for (_, edge) in recording.tf_edges_logged()? {
-        if same(&edge.header.frame_id, parent) && same(&edge.child, child) {
-            replaced += 1;
+    let replaced = recording.tf_edges_logged()?.iter().filter(|(_, edge)| same(&edge.header.frame_id, parent) && same(&edge.child, child)).count();
+    drop(recording);
+    let channel = edge_channel(&McapFile::open(path)?, Some((parent, child, samples, generation)))?.context("no edge channel to write")?;
+    mcap_io::append_generated(path, &[channel])?;
+    Ok(EdgeWrite { replaced, deleted_messages: 0, written: samples.len(), stream: EDGE_TOPIC.into() })
+}
+
+/// EDGE_TOPIC's complete new contents: every edge the Map Editor wrote before (from the newest channel holding it, on
+/// any topic: older versions put each on a channel of the recording's own tf topic), with `replace`'s edge swapped
+/// for its samples. It retires every edge channel it takes over. None when there's nothing to write: no `replace`,
+/// and the edges are on EDGE_TOPIC's one channel already (or there are none).
+pub(crate) fn edge_channel(file: &McapFile, replace: Option<(&str, &str, &[Sample], f64)>) -> Result<Option<GeneratedChannel>> {
+    let infos = file.channel_infos()?;
+    let edge_channels: Vec<&mcap_io::ChannelInfo> = infos.iter().filter(|c| c.metadata.contains_key(EDGE_KEY)).collect();
+    if replace.is_none() && (edge_channels.is_empty() || (edge_channels.len() == 1 && edge_channels[0].topic == EDGE_TOPIC)) {
+        return Ok(None);
+    }
+    let mut newest: BTreeMap<String, (f64, u16)> = BTreeMap::new();
+    for channel in &edge_channels {
+        let generation = channel.generation().unwrap_or(0.0);
+        for edge in channel.edges() {
+            let entry = newest.entry(edge).or_insert((generation, channel.id));
+            if generation > entry.0 {
+                *entry = (generation, channel.id);
+            }
         }
     }
-    drop(recording);
+    if let Some((parent, child, ..)) = replace {
+        newest.remove(&edge_key(parent.trim_start_matches('/'), child.trim_start_matches('/')));
+    }
+    // encoded like the recording's own dynamic tf (cdr: its schema is reused, so Foxglove reads the edges)
+    let tf_channels: Vec<_> = infos.iter().filter(|c| Kind::of(&c.kind) == Kind::Tf && !c.metadata.contains_key(EDGE_KEY)).collect();
+    let base = tf_channels.iter().find(|c| !c.topic.trim_start_matches('/').ends_with("static")).or(tf_channels.first());
     let schema = base.filter(|c| c.encoding == "cdr").and_then(|c| {
         let summary = mcap::Summary::read(file.bytes()).ok().flatten()?;
         let schema = summary.channels.get(&c.id)?.schema.clone()?;
         Some((schema.name.clone(), schema.encoding.clone(), schema.data.to_vec()))
     });
-    drop(file);
     let cdr = schema.is_some();
-    let messages: Vec<(f64, Vec<u8>)> = samples
-        .iter()
-        .map(|sample| {
-            let edge = tf_message(parent, child, sample);
-            (sample.0, if cdr { crate::cdr::encode_tf(&[edge]) } else { lcm::encode_tf(&[edge]) })
-        })
-        .collect();
-    let mut metadata = BTreeMap::from([(GENERATION_KEY.to_string(), format!("{generation:.6}")), (EDGE_KEY.to_string(), edge_key(parent, child))]);
+    let encode = |edge: TfEdge| if cdr { crate::cdr::encode_tf(&[edge]) } else { lcm::encode_tf(&[edge]) };
+    let mut messages: Vec<(f64, Vec<u8>)> = Vec::new();
+    let topics: BTreeSet<&str> = edge_channels.iter().map(|c| c.topic.as_str()).collect();
+    for topic in topics {
+        file.for_each_channel(topic, |ts, channel, payload| {
+            let decoded = if channel.message_encoding == "cdr" { crate::cdr::decode_tf(payload) } else { lcm::decode_tf(payload) };
+            for edge in decoded.unwrap_or_default() {
+                let key = edge_key(edge.header.frame_id.trim_start_matches('/'), edge.child.trim_start_matches('/'));
+                if newest.get(&key).is_some_and(|(_, id)| *id == channel.id) {
+                    messages.push((ts, encode(edge)));
+                }
+            }
+            Ok(true)
+        })?;
+    }
+    let mut edges: Vec<String> = newest.keys().cloned().collect();
+    let mut generation = edge_channels.iter().filter_map(|c| c.generation()).fold(0.0, f64::max);
+    if let Some((parent, child, samples, at)) = replace {
+        messages.extend(samples.iter().map(|sample| (sample.0, encode(tf_message(parent, child, sample)))));
+        edges.push(edge_key(parent.trim_start_matches('/'), child.trim_start_matches('/')));
+        generation = at;
+    }
+    edges.sort();
+    let mut metadata = BTreeMap::from([(GENERATION_KEY.to_string(), format!("{generation:.6}")), (EDGE_KEY.to_string(), edges.join(","))]);
     if !cdr {
         metadata.insert(LCM_TYPE_KEY.to_string(), lcm::TF_TYPE.to_string());
     }
-    let written = messages.len();
-    mcap_io::append_generated(path, &[GeneratedChannel { topic: topic.clone(), encoding: if cdr { "cdr".into() } else { "lcm".into() }, schema, metadata, messages }])?;
-    Ok(EdgeWrite { replaced, deleted_messages: 0, written, stream: topic })
+    Ok(Some(GeneratedChannel {
+        topic: EDGE_TOPIC.into(),
+        encoding: if cdr { "cdr".into() } else { "lcm".into() },
+        schema,
+        metadata,
+        messages,
+        retires: edge_channels.iter().map(|c| c.id).collect(),
+    }))
 }
 
 #[cfg(test)]
@@ -197,5 +239,17 @@ mod tests {
         let found = edges_of(&mcap);
         assert_eq!(found.iter().filter(|e| e.0 == "map").map(|e| e.2).collect::<Vec<_>>(), vec![5.0], "only the newest override is read");
         assert_eq!(found.iter().filter(|e| e.0 == "odom").count(), 3);
+        // a second edge shares /map/tf; re-writing the first keeps it
+        replace_edge(&mcap, "world", "map", &[(1.0, [3.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])], 3.0).unwrap();
+        replace_edge(&mcap, "map", "odom", &[(0.0, [6.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])], 4.0).unwrap();
+        let found = edges_of(&mcap);
+        assert_eq!(found.iter().filter(|e| e.0 != "odom").map(|e| (e.0.as_str(), e.2)).collect::<Vec<_>>(), vec![("map", 6.0), ("world", 3.0)]);
+        let infos = McapFile::open(&mcap).unwrap().channel_infos().unwrap();
+        let topics: Vec<(&str, Vec<String>)> = infos.iter().map(|c| (c.topic.as_str(), c.edges())).collect();
+        assert_eq!(topics, vec![("/tf", vec![]), (EDGE_TOPIC, vec!["map>odom".to_string(), "world>map".to_string()])], "one channel per topic");
+        // what a reader that merges every tf topic sees (Foxglove): one sample per edge per stamp
+        let bytes = std::fs::read(&mcap).unwrap();
+        let on_edge_topic = mcap::MessageStream::new(&bytes).unwrap().filter(|m| m.as_ref().unwrap().channel.topic == EDGE_TOPIC).count();
+        assert_eq!(on_edge_topic, 2);
     }
 }

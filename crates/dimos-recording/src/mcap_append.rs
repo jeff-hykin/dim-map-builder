@@ -15,8 +15,14 @@
 //! `mcap` CLI, this crate's own `Summary`) sort by the chunk index and never
 //! notice; a linear walk sees them last. Anything here that consumes time
 //! series therefore sorts by stamp rather than trusting file order.
+//!
+//! A newer copy of a stream replaces the old one (`Appender::open_replacing`): each old chunk, with its message
+//! indexes, becomes one filler record of a private opcode, which every mcap reader skips (opcodes 0x80-0xFF are left
+//! to applications), and leaves the index, so a topic keeps one channel and readers see one copy of it. That is the
+//! one write here into bytes already in the file: a 9-byte record header per retired chunk (its bytes stay, unread).
+//! Retired chunks at the end of the data section are cut off instead.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -43,6 +49,9 @@ mod op {
     pub const METADATA_INDEX: u8 = 0x0D;
     pub const SUMMARY_OFFSET: u8 = 0x0E;
     pub const DATA_END: u8 = 0x0F;
+    /// Filler over a retired chunk and its message indexes (the application range, which readers skip; icp_stitch
+    /// blanks its own replaced chunks with the same opcode)
+    pub const FILLER: u8 = 0x80;
 }
 
 /// Uncompressed bytes per appended chunk. Small enough that a reader seeking
@@ -96,6 +105,8 @@ pub struct Appender {
     metadata_indexes: Vec<records::MetadataIndex>,
     statistics: Option<records::Statistics>,
     sequences: HashMap<u16, u32>,
+    /// The id a new channel gets: past every id the file ever used, retired ones included
+    next_channel_id: u16,
     /// Messages queued with [`Appender::write`], held until they can be
     /// merged in log-time order with whatever is streamed.
     pending: Vec<Pending>,
@@ -116,6 +127,13 @@ impl Appender {
     /// summary; a crash in between leaves a recording that `mcap_recover` can
     /// re-index but that indexed readers refuse.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_replacing(path, &BTreeSet::new())
+    }
+
+    /// `open`, with the channels `retire` removed first: every chunk holding one of them is retired (see the module
+    /// doc) and the channels leave the summary, so for every reader, indexed or linear, they are gone. A chunk that
+    /// also holds a channel not in `retire` is refused before anything is changed.
+    pub fn open_replacing(path: &Path, retire: &BTreeSet<u16>) -> Result<Self> {
         let existing = File::open(path).with_context(|| format!("could not open {}", path.display()))?;
         let mapped = unsafe { memmap2::Mmap::map(&existing)? };
         let (data_end_offset, summary) = locate_summary(&mapped)
@@ -144,8 +162,38 @@ impl Appender {
                 },
             );
         }
-        let sequences = summary
-            .stats
+        // a chunk without message indexes (one of only channel records, or a writer that skips them) is read to
+        // be sure it holds nothing being replaced
+        for chunk in summary.chunk_indexes.iter().filter(|chunk| !retire.is_empty() && chunk.message_index_offsets.is_empty()) {
+            for message in summary.stream_chunk(&mapped, chunk)? {
+                if retire.contains(&message?.channel.id) {
+                    bail!("the chunk at {} holds a channel being replaced but has no message indexes", chunk.chunk_start_offset);
+                }
+            }
+        }
+        let (retired, chunk_indexes): (Vec<records::ChunkIndex>, Vec<records::ChunkIndex>) =
+            summary.chunk_indexes.into_iter().partition(|chunk| chunk.message_index_offsets.keys().any(|id| retire.contains(id)));
+        if let Some(mixed) = retired.iter().find(|chunk| chunk.message_index_offsets.keys().any(|id| !retire.contains(id))) {
+            bail!("the chunk at {} holds channels that are being replaced and others that aren't", mixed.chunk_start_offset);
+        }
+        let at = |offset: u64| mapped.get(offset as usize).copied();
+        for chunk in &retired {
+            let indexes = chunk.chunk_start_offset + chunk.chunk_length..chunk.chunk_start_offset + chunk.chunk_length + chunk.message_index_length;
+            if at(chunk.chunk_start_offset) != Some(op::CHUNK) || chunk.message_index_offsets.values().any(|offset| at(*offset) != Some(op::MESSAGE_INDEX) || !indexes.contains(offset)) {
+                bail!("the chunk index entry at {} doesn't point at a chunk and its message indexes", chunk.chunk_start_offset);
+            }
+        }
+        let next_channel_id = channels.keys().next_back().map_or(1, |last| last + 1);
+        channels.retain(|id, _| !retire.contains(id));
+        let mut statistics = summary.stats;
+        if let (Some(stats), false) = (statistics.as_mut(), retired.is_empty()) {
+            for id in retire {
+                stats.message_count -= stats.channel_message_counts.remove(id).unwrap_or(0).min(stats.message_count);
+            }
+            stats.message_start_time = chunk_indexes.iter().map(|chunk| chunk.message_start_time).min().unwrap_or(0);
+            stats.message_end_time = chunk_indexes.iter().map(|chunk| chunk.message_end_time).max().unwrap_or(0);
+        }
+        let sequences = statistics
             .as_ref()
             .map(|stats| {
                 stats
@@ -162,19 +210,34 @@ impl Appender {
             .open(path)
             .with_context(|| format!("could not open {} for writing", path.display()))?;
         file.set_len(data_end_offset)?;
+        // retired chunks that end the data section are cut off; the rest become filler records
+        let span_end = |chunk: &records::ChunkIndex| chunk.chunk_start_offset + chunk.chunk_length + chunk.message_index_length;
+        let mut data_end = data_end_offset;
+        while let Some(last) = retired.iter().find(|chunk| span_end(chunk) == data_end) {
+            data_end = last.chunk_start_offset;
+        }
+        let mut file = file;
+        for chunk in retired.iter().filter(|chunk| chunk.chunk_start_offset < data_end) {
+            let mut header = vec![op::FILLER];
+            header.extend_from_slice(&(span_end(chunk) - chunk.chunk_start_offset - 9).to_le_bytes());
+            file.seek(SeekFrom::Start(chunk.chunk_start_offset))?;
+            file.write_all(&header)?;
+        }
+        file.set_len(data_end)?;
         let mut file = BufWriter::with_capacity(1 << 20, file);
-        file.seek(SeekFrom::Start(data_end_offset))?;
+        file.seek(SeekFrom::Start(data_end))?;
 
         Ok(Appender {
             path: path.to_path_buf(),
             file,
             schemas,
             channels,
-            chunk_indexes: summary.chunk_indexes,
+            chunk_indexes,
             attachment_indexes: summary.attachment_indexes,
             metadata_indexes: summary.metadata_indexes,
-            statistics: summary.stats,
+            statistics,
             sequences,
+            next_channel_id,
             pending: Vec::new(),
             streaming: false,
             held_next: 0,
@@ -248,7 +311,8 @@ impl Appender {
         if let Some(id) = self.channel_id(topic) {
             return id;
         }
-        let id = self.channels.keys().next_back().map_or(1, |last| last + 1);
+        let id = self.next_channel_id;
+        self.next_channel_id += 1;
         self.channels.insert(
             id,
             Channel {
@@ -258,13 +322,6 @@ impl Appender {
                 metadata: metadata.clone(),
             },
         );
-        id
-    }
-
-    /// A new channel on `topic` whether or not the file has one already (a newer generation of a derived stream).
-    pub fn new_channel(&mut self, topic: &str, schema_id: u16, message_encoding: &str, metadata: &BTreeMap<String, String>) -> u16 {
-        let id = self.channels.keys().next_back().map_or(1, |last| last + 1);
-        self.channels.insert(id, Channel { schema_id, topic: topic.into(), message_encoding: message_encoding.into(), metadata: metadata.clone() });
         id
     }
 
@@ -948,5 +1005,24 @@ mod tests {
         assert_eq!(profile, "ros2");
         assert!(library.starts_with("mcap-rust"), "{library}");
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn replacing_a_channel_that_shares_a_chunk_with_another_is_refused_untouched() {
+        let path = finished_recording("mixed");
+        let mut appender = Appender::open(&path).unwrap();
+        let a = appender.channel("/a", 0, "lcm", &BTreeMap::new());
+        let b = appender.channel("/b", 0, "lcm", &BTreeMap::new());
+        appender.write(a, 1, b"a".to_vec()).unwrap();
+        appender.write(b, 2, b"b".to_vec()).unwrap();
+        appender.finish().unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(Appender::open_replacing(&path, &BTreeSet::from([a])).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        // both together: the chunk goes, and so does every trace of the channels
+        Appender::open_replacing(&path, &BTreeSet::from([a, b])).unwrap().finish().unwrap();
+        let topics: Vec<String> = appended_in_order(&path).into_iter().map(|(topic, _)| topic).collect();
+        assert_eq!(topics, ["/seed"]);
+        let _ = std::fs::remove_file(&path);
     }
 }
