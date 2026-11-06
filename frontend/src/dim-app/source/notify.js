@@ -1,6 +1,6 @@
 // Notifications → dimOS Desktop's notification center (POST /gateways/desktop/ui/notifications on the Desktop origin).
 //
-//     import { notify } from "https://esm.sh/gh/dimensionalOS/ddtk@v0.18.0/source/notify.js"
+//     import { notify } from "./notify.js"   // vendored from github.com/dimensionalOS/ddtk (tools/vendor.js)
 //     notify({ title: "Battery low", body: "Go2 at 14%", kind: "warn", sound: "battery" })
 //
 // Apps are served same-origin under /apps/<name>/, so the path is absolute. Outside Desktop (a page opened on its own
