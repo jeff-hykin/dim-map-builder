@@ -150,6 +150,18 @@ pub struct Slice {
     pub y_max: f32,
 }
 
+/// One of dimos's named locations (dimos/mapping/relocalization): a place by name, kept in the map frame like every
+/// annotation and written into the recording as `/named_locations` on Save, so the saved map is a premap with them.
+/// `frame` is the frame_id the list is written with (the one it came in: "premap" on the M20).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NamedLocation {
+    pub id: String,
+    pub name: String,
+    pub position: [f32; 3],
+    pub frame: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Annotations {
@@ -162,6 +174,9 @@ pub struct Annotations {
     pub prisms: Vec<Prism>,
     pub views: Vec<SavedView>,
     pub slice: Option<Slice>,
+    pub named_locations: Vec<NamedLocation>,
+    /// the recording's own /named_locations have been read in (once: after that the session's list is the truth)
+    pub named_locations_read: bool,
 }
 
 /// map ← recording world, as translation + quaternion (x, y, z, w)

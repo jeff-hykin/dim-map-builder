@@ -65,6 +65,15 @@ export interface Floor {
     z: number
 }
 
+/** One of dimos's named locations (written into the recording as /named_locations on Save), in the map frame. */
+export interface NamedLocation {
+    id: string
+    name: string
+    position: [number, number, number]
+    /** the frame_id the list is written with */
+    frame: string
+}
+
 export interface PlanPoint {
     id: string
     floor: number
@@ -124,6 +133,7 @@ export interface Annotations {
     prisms: PrismAnnotation[]
     views: SavedView[]
     slice?: Slice | null
+    namedLocations?: NamedLocation[]
 }
 
 export interface PlanInfo {

@@ -9,7 +9,9 @@
 //!   map/slice        std_msgs.String          JSON: the slicer's view {zMin, zMax, yaw, xMin, xMax, yMin, yMax} or null
 //!   map/floor_<n>    nav_msgs.OccupancyGrid   storey n's occupancy grid, when exported; origin z = the floor
 //! and the edited map again as `map_cloud` (the stream dimos's relocalization loads its premap from: the last one wins,
-//! so a Save replaces what Generate wrote there).
+//! so a Save replaces what Generate wrote there), and the named locations as `/named_locations`
+//! (visualization_msgs.InteractiveMarkerUpdate, the whole list, in the map's coordinates: what the relocalization
+//! seeds its locations from, so the saved map is a premap with its places).
 //! Saving again replaces them in a .db (and drops the `map_builder_*` streams older versions wrote); in an .mcap it
 //! appends a newer message to each, in place (no copy of the recording), and loading takes the newest. Opening a recording that
 //! has them (and no working session) restores the session from them; older `map_builder` saves still open.
@@ -45,6 +47,38 @@ pub struct SavedState {
 }
 
 pub const PREFIX: &str = "map/";
+
+/// dimos's named locations stream (the recorder's .mcap channel; a .db stream has no leading slash)
+const NAMED_LOCATIONS: [&str; 2] = ["/named_locations", "named_locations"];
+
+/// Reads the recording's newest /named_locations into the session, once (after that the session's list is the truth):
+/// re-expressed from the recording's frame into the map frame, keeping the frame_id they're written back with. The
+/// list's coordinates are taken as the recording's (on a new map, dimos's premap is the run's map frame).
+pub fn read_named_locations(recording: &Recording, session: &mut Session) {
+    if session.annotations.named_locations_read {
+        return;
+    }
+    session.annotations.named_locations_read = true;
+    let latest = NAMED_LOCATIONS.iter().find_map(|name| recording.latest(name).ok().flatten());
+    let Some((_, payload)) = latest else { return };
+    match lcm::decode_named_locations(&payload) {
+        Ok(list) => {
+            let to_map = session.transform.iso();
+            session.annotations.named_locations = list
+                .into_iter()
+                .enumerate()
+                .map(|(index, l)| crate::session::NamedLocation {
+                    id: format!("place-{index}"),
+                    position: mapping::tf::transform_point(&to_map, [l.position[0] as f32, l.position[1] as f32, l.position[2] as f32]),
+                    name: l.name,
+                    frame: l.frame_id,
+                })
+                .collect();
+            session.history.push(format!("Read {} named locations from the recording", session.annotations.named_locations.len()));
+        }
+        Err(error) => session.history.push(format!("Couldn't read the recording's named locations: {error:#}")),
+    }
+}
 
 /// map, path, annotations, views, floor n
 fn slice_name() -> String {
@@ -104,6 +138,17 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
         (slice_name(), lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.slice)?)),
     ];
     writes.extend(floors.into_iter().map(|(name, payload)| (name, lcm::OCCUPANCY_GRID_TYPE.into(), payload)));
+    // the whole list, even when empty: a list emptied here replaces the recording's
+    if session.annotations.named_locations_read || !session.annotations.named_locations.is_empty() {
+        let locations: Vec<lcm::NamedLocation> = session
+            .annotations
+            .named_locations
+            .iter()
+            .map(|l| lcm::NamedLocation { name: l.name.clone(), frame_id: l.frame.clone(), position: [l.position[0] as f64, l.position[1] as f64, l.position[2] as f64], orientation: [0.0, 0.0, 0.0, 1.0] })
+            .collect();
+        let topic = if format == Format::Mcap { NAMED_LOCATIONS[0] } else { NAMED_LOCATIONS[1] };
+        writes.push((topic.into(), lcm::INTERACTIVE_MARKER_UPDATE_TYPE.into(), lcm::encode_named_locations(&header, "map_builder", &locations)));
+    }
     match format {
         Format::Db => {
         // earlier saves' floors beyond today's count go too
@@ -219,14 +264,21 @@ mod tests {
         let path = dir.path().join(format!("run.{format}"));
         // a recording with a lidar stream of its own
         let cloud = lcm::encode_xyz_cloud(&Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        // and dimos's named locations, as the robot recorded them (in its premap frame)
+        let kitchen = lcm::NamedLocation { name: "kitchen".into(), frame_id: "premap".into(), position: [1.0, 2.0, 0.0], orientation: [0.0, 0.0, 0.0, 1.0] };
+        let named = lcm::encode_named_locations(&Header::at(1.0, ""), "run", &[kitchen]);
         match format {
             "db" => {
                 let mut connection = db::Connection::open(&path).unwrap();
                 db::write_stream(&mut connection, "lidar", lcm::POINT_CLOUD2_TYPE, &[(1.0, cloud)]).unwrap();
+                db::write_stream(&mut connection, "named_locations", lcm::INTERACTIVE_MARKER_UPDATE_TYPE, &[(1.0, named)]).unwrap();
             }
-            _ => mcap_io::write_fixture(&path, &[("/lidar", "lcm", lcm::POINT_CLOUD2_TYPE, 1.0, cloud)]),
+            _ => mcap_io::write_fixture(&path, &[("/lidar", "lcm", lcm::POINT_CLOUD2_TYPE, 1.0, cloud), ("/named_locations", "lcm", lcm::INTERACTIVE_MARKER_UPDATE_TYPE, 1.0, named)]),
         }
-        let session = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), ..Default::default() };
+        let mut session = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), ..Default::default() };
+        // opening reads them in, once
+        read_named_locations(&Recording::open(&path).unwrap(), &mut session);
+        assert_eq!(session.annotations.named_locations.iter().map(|l| (l.name.as_str(), l.frame.as_str(), l.position)).collect::<Vec<_>>(), vec![("kitchen", "premap", [1.0, 2.0, 0.0])]);
         let mut ws = Workspace::new(session, Some(room_map()));
         ws.op("floating", &serde_json::json!({ "minVoxels": 10 }), &crate::workspace::Region::All, false).unwrap();
         ws.rotate_yaw(30.0).unwrap();
@@ -243,6 +295,8 @@ mod tests {
         ws.add_prism(0, "desk", vec![[1.0, 3.0], [2.0, 3.0], [2.0, 4.0]], 0.8, None, "user").unwrap();
         ws.add_view(crate::session::SavedView { name: "walls".into(), floor: 0, follow: true, z_min: 0.1, z_max: 1.8, ..Default::default() }).unwrap();
         ws.set_slice(Some(crate::session::Slice { z_min: -0.2, z_max: 2.0, yaw: 0.3, x_min: 0.0, x_max: 5.0, y_min: 0.5, y_max: 6.0 })).unwrap();
+        ws.add_named_location("dock", [3.0, 1.0, 0.0]).unwrap();
+        assert!(ws.add_named_location("dock", [0.0, 0.0, 0.0]).is_err(), "names are unique");
         let visible = ws.remaining();
         save(&ws, |_, _| {}).unwrap();
         save(&ws, |_, _| {}).unwrap(); // twice: replaces, never duplicates
@@ -254,7 +308,15 @@ mod tests {
         }
         assert!(streams.iter().any(|s| s.ends_with("lidar")), "the original data is still there");
         assert!(streams.iter().any(|s| s == mapping::pipeline::GLOBAL_MAP_STREAM), "the map is dimos's premap too: {streams:?}");
-        assert_eq!(streams.len(), 8);
+        assert_eq!(streams.len(), 9);
+        // the named locations as saved (the map's coordinates, the frame they came in): what dimos seeds a premap's from
+        let (_, payload) = recording.latest(if format == "db" { "named_locations" } else { "/named_locations" }).unwrap().unwrap();
+        let saved = lcm::decode_named_locations(&payload).unwrap();
+        let expected: Vec<_> = ws.session.annotations.named_locations.iter().map(|l| (l.name.clone(), l.frame.clone(), [l.position[0] as f64, l.position[1] as f64, l.position[2] as f64])).collect();
+        assert_eq!(saved.iter().map(|l| (l.name.clone(), l.frame_id.clone(), l.position)).collect::<Vec<_>>(), expected);
+        assert_eq!(expected.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(), ["kitchen", "dock"]);
+        assert_eq!(expected[1].1, "premap", "a new one takes the list's frame");
+        assert!((expected[0].2[0] - 1.0).abs() > 0.1, "the kitchen turned with the map (rotate_yaw)");
 
         let (restored, map) = load(&recording, Session::default()).unwrap().unwrap();
         assert_eq!(map.points.len(), visible);

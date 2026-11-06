@@ -1,6 +1,6 @@
 //! One open session's logic, independent of HTTP: the map in the map frame, every edit (undoable), the cleanup
 //! tools, floors and plans. The API and the MCP tools both call these; nothing here knows who asked.
-use crate::session::{Annotations, Area, BoxAnnotation, Floor, MapData, PlaneAnnotation, PlanPoint, PointAnnotation, Prism, SavedView, Session, Transform, UndoEntry};
+use crate::session::{Annotations, Area, BoxAnnotation, Floor, MapData, NamedLocation, PlaneAnnotation, PlanPoint, PointAnnotation, Prism, SavedView, Session, Transform, UndoEntry};
 use anyhow::{bail, Context, Result};
 use mapping::edit::{Edit, Reach, Stroke};
 use mapping::floor::{FloorModel, FloorOptions};
@@ -626,6 +626,7 @@ impl Workspace {
                 || patch_list(&mut a.planes, id, patch, |x| &x.id)?
                 || patch_list(&mut a.points, id, patch, |x| &x.id)?
                 || patch_list(&mut a.plan_points, id, patch, |x| &x.id)?
+                || patch_list(&mut a.named_locations, id, patch, |x| &x.id)?
                 || patch_list(&mut a.areas, id, patch, |x| &x.id)?
                 || patch_list(&mut a.prisms, id, patch, |x| &x.id)?
                 || patch_list(&mut a.views, id, patch, |x| &x.id)?;
@@ -643,6 +644,25 @@ impl Workspace {
         self.edit_annotations(&format!("Name point \"{name}\""), |a| {
             a.floors = floors;
             a.plan_points.push(point);
+            Ok(())
+        })?;
+        Ok(id)
+    }
+
+    /// A named location at `position` (map frame), in the frame the list already has (else "map").
+    pub fn add_named_location(&mut self, name: &str, position: [f32; 3]) -> Result<String> {
+        let name = name.trim();
+        if name.is_empty() {
+            bail!("a named location needs a name");
+        }
+        if self.session.annotations.named_locations.iter().any(|l| l.name == name) {
+            bail!("there's already a location named \"{name}\"");
+        }
+        let frame = self.session.annotations.named_locations.first().map_or(crate::persist::MAP_FRAME.to_string(), |l| l.frame.clone());
+        let id = new_id("place-");
+        let location = NamedLocation { id: id.clone(), name: name.into(), position, frame };
+        self.edit_annotations(&format!("Add named location \"{name}\""), |a| {
+            a.named_locations.push(location);
             Ok(())
         })?;
         Ok(id)
@@ -845,6 +865,9 @@ fn move_annotations(annotations: &mut Annotations, delta: &Iso) {
     }
     for p in &mut annotations.points {
         p.position = apply(delta, p.position);
+    }
+    for l in &mut annotations.named_locations {
+        l.position = apply(delta, l.position);
     }
     for f in &mut annotations.floors {
         f.z = apply(delta, [0.0, 0.0, f.z])[2];

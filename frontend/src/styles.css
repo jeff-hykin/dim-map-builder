@@ -51,3 +51,6 @@
     overflow-wrap: anywhere;
     white-space: pre-wrap;
 }
+
+/* the scene's buttons under the view cube (both top right) */
+.scene3d .dr-scene-controls.below-cube { top: 152px; }

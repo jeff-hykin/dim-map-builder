@@ -149,15 +149,17 @@ impl App {
         let recording = Recording::open(path)?;
         let odometry_pending = crate::pipeline::odometry_pending(&recording.stream_list()?, |s| recording.has_messages(&s.name).unwrap_or(false));
         let recorded_map = mapping::recorded::find(&recording)?;
-        Ok(match persist::load(&recording, fresh.clone()) {
-            Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map), odometry_pending, recorded_map),
-            Ok(None) => (fresh, None, odometry_pending, recorded_map),
+        let (mut session, map) = match persist::load(&recording, fresh.clone()) {
+            Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map)),
+            Ok(None) => (fresh, None),
             Err(error) => {
                 let mut session = fresh;
                 session.history.push(format!("Couldn't restore the saved map: {error:#}"));
-                (session, None, odometry_pending, recorded_map)
+                (session, None)
             }
-        })
+        };
+        persist::read_named_locations(&recording, &mut session);
+        Ok((session, map, odometry_pending, recorded_map))
     }
 
     /// The recording's own `global_map` stream, for a session restored from disk (None for an .mcap with no index:

@@ -802,6 +802,8 @@ pub enum NewAnnotation {
     #[serde(rename_all = "camelCase")]
     PlanPoint { floor: usize, name: String, position: [f32; 2] },
     #[serde(rename_all = "camelCase")]
+    NamedLocation { name: String, position: [f32; 3] },
+    #[serde(rename_all = "camelCase")]
     Area { floor: usize, name: String, kind: String, polygon: Vec<[f32; 2]> },
     #[serde(rename_all = "camelCase")]
     Prism {
@@ -829,6 +831,7 @@ pub fn add(workspace: &mut Workspace, annotation: NewAnnotation) -> anyhow::Resu
         NewAnnotation::Plane { label, center, normal, size, source: by } => workspace.add_plane(&label, center, normal, size, &source(by)),
         NewAnnotation::Point { label, position, source: by } => workspace.add_point(&label, position, &source(by)),
         NewAnnotation::PlanPoint { floor, name, position } => workspace.add_plan_point(floor, &name, position),
+        NewAnnotation::NamedLocation { name, position } => workspace.add_named_location(&name, position),
         NewAnnotation::Area { floor, name, kind, polygon } => workspace.add_area(floor, &name, &kind, polygon),
         NewAnnotation::Prism { floor, label, polygon, height, base, source: by } => workspace.add_prism(floor, &label, polygon, height, base, &source(by)),
         NewAnnotation::View(view) => workspace.add_view(view),

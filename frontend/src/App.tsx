@@ -24,10 +24,12 @@ import { SlicerWizard } from "./ui/SlicerWizard.tsx"
 import { useUploads, isActive } from "./ui/useUploads.ts"
 import { UploadsPanel, overallFraction } from "./ui/UploadsPanel.tsx"
 import { FloorPicker } from "./ui/FloorPicker.tsx"
+import { type MenuAt, NamedLocationMenu } from "./ui/NamedLocationMenu.tsx"
 import { ShareMenu, SharePanel } from "./ui/SharePanel.tsx"
 // @deno-types="./dim-app/source/notify.d.ts"
 import { notify } from "./dim-app/source/notify.js"
 import { Alert, AppShell, Badge, Button, EmptyState, Fab, Hud, Icon, IconButton, Modal, Panel, ProgressRing, Row, Segmented, Spinner, toast, Toolbar, TopBar, useMobile } from "dimos-react"
+import * as THREE from "three"
 import { SceneControls, SceneStats, Scene3D, type Viewer } from "dimos-react/three"
 
 const MODES: { id: ViewMode; label: string }[] = [
@@ -89,6 +91,9 @@ export function App() {
     )
 
     const uploads = useUploads(say)
+    /** the 3D view's right-click menu (dimos's named locations) */
+    const [namedMenu, setNamedMenu] = useState<MenuAt | null>(null)
+    const closeNamedMenu = useCallback(() => setNamedMenu(null), [])
 
     // a save job this page watched run → a Desktop notification when it finishes (⌘S, the Save panel or the agent)
     const watchedSave = useRef<number | null>(null)
@@ -128,6 +133,10 @@ export function App() {
 
     // the scene lives for the page's lifetime, on dimos-react's 3D view
     const onViewer = useCallback((viewer: Viewer) => {
+        // a drag pans (Shift+drag orbits: OrbitControls turns a modified pan into an orbit), a right-drag orbits, as in
+        // the Controller; the wheel zooms toward the cursor
+        viewer.controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
+        viewer.controls.zoomToCursor = true
         const created = new MapScene(viewer)
         setScene(created)
         // reachable from the console and the end-to-end tests
@@ -473,6 +482,7 @@ export function App() {
             pushView()
         }
         scene.onViewChange = pushView
+        scene.onContextMenu = ({ x, y, point, named }) => setNamedMenu({ x, y, named, point: point ? [point.x, point.y, point.z] : null })
         scene.onEdit = (selection, change) => {
             const current = sessionRef.current
             if (!current) {
@@ -585,6 +595,13 @@ export function App() {
     useEffect(() => {
         scene?.setFloorBand(floorBand ? [floorBand[0], floorBand[1]] : null)
     }, [scene, floorBand?.[0], floorBand?.[1]])
+    // picking a floor brings the camera to it (a little above its floor, where its objects are)
+    const pickedLevel = ui.floorOnly ? floor?.storeys[Math.min(ui.planFloor, floor.storeys.length - 1)]?.level ?? null : null
+    useEffect(() => {
+        if (pickedLevel !== null) {
+            scene?.focusHeight(pickedLevel + 0.5)
+        }
+    }, [scene, pickedLevel])
 
     // the panes: 3D on the left, 2D on the right; their widths slide between modes
     const [width, setWidth] = useState(0)
@@ -710,9 +727,10 @@ export function App() {
             <section className="view" ref={viewBox}>
                 <div className="pane pane-3d" style={{ width: target[0] }}>
                     <div className="pane-inner" style={{ width: inner[0] }}>
-                        <Scene3D fixedFrame="world" onViewer={onViewer} className="scene3d">
+                        <Scene3D fixedFrame="world" onViewer={onViewer} className="scene3d" viewCube>
                             <SceneStats />
-                            <SceneControls position="top-right" onFrameAll={() => scene?.frameMap()} onTopDown={() => scene?.topDown()} />
+                            {namedMenu && session && <NamedLocationMenu menu={namedMenu} session={session} run={run} onDone={refresh} onClose={closeNamedMenu} />}
+                            <SceneControls position="top-right" className="below-cube" onFrameAll={() => scene?.frameMap()} onTopDown={() => scene?.topDown()} />
                         </Scene3D>
                     </div>
                 </div>

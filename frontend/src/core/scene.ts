@@ -33,6 +33,8 @@ const ACCENT = new THREE.Color(ANNOTATION_COLORS.user)
 const AGENT = new THREE.Color(ANNOTATION_COLORS.agent)
 const SELECTED = new THREE.Color(ANNOTATION_COLORS.selected)
 const PREVIEW = new THREE.Color(ANNOTATION_COLORS.removal)
+/** dimos's named locations: the Controller's label color */
+const NAMED = "#ffd166"
 
 function percentileRange(values: Float32Array, axis: number, low = 0.05, high = 0.95): [number, number] {
     const count = values.length / 3
@@ -134,6 +136,10 @@ export class MapScene {
     onSelect: (selection: Selectable | null) => void = () => {}
     onEdit: (selection: Selectable, change: { center: [number, number, number]; size: [number, number, number]; yaw: number; normal?: [number, number, number] }) => void = () => {}
     onPick: ((point: THREE.Vector3, event: PointerEvent) => void) | null = null
+    /** a right-click that didn't drag (a right-drag orbits): the map point under it (map frame) and the named location
+     * it's on, if any; page coordinates for the menu */
+    onContextMenu: ((menu: { x: number; y: number; point: THREE.Vector3 | null; named: string | null }) => void) | null = null
+    #namedMeshes = new Map<string, THREE.Mesh>()
     onViewChange: () => void = () => {}
     /** called on every camera move, undebounced (the minimap follows it) */
     readonly cameraListeners = new Set<() => void>()
@@ -186,7 +192,18 @@ export class MapScene {
             if (!downAt || this.#dragging || Math.hypot(event.clientX - downAt.x, event.clientY - downAt.y) > 4) {
                 return
             }
+            if (event.button === 2) {
+                this.#contextMenu(event.clientX, event.clientY)
+                return
+            }
             this.#click(event)
+        })
+        canvas.addEventListener("contextmenu", (event) => {
+            event.preventDefault()
+            // a touch long-press (a mouse's right-click is its pointerup above, so a right-drag orbit isn't one)
+            if ((event as PointerEvent).pointerType === "touch") {
+                this.#contextMenu(event.clientX, event.clientY)
+            }
         })
         let viewTimer = 0
         this.viewer.controls.addEventListener("change", () => {
@@ -391,6 +408,27 @@ export class MapScene {
                 this.#labels.place(item.label || "plane", mesh.position.clone().add(new THREE.Vector3(0, 0, item.size[1] / 2 + 0.1)))
             }
         }
+        // dimos's named locations: a pin and its name each (right-click one to rename or delete it)
+        const keepNamed = new Set<string>()
+        for (const item of annotations?.namedLocations ?? []) {
+            keepNamed.add(item.id)
+            let mesh = this.#namedMeshes.get(item.id)
+            if (!mesh) {
+                mesh = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), new THREE.MeshBasicMaterial({ color: NAMED, depthTest: false }))
+                mesh.renderOrder = 6
+                mesh.userData = { kind: "named", id: item.id }
+                this.#namedMeshes.set(item.id, mesh)
+                this.#annotationGroup.add(mesh)
+            }
+            mesh.position.set(...item.position)
+            this.#labels.place(item.name, mesh.position.clone().add(new THREE.Vector3(0, 0, 0.25)), NAMED)
+        }
+        for (const [id, mesh] of this.#namedMeshes) {
+            if (!keepNamed.has(id)) {
+                mesh.removeFromParent()
+                this.#namedMeshes.delete(id)
+            }
+        }
         for (const [id, mesh] of this.#pointMeshes) {
             if (!keepPoints.has(id)) {
                 mesh.removeFromParent()
@@ -582,6 +620,20 @@ export class MapScene {
 
     // ---- picking ----
 
+    #rayAt(x: number, y: number): THREE.Raycaster {
+        const rect = this.viewer.canvas.getBoundingClientRect()
+        const ray = new THREE.Raycaster()
+        ray.setFromCamera(new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1), this.viewer.camera)
+        return ray
+    }
+
+    #contextMenu(x: number, y: number) {
+        const ray = this.#rayAt(x, y)
+        const hit = ray.intersectObjects([...this.#namedMeshes.values()], false)[0]
+        const named = hit ? (hit.object.userData as { id: string }).id : null
+        this.onContextMenu?.({ x, y, named, point: named ? null : this.pickMap(ray.ray.clone().applyMatrix4(this.#rootInverse())) })
+    }
+
     #click(event: PointerEvent) {
         const rect = this.viewer.canvas.getBoundingClientRect()
         const ndc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1)
@@ -637,7 +689,12 @@ export class MapScene {
         const p = new THREE.Vector3()
         const origin = ray.origin
         const direction = ray.direction
+        // only what's drawn: with one floor picked, the floors hidden above it don't take the click
+        const [zMin, zMax] = this.#floorBand ?? [-Infinity, Infinity]
         for (let index = 0; index < positions.length; index += 3) {
+            if (positions[index + 2] < zMin || positions[index + 2] > zMax) {
+                continue
+            }
             p.set(positions[index], positions[index + 1], positions[index + 2])
             const along = (p.x - origin.x) * direction.x + (p.y - origin.y) * direction.y + (p.z - origin.z) * direction.z
             if (along <= 0 || along >= bestDistance) {
@@ -756,6 +813,21 @@ export class MapScene {
 
     get floorBand(): [number, number] | null {
         return this.#floorBand
+    }
+
+    /** Puts the orbit target (what zoom and orbit go around) at height `z` (map frame), the camera moved with it, so
+     * picking a floor brings the view down (or up) to it: zooming then goes in on that floor, not the one it was on. */
+    focusHeight(z: number) {
+        const controls = this.viewer.controls
+        const at = this.toWorld(this.toLocal(controls.target).setZ(z))
+        const delta = at.clone().sub(controls.target)
+        if (delta.lengthSq() < 1e-6) {
+            return
+        }
+        controls.target.add(delta)
+        this.viewer.camera.position.add(delta)
+        controls.update()
+        this.viewer.requestRender()
     }
 
     /** the shaders' clip box: the slice's (x, y in its turned frame) and the floor band's z, intersected */

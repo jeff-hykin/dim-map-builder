@@ -26,6 +26,9 @@ pub const STRING_FINGERPRINT: [u8; 8] = [0x21, 0xbf, 0x37, 0x09, 0x9b, 0x9d, 0x5
 // read off recorded messages (a go2 / mid360 recording's color_image and camera_info)
 pub const IMAGE_FINGERPRINT: [u8; 8] = [0x53, 0x5c, 0xfa, 0xce, 0x1f, 0x4f, 0x57, 0x17];
 pub const CAMERA_INFO_FINGERPRINT: [u8; 8] = [0xaf, 0xb5, 0x01, 0xb0, 0x07, 0x07, 0xa0, 0x2a];
+/// visualization_msgs.InteractiveMarkerUpdate: dimos's named locations (the whole list, each pose a place by name)
+pub const INTERACTIVE_MARKER_UPDATE_FINGERPRINT: [u8; 8] = [0xe4, 0x98, 0x19, 0x0e, 0x02, 0x76, 0xd9, 0x3d];
+pub const INTERACTIVE_MARKER_UPDATE_TYPE: &str = "visualization_msgs.InteractiveMarkerUpdate";
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Header {
@@ -520,6 +523,48 @@ pub fn encode_path(header: &Header, poses: &[PoseStamped]) -> Vec<u8> {
     writer.bytes
 }
 
+/// One of dimos's named locations: a name at a pose in `frame_id`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NamedLocation {
+    pub name: String,
+    pub frame_id: String,
+    pub position: [f64; 3],
+    pub orientation: [f64; 4],
+}
+
+/// The named locations in an InteractiveMarkerUpdate (its poses; dimos sends no markers or erases with them).
+pub fn decode_named_locations(payload: &[u8]) -> Result<Vec<NamedLocation>> {
+    let mut reader = Reader::new(payload);
+    reader.expect_fingerprint(&INTERACTIVE_MARKER_UPDATE_FINGERPRINT)?;
+    let (markers, poses, _erases) = (reader.length()?, reader.length()?, reader.length()?);
+    if markers > 0 {
+        bail!("an InteractiveMarkerUpdate with markers isn't a named locations list");
+    }
+    reader.string()?; // server_id
+    reader.take(8)?; // seq_num
+    reader.u8()?; // type
+    (0..poses)
+        .map(|_| {
+            let header = read_header(&mut reader)?;
+            let pose = read_pose(&mut reader)?;
+            Ok(NamedLocation { name: reader.string()?, frame_id: header.frame_id, position: pose.position, orientation: pose.orientation })
+        })
+        .collect()
+}
+
+/// The whole list as dimos's named locations (an InteractiveMarkerUpdate of poses), stamped `header`'s time.
+pub fn encode_named_locations(header: &Header, server_id: &str, locations: &[NamedLocation]) -> Vec<u8> {
+    let mut writer = Writer::new(&INTERACTIVE_MARKER_UPDATE_FINGERPRINT);
+    writer.i32(0).i32(locations.len() as i32).i32(0).string(server_id);
+    writer.bytes.extend_from_slice(&0i64.to_be_bytes());
+    writer.u8(1);
+    for location in locations {
+        let stamped = Header { frame_id: location.frame_id.clone(), ..header.clone() };
+        writer.header(&stamped).pose(&Pose { position: location.position, orientation: location.orientation }).string(&location.name);
+    }
+    writer.bytes
+}
+
 pub fn encode_tf(edges: &[TfEdge]) -> Vec<u8> {
     let mut writer = Writer::new(&TF_FINGERPRINT);
     writer.i32(edges.len() as i32);
@@ -535,6 +580,21 @@ pub fn encode_tf(edges: &[TfEdge]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// dimos's own bytes: InteractiveMarkerUpdate([named_pose("kitchen", PoseStamped(ts=1700000000.5, frame_id="map",
+    /// position=[1, 2, 0], orientation=[0, 0, 0.7071067811865476, 0.7071067811865476])), named_pose("dock",
+    /// PoseStamped(ts=1700000001.0, frame_id="map", position=[-3.5, 0.25, 0.1]))], server_id="NamedLocations", seq_num=7)
+    const DIMOS_NAMED_LOCATIONS: &str = "e498190e0276d93d0000000000000002000000000000000f4e616d65644c6f636174696f6e7300000000000000000701000000016553f1001dcd6500000000046d6170003ff000000000000040000000000000000000000000000000000000000000000000000000000000003fe6a09e667f3bcd3fe6a09e667f3bcd000000086b69746368656e00000000016553f10100000000000000046d617000c00c0000000000003fd00000000000003fb999999999999a0000000000000000000000000000000000000000000000003ff000000000000000000005646f636b00";
+
+    #[test]
+    fn named_locations_read_dimos_bytes_and_round_trip() {
+        let bytes: Vec<u8> = (0..DIMOS_NAMED_LOCATIONS.len()).step_by(2).map(|i| u8::from_str_radix(&DIMOS_NAMED_LOCATIONS[i..i + 2], 16).unwrap()).collect();
+        let locations = decode_named_locations(&bytes).unwrap();
+        assert_eq!(locations.iter().map(|l| (l.name.as_str(), l.frame_id.as_str(), l.position)).collect::<Vec<_>>(), vec![("kitchen", "map", [1.0, 2.0, 0.0]), ("dock", "map", [-3.5, 0.25, 0.1])]);
+        assert_eq!(locations[0].orientation, [0.0, 0.0, 0.7071067811865476, 0.7071067811865476]);
+        let again = decode_named_locations(&encode_named_locations(&Header::at(5.0, "x"), "map_builder", &locations)).unwrap();
+        assert_eq!(again, locations);
+    }
 
     #[test]
     fn round_trips() {
