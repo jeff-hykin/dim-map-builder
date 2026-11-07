@@ -326,9 +326,10 @@ pub fn run_global(data_dir: &Path, path: &Path, options: &GlobalOptions, point_l
         let input = mapping::rrd::RrdInput { recording: &recording, tree: &tree, world: &result.world_frame, map: &decimated, raw_path: &result.raw_path, corrected_path: &result.corrected_path, tags: tag_data };
         rrd_path = Some(mapping::rrd::write(path, &input, &options.rrd, &mut |p| rrd_share.send(p), cancel)?.display().to_string());
     }
+    let start = recording.time_range()?.map_or(0.0, |r| r.0);
     drop(recording);
     share.send(Progress { overall: Some(0.98), stage: "Writing the global map".into(), stage_index: 0, stage_count: 1, done: 0, total: 1, note: format!("{} points", decimated.len()) });
-    let lcm = mapping::global::write(path, &decimated, &result.world_frame, generation())?;
+    let lcm = mapping::global::write(path, &decimated, &result.world_frame, start, generation())?;
     let record = GlobalRecord {
         at: now_seconds(),
         points: decimated.len(),

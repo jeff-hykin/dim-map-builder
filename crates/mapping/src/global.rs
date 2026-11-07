@@ -1,6 +1,6 @@
 //! "Global map" outputs: the built map decimated (a final voxel pass, then statistical outlier removal, icp_stitch's
-//! `.pc2.lcm` recipe) and written twice: into the recording as `map_cloud` (one PointCloud2 stamped when it was
-//! written, in the world frame: dimos's relocalization loads the last `map_cloud` of a .db/.mcap as its premap) and
+//! `.pc2.lcm` recipe) and written twice: into the recording as `map_cloud` (one PointCloud2 at the recording's start,
+//! in the world frame: dimos's relocalization loads the last `map_cloud` of a .db/.mcap as its premap) and
 //! beside it as `<name>_map_cloud.pc2.lcm` (that one LCM-encoded PointCloud2).
 use anyhow::Result;
 use dimos_recording::lcm::{self, Header};
@@ -106,13 +106,13 @@ pub fn lcm_path(recording: &Path) -> PathBuf {
     recording.with_file_name(format!("{stem}_{}.pc2.lcm", crate::pipeline::GLOBAL_MAP_STREAM))
 }
 
-/// Writes the map into the recording (`map_cloud` at `generation`, so it's the newest map whatever a Save wrote before)
+/// Writes the map into the recording (`map_cloud` at `ts`, the recording's start, on a channel of generation `generation`)
 /// and beside it (the .pc2.lcm). Returns the .pc2.lcm's path.
-pub fn write(path: &Path, points: &[[f32; 3]], world_frame: &str, generation: f64) -> Result<PathBuf> {
-    let payload = lcm::encode_xyz_cloud(&Header::at(generation, world_frame), points, None);
+pub fn write(path: &Path, points: &[[f32; 3]], world_frame: &str, ts: f64, generation: f64) -> Result<PathBuf> {
+    let payload = lcm::encode_xyz_cloud(&Header::at(ts, world_frame), points, None);
     match dimos_recording::format_of(path)? {
-        Format::Db => db::write_stream(&mut db::Connection::open(path)?, crate::pipeline::GLOBAL_MAP_STREAM, lcm::POINT_CLOUD2_TYPE, &[(generation, payload.clone())])?,
-        Format::Mcap => mcap_io::append_generated(path, &[mcap_io::GeneratedChannel::lcm(crate::pipeline::GLOBAL_MAP_STREAM, lcm::POINT_CLOUD2_TYPE, generation, vec![(generation, payload.clone())])])?,
+        Format::Db => db::write_stream(&mut db::Connection::open(path)?, crate::pipeline::GLOBAL_MAP_STREAM, lcm::POINT_CLOUD2_TYPE, &[(ts, payload.clone())])?,
+        Format::Mcap => mcap_io::append_generated(path, &[mcap_io::GeneratedChannel::lcm(crate::pipeline::GLOBAL_MAP_STREAM, lcm::POINT_CLOUD2_TYPE, generation, vec![(ts, payload.clone())])])?,
     }
     let beside = lcm_path(path);
     let partial = beside.with_extension("partial");
@@ -145,12 +145,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("walk.db");
         db::write_stream(&mut db::Connection::open(&path).unwrap(), "x", lcm::STRING_TYPE, &[(5.0, lcm::encode_string("x"))]).unwrap();
-        let beside = write(&path, &[[1.0, 2.0, 3.0]], "world", 5.0).unwrap();
+        let beside = write(&path, &[[1.0, 2.0, 3.0]], "world", 5.0, 100.0).unwrap();
         assert_eq!(beside.file_name().unwrap(), "walk_map_cloud.pc2.lcm");
         let cloud = lcm::decode_point_cloud2(&std::fs::read(&beside).unwrap()).unwrap();
         assert_eq!((cloud.width, cloud.header.frame_id.as_str()), (1, "world"));
         let recording = dimos_recording::Recording::open(&path).unwrap();
-        assert_eq!(recording.latest(crate::pipeline::GLOBAL_MAP_STREAM).unwrap().unwrap().0, 5.0);
+        assert_eq!(recording.latest(crate::pipeline::GLOBAL_MAP_STREAM).unwrap().unwrap().0, 5.0, "at the recording's start, not the generation");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2, "nothing else left beside it");
     }
 }
