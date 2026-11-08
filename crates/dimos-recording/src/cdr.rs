@@ -289,3 +289,16 @@ pub mod tests {
         assert_eq!((info.width, info.d.len(), info.k[2]), (1280, 2, 640.0));
     }
 }
+
+/// `foxglove_msgs/msg/CompressedVideo` as ROS 2 CDR: timestamp, frame_id, data, format. (dimos records these over
+/// LCM, so this is for recordings that came from a ROS 2 bag.)
+pub fn decode_compressed_video(payload: &[u8]) -> Result<crate::video::Unit> {
+    let mut cdr = Cdr::new(payload)?;
+    let sec = cdr.u32()? as i32;
+    let nanosec = cdr.u32()?;
+    let frame_id = cdr.string()?;
+    let length = cdr.u32()? as usize;
+    let data = cdr.take(length)?.to_vec();
+    let format = cdr.string()?;
+    Ok(crate::video::Unit { ts: sec as f64 + nanosec as f64 * 1e-9, frame_id, format, data })
+}

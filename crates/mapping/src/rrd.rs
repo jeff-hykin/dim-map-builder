@@ -56,7 +56,7 @@ pub fn default_streams(recording: &Recording) -> Result<Vec<RrdStream>> {
         .into_iter()
         .filter(|s| s.count > 0)
         .filter_map(|s| match s.kind {
-            Kind::Image => Some(RrdStream { enabled: s.name.contains("color") && !s.name.contains("depth"), hz: 2.0, name: s.name }),
+            Kind::Image | Kind::Video => Some(RrdStream { enabled: s.name.contains("color") && !s.name.contains("depth"), hz: 2.0, name: s.name }),
             Kind::Cloud if s.name != crate::pipeline::GLOBAL_MAP_STREAM => Some(RrdStream { enabled: false, hz: 2.0, name: s.name }),
             Kind::Odometry | Kind::PoseStamped if !s.name.contains("april_tags") => Some(RrdStream { enabled: false, hz: 10.0, name: s.name }),
             _ => None,
@@ -172,7 +172,7 @@ pub fn write(path: &Path, input: &RrdInput, options: &RrdOptions, progress: &mut
         let mut seen = 0u64;
         let entity = format!("world/{}", stream.name.trim_start_matches('/').replace('/', "_"));
         let mut camera_info: Option<dimos_recording::lcm::CameraInfo> = None;
-        if info.kind == Kind::Image {
+        if info.kind.is_camera() {
             camera_info = crate::tags::camera_info(input.recording, &stream.name, "").ok().map(|(_, info)| info);
         }
         let mut path_points: Vec<[f32; 3]> = Vec::new();

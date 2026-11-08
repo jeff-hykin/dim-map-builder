@@ -368,7 +368,7 @@ pub fn status(data_dir: &Path, path: &Path) -> Result<Value> {
     let streams = recording.streams()?;
     let tree = mapping::frames::tf_tree(&recording)?;
     let analysis = mapping::frames::analyze(&recording, &tree)?;
-    let images: Vec<Value> = streams.iter().filter(|s| s.kind == dimos_recording::Kind::Image && s.count > 0).map(|s| json!({ "name": s.name, "count": s.count })).collect();
+    let images: Vec<Value> = streams.iter().filter(|s| s.kind.is_camera() && s.count > 0).map(|s| json!({ "name": s.name, "count": s.count })).collect();
     let camera = tags::pick_camera(&recording, "").ok();
     let intrinsics = camera.as_ref().map(|camera| tags::camera_info(&recording, camera, "").map(|(stream, info)| json!({ "stream": stream, "frame": info.header.frame_id, "width": info.width, "height": info.height })).map_err(|e| format!("{e:#}")));
     let count = |name: &str| streams.iter().find(|s| s.name == name).map_or(0, |s| s.count);

@@ -1,6 +1,7 @@
 //! Reading and writing dimos recordings (`.db` memory2 SQLite and `.mcap`) without dimos: the message types a map
 //! needs (clouds, tf, odometry), in both LCM (dimos's wire format) and ROS 2 CDR (what the Live Viewer's recorder
 //! transcodes to). Shared by dim-map-builder's server; the Live Viewer's recorder writes the files it reads.
+pub mod av1;
 pub mod cdr;
 pub mod db;
 pub mod lcm;
@@ -9,6 +10,7 @@ pub mod mcap_index;
 pub mod mcap_io;
 pub mod points;
 pub mod tf_edit;
+pub mod video;
 
 use anyhow::{bail, Context, Result};
 use lcm::{Odometry, PoseStamped, TfEdge};
@@ -26,6 +28,8 @@ pub enum Kind {
     OccupancyGrid,
     Text,
     Image,
+    /// a camera recorded as video: a frame only decodes with the ones before it (`video`)
+    Video,
     CameraInfo,
     Other,
 }
@@ -44,8 +48,15 @@ impl Kind {
             "std_msgs.String" => Kind::Text,
             "sensor_msgs.Image" | "sensor_msgs.CompressedImage" => Kind::Image,
             "sensor_msgs.CameraInfo" => Kind::CameraInfo,
+            _ if video::is_video_type(&normalized) => Kind::Video,
             _ => Kind::Other,
         }
+    }
+
+    /// Does this stream hold camera frames? Stills and video both do, and everything that looks for a camera has to
+    /// agree on that -- a check that knew only about stills is what left a video-only recording with no camera at all.
+    pub fn is_camera(self) -> bool {
+        matches!(self, Kind::Image | Kind::Video)
     }
 }
 
@@ -191,7 +202,14 @@ impl Recording {
     }
 
     /// Every message of `stream` decoded, with the row's stored pose (db only). `each` returns false to stop.
+    ///
+    /// A camera recorded as video comes through here as `Message::Image` like any other, so nothing that reads a
+    /// camera has to know the difference -- but its frames are decoded a group at a time, because a video frame
+    /// cannot be decoded on its own (`video`).
     pub fn for_each(&self, stream: &str, mut each: impl FnMut(f64, Message, Option<[f64; 7]>) -> Result<bool>) -> Result<()> {
+        if self.streams()?.iter().any(|s| s.name == stream && s.kind == Kind::Video) {
+            return self.for_each_video_frame(stream, &mut |ts, image| each(ts, Message::Image(image), None));
+        }
         match &self.backend {
             Backend::Db(connection, streams, _) => {
                 let info = streams.iter().find(|s| s.name == stream).with_context(|| format!("no stream {stream}"))?;
@@ -206,6 +224,30 @@ impl Recording {
                 _ => Ok(true),
             }),
         }
+    }
+
+    /// Every frame of a camera recorded as video, decoded in order.
+    ///
+    /// The decoder carries its state across the stream, so a frame stored as the difference from earlier ones
+    /// decodes where it stands. Frames the decoder has no picture for are skipped rather than reported: at the start
+    /// of a recording that is normal, because a recorder begins wherever the user pressed record and those first
+    /// frames reference pictures the recording does not contain.
+    pub fn for_each_video_frame(&self, stream: &str, each: &mut dyn FnMut(f64, lcm::Image) -> Result<bool>) -> Result<()> {
+        let mut frames = video::Frames::new()?;
+        self.for_each_payload_of(&[stream], None, |_, _, encoding, payload| {
+            let Ok(unit) = video::decode_unit(encoding, payload) else {
+                return Ok(true); // one unreadable message doesn't end a recording
+            };
+            match frames.push(&unit)? {
+                Some(image) => each(unit.ts, image),
+                None => Ok(true),
+            }
+        })?;
+        let (decoded, skipped) = frames.counts();
+        if decoded == 0 {
+            bail!("{stream} has no decodable frames ({skipped} frames, none of them with a keyframe to build on)");
+        }
+        Ok(())
     }
 
     /// Every message of `streams` undecoded: `each(which of streams, log time, encoding ("cdr" or "lcm"), payload)`,

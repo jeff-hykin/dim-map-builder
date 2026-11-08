@@ -26,7 +26,8 @@ pub const GROUPED_STREAM: &str = "april_tags";
 pub struct TagOptions {
     /// the image stream; empty = a `color_image`-like one
     pub camera_stream: String,
-    /// the CameraInfo stream; empty = `<camera>_camera_info`, else `camera_info`, else any CameraInfo stream
+    /// the CameraInfo stream; empty = `<camera>_info`, `<camera>_camera_info`, `<camera>/camera_info` or `camera_info`,
+    /// and the recording's only CameraInfo when it has just one
     pub camera_info_stream: String,
     /// the tag's black square, edge to edge (m)
     pub marker_length: f64,
@@ -78,7 +79,7 @@ pub struct TagResult {
 
 /// The camera stream: the one asked for, else an image stream named like a color camera, else the biggest one.
 pub fn pick_camera(recording: &Recording, wanted: &str) -> Result<String> {
-    let images: Vec<_> = recording.streams()?.into_iter().filter(|s| s.kind == Kind::Image && s.count > 0).collect();
+    let images: Vec<_> = recording.streams()?.into_iter().filter(|s| s.kind.is_camera() && s.count > 0).collect();
     if !wanted.is_empty() {
         return images.iter().find(|s| s.name == wanted).map(|s| s.name.clone()).with_context(|| format!("no image stream named {wanted}"));
     }
@@ -88,17 +89,26 @@ pub fn pick_camera(recording: &Recording, wanted: &str) -> Result<String> {
 }
 
 /// The CameraInfo for `camera`: (stream, intrinsics).
+///
+/// The names are matched without their leading slash, and a recording with more than one camera is never given
+/// whichever intrinsics came first: posing a tag with another camera's K puts it in the wrong place, and says
+/// nothing about it, so an unmatched camera is an error instead.
 pub fn camera_info(recording: &Recording, camera: &str, wanted: &str) -> Result<(String, lcm::CameraInfo)> {
     let infos: Vec<String> = recording.streams()?.into_iter().filter(|s| s.kind == Kind::CameraInfo && s.count > 0).map(|s| s.name).collect();
+    let bare = |name: &str| name.trim_start_matches('/').to_string();
     let tried: Vec<String> = if wanted.is_empty() {
-        let base = camera.trim_end_matches("/image_raw").trim_end_matches("/image").trim_end_matches("/compressed");
-        let mut tried = vec![format!("{camera}_camera_info"), format!("{base}/camera_info"), "camera_info".into(), "/camera_info".into()];
-        tried.extend(infos.iter().cloned());
+        let base = bare(camera.trim_end_matches("/image_raw").trim_end_matches("/image").trim_end_matches("/compressed"));
+        // `front_camera` publishes `front_camera_info` on the m20, `<camera>/camera_info` under ROS 2
+        let mut tried = vec![format!("{base}_info"), format!("{base}_camera_info"), format!("{base}/camera_info"), "camera_info".into()];
+        if infos.len() == 1 {
+            tried.push(bare(&infos[0])); // only one camera in the recording: it is that one's
+        }
         tried
     } else {
-        vec![wanted.to_string()]
+        vec![bare(wanted)]
     };
-    for name in tried.iter().filter(|name| infos.contains(name)) {
+    let named: Vec<String> = tried.iter().filter_map(|want| infos.iter().find(|name| bare(name) == *want)).cloned().collect();
+    for name in &named {
         let mut found = None;
         recording.for_each(name, |_, message, _| {
             if let Message::CameraInfo(info) = message {

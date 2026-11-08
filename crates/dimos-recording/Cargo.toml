@@ -9,6 +9,12 @@ license = "Apache-2.0"
 anyhow = "1"
 lz4_flex = { version = "0.11", default-features = false, features = ["frame", "std"] }
 mcap = { version = "0.25", default-features = false, features = ["lz4", "zstd"] }
+# H.264 (cameras recorded as video), built from source into this binary: the robot gets one static musl
+# binary, so a decoder it has to find on the machine is not an option
+openh264 = "0.9"
+# AV1, the same way: rav1d is the pure-Rust port of dav1d, so it links into the static musl build with no system
+# library. Its hand-written assembly is behind `av1-asm` because on x86 building that shells out to nasm
+rav1d = { version = "1.1", default-features = false, features = ["bitdepth_8"] }
 memmap2 = "0.9"
 rayon = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -18,3 +24,8 @@ zstd = "0.13"
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# dav1d's hand-written assembly for AV1 decoding (several times the pure-Rust fallback). Free on aarch64, where it
+# assembles with the C compiler already in use; on x86 it needs nasm on the build machine
+av1-asm = ["rav1d/asm"]
