@@ -14,6 +14,7 @@ pub mod frames;
 pub mod global;
 pub mod graph;
 pub mod icp;
+pub mod names;
 pub mod pgo;
 pub mod pipeline;
 pub mod pointlio;

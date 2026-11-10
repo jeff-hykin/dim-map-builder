@@ -1,9 +1,10 @@
-// Save: write everything into the opened recording (new map/* streams beside its data), see what's written, start over.
+// Save: write everything into the opened recording under the map's name (new map/<name>/* streams beside its data),
+// name the map, see what's written, start over.
 import { useState } from "react"
 import { api } from "../core/api.ts"
 import { JobCard } from "./JobCard.tsx"
 import { ReadOnlyAlert } from "./ReadOnlyAlert.tsx"
-import { Badge, Button, Card, Column, Heading, Kbd, Row, Text } from "dimos-react"
+import { Badge, Button, Card, Column, Field, Heading, Kbd, Row, Text, TextInput } from "dimos-react"
 import type { Context } from "./context.ts"
 
 export function SavePanel({ context }: { context: Context }) {
@@ -14,7 +15,8 @@ export function SavePanel({ context }: { context: Context }) {
     }
     const a = session.annotations
     const db = session.recordingPath.endsWith(".db")
-    const name = (suffix: string) => `map/${suffix}`
+    // a .db stream is a SQLite table name, so it can't hold slashes; the name is the same either way
+    const name = (leaf: string) => db ? `map_${session.mapName}_${leaf}` : `map/${session.mapName}/${leaf}`
     const job = session.job?.kind === "save" ? session.job : null
     return (
         <Column gap={10}>
@@ -22,7 +24,11 @@ export function SavePanel({ context }: { context: Context }) {
                 Written as new {db ? "streams" : "channels"} in {session.name}, beside its own data (which isn't touched). Saving again {db ? "replaces them" : "appends newer ones in place (the newest is what opens)"}. Your working session is always kept, saved or not.
             </Text>
             {!session.writable && <ReadOnlyAlert session={session} doing="Saving" refresh={context.refresh} />}
+            <Field inline label="map name" hint={`A recording can hold several maps of the same space. Everything is saved under this name, and the map's frame is map/${session.mapName}. Letters, digits and underscores.`}>
+                <TextInput size="sm" mono value={session.mapName} onCommit={(next: string) => run(api.setMapName(session.id, next))} placeholder="e.g. v1" data-map-name />
+            </Field>
             <Column gap={1}>
+                <Text small mono muted>{name("cloud")} · PointCloud2 · the map dimos relocalizes against</Text>
                 <Text small mono muted>{name("voxels")} · PointCloud2 · {session.voxels.toLocaleString()} voxels</Text>
                 <Text small mono muted>{name("path")} · Path · the loop-closed path</Text>
                 {session.plans.map((plan) => (
@@ -34,6 +40,7 @@ export function SavePanel({ context }: { context: Context }) {
                     {name("annotations")} · String (JSON) · {a.boxes.length} boxes, {a.planes.length} planes, {a.points.length} points, {a.planPoints.length} named spots, {a.areas.length} areas ({a.areas.filter((x) => x.kind === "no-go").length} no-go), {a.prisms?.length ?? 0} polygons
                 </Text>
                 <Text small mono muted>{name("views")} · String (JSON) · {a.views?.length ?? 0} saved 2D views</Text>
+                <Text small mono muted>{name("named_locations")} · InteractiveMarkerUpdate · {a.namedLocations?.length ?? 0} places</Text>
             </Column>
             <Row>
                 <Button size="sm" variant="primary" data-action="save" disabled={session.job?.state === "running"} onClick={() => run(api.save(session.id))}>

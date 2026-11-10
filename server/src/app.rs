@@ -145,8 +145,11 @@ impl App {
 
     /// What opening reads from the recording: an earlier save to restore (else `fresh`), whether it needs
     /// Point-LIO's odometry first, and its own `global_map` stream if it has one.
-    fn read_for_open(path: &std::path::Path, fresh: Session) -> Result<(Session, Option<crate::session::MapData>, Option<String>, Option<String>)> {
+    fn read_for_open(path: &std::path::Path, mut fresh: Session) -> Result<(Session, Option<crate::session::MapData>, Option<String>, Option<String>)> {
         let recording = Recording::open(path)?;
+        // a new map gets the first name the recording hasn't got one under (v1, else v2, ...); restoring a saved map
+        // below takes that map's name instead
+        fresh.map_name = mapping::names::default_for(&recording);
         let odometry_pending = crate::pipeline::odometry_pending(&recording.stream_list()?, |s| recording.has_messages(&s.name).unwrap_or(false));
         let recorded_map = mapping::recorded::find(&recording)?;
         let (mut session, map) = match persist::load(&recording, fresh.clone()) {
@@ -392,7 +395,8 @@ impl App {
                 Self::require_writable(&shared)?;
                 let path = shared.lock().unwrap().session.recording_path.clone();
                 shared.lock().unwrap().session.history.push(format!("Estimating the odometry with Point-LIO ({reason})"));
-                let record = crate::pipeline::run_odometry(&app.store.dir, std::path::Path::new(&path), crate::pipeline::Share::whole(report).part(0.0, ODOMETRY_SHARE, &[]), cancel)?;
+                let map = shared.lock().unwrap().session.map().to_string();
+                let record = crate::pipeline::run_odometry(&app.store.dir, std::path::Path::new(&path), &map, crate::pipeline::Share::whole(report).part(0.0, ODOMETRY_SHARE, &[]), cancel)?;
                 notes = record.notes.clone();
                 app.invalidate_preview(&session_id);
                 let mut ws = shared.lock().unwrap();
@@ -591,6 +595,47 @@ mod tests {
         assert!(app.store.last_open().is_none());
         assert!(app.mutate(&id, |w| w.add_point("x", [0.0; 3], "user")).is_err());
         assert!(app.store.load(&id).unwrap().is_none());
+    }
+
+    /// opening names the map: v1 for a recording with none, the next free v<n> after that, and the saved map's own
+    /// name when it is reopened
+    #[test]
+    fn opening_names_the_map_v1_then_counts_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let recording = dir.path().join("r.db");
+        let mut db = dimos_recording::db::Connection::open(&recording).unwrap();
+        let scan = dimos_recording::lcm::encode_xyz_cloud(&dimos_recording::lcm::Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        dimos_recording::db::write_stream(&mut db, "lidar", "sensor_msgs.PointCloud2", &[(1.0, scan)]).unwrap();
+        drop(db);
+        let path = recording.display().to_string();
+        let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let held = app.open("r.db", &path, "r", true).unwrap();
+        let id = held.lock().unwrap().session.id.clone();
+        assert_eq!(held.lock().unwrap().session.map_name, "v1", "the first map of a recording");
+
+        // saved as v1 and reopened: the same name back
+        app.mutate(&id, |w| {
+            w.set_map(crate::workspace::tests::room_map());
+            Ok(())
+        })
+        .unwrap();
+        persist::save(&held.lock().unwrap().clone(), |_, _| {}).unwrap();
+        let reopened = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        reopened.discard(&id).unwrap();
+        let again = reopened.open("r.db", &path, "r", true).unwrap();
+        assert_eq!(again.lock().unwrap().session.map_name, "v1", "reopening restores the map it was saved as");
+
+        // a second map of the same space: the name counts up
+        let fresh = App::new(dir.path().join("data2"), dir.path().to_path_buf());
+        let held2 = fresh.open("r.db", &path, "r", true).unwrap();
+        assert_eq!(held2.lock().unwrap().session.map_name, "v1", "a restored save keeps its name");
+        let id2 = held2.lock().unwrap().session.id.clone();
+        fresh.mutate(&id2, |w| w.set_map_name("v1")).unwrap();
+        fresh.mutate(&id2, |w| w.set_map_name("office")).unwrap();
+        persist::save(&held2.lock().unwrap().clone(), |_, _| {}).unwrap();
+        let recording_now = Recording::open(std::path::Path::new(&path)).unwrap();
+        assert_eq!(mapping::names::taken(&recording_now), ["office", "v1"]);
+        assert_eq!(mapping::names::default_for(&recording_now), "v2", "a next new map");
     }
 
     /// a raw lidar + IMU recording still offers Point-LIO after a restart restores its session

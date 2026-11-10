@@ -39,6 +39,7 @@ the user's camera sees now), `"all"`, a box, or the page's form `{ kind: "all" |
 | `POST api/sessions/{id}/op` | `{ op, region, params, preview }`: floating, outliers, floor, walls, keepWalls, cropOutside, deleteInside, cropHeight |
 | `POST api/sessions/{id}/transform` | `{ kind: "rotate", degrees }` / `{ kind: "level" }` / `{ kind: "set", transform }` |
 | `GET api/sessions/{id}/floor` | the local floor per storey |
+| `PUT api/sessions/{id}/map-name` | `{ name }`: the name the map is saved under (every stream of it goes under it; its tf frame is `map/<name>`). A plain identifier — a letter, then letters, digits and underscores — refused rather than changed when it isn't one |
 | `PUT api/sessions/{id}/slice` | the slicer's view (or `null`) |
 | `GET api/sessions/{id}/alignment` | `{ yaw }` that lines the walls up with x and y |
 | `POST api/sessions/{id}/modify` | `{ tool: "erase" \| "draw" \| "straighten" \| "fill_floor", floor, ... }` |

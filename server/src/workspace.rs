@@ -649,7 +649,7 @@ impl Workspace {
         Ok(id)
     }
 
-    /// A named location at `position` (map frame), in the frame the list already has (else "map").
+    /// A named location at `position` (map frame), in the frame the list already has (else the map's own, `map/<name>`).
     pub fn add_named_location(&mut self, name: &str, position: [f32; 3]) -> Result<String> {
         let name = name.trim();
         if name.is_empty() {
@@ -658,7 +658,7 @@ impl Workspace {
         if self.session.annotations.named_locations.iter().any(|l| l.name == name) {
             bail!("there's already a location named \"{name}\"");
         }
-        let frame = self.session.annotations.named_locations.first().map_or(crate::persist::MAP_FRAME.to_string(), |l| l.frame.clone());
+        let frame = self.session.annotations.named_locations.first().map_or_else(|| mapping::names::frame(self.session.map()), |l| l.frame.clone());
         let id = new_id("place-");
         let location = NamedLocation { id: id.clone(), name: name.into(), position, frame };
         self.edit_annotations(&format!("Add named location \"{name}\""), |a| {
@@ -727,6 +727,19 @@ impl Workspace {
     }
 
     /// Set or clear the slicer's view (an annotation: undoable, saved with the map; it removes nothing).
+    /// What the map is saved under inside the recording (crate::session::Session::set_map_name): refused when it
+    /// isn't a plain identifier, since it becomes the map's tf frame and part of every stream name. Returns the name
+    /// as taken.
+    pub fn set_map_name(&mut self, name: &str) -> Result<String> {
+        let before = self.session.map().to_string();
+        self.session.set_map_name(name)?;
+        if self.session.map_name != before {
+            self.session.revision += 1;
+            self.session.history.push(format!("The map is saved as \"{}\" (was \"{before}\")", self.session.map_name));
+        }
+        Ok(self.session.map_name.clone())
+    }
+
     pub fn set_slice(&mut self, slice: Option<crate::session::Slice>) -> Result<()> {
         let label = if slice.is_some() { "Slice the map" } else { "Reset the slice" };
         self.edit_annotations(label, |a| {

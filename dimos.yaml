@@ -674,6 +674,32 @@ provides:
                         schema:
                             type: string
                         description: session id, or `current` (the recording open in the page)
+        /api/sessions/{id}/map-name:
+            put:
+                description: >-
+                    Set the name the map is saved under inside the recording: every stream of it goes under that name (map/<name>/voxels,
+                    map/<name>/cloud, map/<name>/named_locations, ... in an .mcap; map_<name>_voxels, ... in a .db) and
+                    its tf frame is map/<name>. It has to be a plain identifier (a letter, then letters, digits and underscores)
+                    and is never silently changed into one. Returns { mapName }.
+                x-when: you want to save the map under a name of its own (a recording can hold several)
+                parameters:
+                    -   name: id
+                        in: path
+                        required: true
+                        schema:
+                            type: string
+                        description: session id, or `current` (the recording open in the page)
+                requestBody:
+                    content:
+                        application/json:
+                            schema:
+                                type: object
+                                properties:
+                                    name:
+                                        type: string
+                                        description: the map's name, e.g. v1
+                                required:
+                                    -   name
         /api/sessions/{id}/alignment:
             get:
                 summary: 'The suggested yaw (radians) that lines the walls up with x and y: { yaw }.'

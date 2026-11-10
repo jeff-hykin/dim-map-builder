@@ -1,20 +1,26 @@
 //! "Save into recording": the map and everything drawn on it, written into the opened file as new streams (.db) /
-//! channels (.mcap, message_encoding "lcm") under `map/`, next to the recording's own data, as dimos message types
-//! where one fits (schemas: docs/schema.md):
-//!   map/voxels       sensor_msgs.PointCloud2  the edited voxel map, frame "map"
-//!   map/path         nav_msgs.Path            the loop-closed sensor path, frame "map"
-//!   map/annotations  std_msgs.String          JSON: map ← world transform, boxes, planes, points, polygons, floors,
-//!                                             named points, areas (no-go zones), saved views, build summary
-//!   map/views        std_msgs.String          JSON: the saved 2D views (each a storey and a height band)
-//!   map/slice        std_msgs.String          JSON: the slicer's view {zMin, zMax, yaw, xMin, xMax, yMin, yMax} or null
-//!   map/floor_<n>    nav_msgs.OccupancyGrid   storey n's occupancy grid, when exported; origin z = the floor
-//! and the edited map again as `map_cloud` (the stream dimos's relocalization loads its premap from: the last one wins,
-//! so a Save replaces what Generate wrote there), and the named locations as `/named_locations`
-//! (visualization_msgs.InteractiveMarkerUpdate, the whole list, in the map's coordinates: what the relocalization
-//! seeds its locations from, so the saved map is a premap with its places).
-//! Saving again replaces them in a .db (and drops the `map_builder_*` streams older versions wrote); in an .mcap it
-//! appends a newer message to each, in place (no copy of the recording), and loading takes the newest. Opening a recording that
-//! has them (and no working session) restores the session from them; older `map_builder` saves still open.
+//! channels (.mcap, message_encoding "lcm") under the map's name, next to the recording's own data, as dimos message
+//! types where one fits (schemas: docs/schema.md). A recording can hold several maps of the same space, so each one
+//! is saved under a name of its own (`v1`, `v2`, ... by default: crate names), and every stream of it goes under that
+//! name — `map/<name>/<leaf>` in an .mcap, `map_<name>_<leaf>` in a .db (a .db stream is a SQLite table name, so it
+//! can't hold slashes; dimos reads an .mcap topic with its slashes folded to underscores, so a reader sees the same
+//! stream either way). The map's tf frame is `map/<name>` in both.
+//!   <map>/cloud            sensor_msgs.PointCloud2  the edited map, what dimos's relocalization loads as its premap
+//!   <map>/voxels           sensor_msgs.PointCloud2  the edited voxel map, frame "map/<name>"
+//!   <map>/path             nav_msgs.Path            the loop-closed sensor path, frame "map/<name>"
+//!   <map>/annotations      std_msgs.String          JSON: map ← world transform, boxes, planes, points, polygons,
+//!                                                   floors, named points, areas (no-go zones), views, build summary
+//!   <map>/views            std_msgs.String          JSON: the saved 2D views (each a storey and a height band)
+//!   <map>/slice            std_msgs.String          JSON: the slicer's view {zMin, zMax, yaw, xMin, xMax, yMin, yMax} or null
+//!   <map>/floor_<n>        nav_msgs.OccupancyGrid   storey n's occupancy grid, when exported; origin z = the floor
+//!   <map>/named_locations  visualization_msgs.InteractiveMarkerUpdate  the whole list of places, in the map's
+//!                                                   coordinates: what the relocalization seeds its locations from,
+//!                                                   so the saved map is a premap with its places
+//! Saving again replaces that map's streams in a .db (and drops the `map_builder_*` streams older versions wrote); in
+//! an .mcap it appends a newer message to each, in place (no copy of the recording), and loading takes the newest.
+//! Opening a recording that has a saved map (and no working session) restores the session from it; the flat `map/...`
+//! saves of versions before map names, and the older `map_builder` ones, still open — nothing written before map
+//! names is moved or removed.
 use crate::session::{Annotations, BuildSummary, MapData, Session, Transform};
 use crate::workspace::Workspace;
 use anyhow::{bail, Context, Result};
@@ -25,7 +31,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const SCHEMA: &str = "dimos.map_builder.v1";
-pub const MAP_FRAME: &str = "map";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,14 +51,47 @@ pub struct SavedState {
     pub erased: Vec<[f32; 3]>,
 }
 
-pub const PREFIX: &str = "map/";
-
-/// dimos's named locations stream (the recorder's .mcap channel; a .db stream has no leading slash)
+/// dimos's own named locations stream, as the robot recorded it (the recorder's .mcap channel; a .db stream has no
+/// leading slash). A map's own list is written under its name instead; this one is only ever read, to seed it.
 const NAMED_LOCATIONS: [&str; 2] = ["/named_locations", "named_locations"];
 
-/// Reads the recording's newest /named_locations into the session, once (after that the session's list is the truth):
+/// The leaves of one map's streams, spelled for the recording's format (crate::names).
+#[derive(Clone)]
+struct Streams {
+    format: Format,
+    map: String,
+}
+
+impl Streams {
+    fn new(format: Format, map: &str) -> Streams {
+        Streams { format, map: map.to_string() }
+    }
+
+    fn leaf(&self, leaf: &str) -> String {
+        mapping::names::stream(self.format, &self.map, leaf)
+    }
+
+    fn floor(&self, index: usize) -> String {
+        self.leaf(&format!("floor_{index}"))
+    }
+
+    /// what every floor stream of this map starts with (stale ones are dropped by it)
+    fn floor_prefix(&self) -> String {
+        let name = self.floor(0);
+        name[..name.len() - 1].to_string()
+    }
+
+    /// the map's tf frame: `map/<name>`, whatever the format
+    fn frame(&self) -> String {
+        mapping::names::frame(&self.map)
+    }
+}
+
+/// Reads dimos's newest `/named_locations` into the session, once (after that the session's list is the truth):
 /// re-expressed from the recording's frame into the map frame, keeping the frame_id they're written back with. The
-/// list's coordinates are taken as the recording's (on a new map, dimos's premap is the run's map frame).
+/// list's coordinates are taken as the recording's (on a new map, dimos's premap is the run's map frame). Only this
+/// stream, never the map's own `named_locations`: that list is already in map coordinates and comes back with the
+/// rest of the annotations, so reading it here would put it through `transform` a second time.
 pub fn read_named_locations(recording: &Recording, session: &mut Session) {
     if session.annotations.named_locations_read {
         return;
@@ -80,22 +118,17 @@ pub fn read_named_locations(recording: &Recording, session: &mut Session) {
     }
 }
 
-/// map, path, annotations, views, floor n
-fn slice_name() -> String {
-    format!("{PREFIX}slice")
-}
-
-fn names() -> (String, String, String, String, impl Fn(usize) -> String) {
-    (format!("{PREFIX}voxels"), format!("{PREFIX}path"), format!("{PREFIX}annotations"), format!("{PREFIX}views"), |n: usize| format!("{PREFIX}floor_{n}"))
-}
-
-/// what saves before the `map/` prefix were called: map, path, annotations, and the prefix of them all
-fn legacy_names(format: Format) -> (String, String, String, &'static str) {
-    let prefix = match format {
+/// what saves before map names were called (voxels, path, annotations): the flat `map/` ones, then — older still —
+/// the `map_builder` ones, and the prefix of those
+fn legacy_names(format: Format) -> [(String, String, String, &'static str); 2] {
+    let old = match format {
         Format::Db => "map_builder_",
         Format::Mcap => "/map_builder/",
     };
-    (format!("{prefix}global_map"), format!("{prefix}path"), format!("{prefix}annotations"), prefix)
+    [
+        ("map/voxels".into(), "map/path".into(), "map/annotations".into(), "map/"),
+        (format!("{old}global_map"), format!("{old}path"), format!("{old}annotations"), old),
+    ]
 }
 
 /// Writes the session into its recording. `progress(done, total)` for the mcap rewrite.
@@ -103,10 +136,11 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
     let session = &workspace.session;
     let path = Path::new(&session.recording_path);
     let format = dimos_recording::format_of(path)?;
-    let (map_name, path_name, annotations_name, views_name, floor_name) = names();
-    let legacy_prefix = legacy_names(format).3;
+    mapping::names::check(session.map())?;
+    let streams = Streams::new(format, session.map());
+    let legacy_prefix = legacy_names(format)[1].3;
     let now = crate::workspace::now_seconds();
-    let header = Header::at(now, MAP_FRAME);
+    let header = Header::at(now, &streams.frame());
     let (_, points, _) = workspace.visible_points();
     let map_payload = lcm::encode_xyz_cloud(&header, &points, None);
     let corrected: Vec<[f32; 3]> = workspace.paths()["corrected"].as_array().map(|list| list.iter().filter_map(|p| serde_json::from_value(p.clone()).ok()).collect()).unwrap_or_default();
@@ -115,11 +149,11 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
         .map(|p| PoseStamped { header: header.clone(), pose: Pose { position: [p[0] as f64, p[1] as f64, p[2] as f64], orientation: [0.0, 0.0, 0.0, 1.0] } })
         .collect();
     let path_payload = lcm::encode_path(&header, &poses);
-    let floors: Vec<(String, Vec<u8>)> = session.plans.iter().enumerate().map(|(index, plan)| (floor_name(index), lcm::encode_occupancy_grid(&grid(plan, &header)))).collect();
+    let floors: Vec<(String, Vec<u8>)> = session.plans.iter().enumerate().map(|(index, plan)| (streams.floor(index), lcm::encode_occupancy_grid(&grid(plan, &header)))).collect();
     let state = SavedState {
         schema: SCHEMA.into(),
         saved_at: now,
-        frame: MAP_FRAME.into(),
+        frame: streams.frame(),
         world_frame: session.build.as_ref().map(|b| b.world_frame.clone()).unwrap_or_default(),
         transform: session.transform,
         voxel_size: workspace.map.as_ref().map_or(0.05, |m| m.voxel_size),
@@ -130,12 +164,12 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
     };
     let annotations_payload = lcm::encode_string(&serde_json::to_string(&state)?);
     let mut writes: Vec<(String, String, Vec<u8>)> = vec![
-        (mapping::pipeline::GLOBAL_MAP_STREAM.into(), lcm::POINT_CLOUD2_TYPE.into(), map_payload.clone()),
-        (map_name, lcm::POINT_CLOUD2_TYPE.into(), map_payload),
-        (path_name, lcm::PATH_TYPE.into(), path_payload),
-        (annotations_name, lcm::STRING_TYPE.into(), annotations_payload),
-        (views_name, lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.views)?)),
-        (slice_name(), lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.slice)?)),
+        (streams.leaf("cloud"), lcm::POINT_CLOUD2_TYPE.into(), map_payload.clone()),
+        (streams.leaf("voxels"), lcm::POINT_CLOUD2_TYPE.into(), map_payload),
+        (streams.leaf("path"), lcm::PATH_TYPE.into(), path_payload),
+        (streams.leaf("annotations"), lcm::STRING_TYPE.into(), annotations_payload),
+        (streams.leaf("views"), lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.views)?)),
+        (streams.leaf("slice"), lcm::STRING_TYPE.into(), lcm::encode_string(&serde_json::to_string(&session.annotations.slice)?)),
     ];
     writes.extend(floors.into_iter().map(|(name, payload)| (name, lcm::OCCUPANCY_GRID_TYPE.into(), payload)));
     // the whole list, even when empty: a list emptied here replaces the recording's
@@ -146,8 +180,7 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
             .iter()
             .map(|l| lcm::NamedLocation { name: l.name.clone(), frame_id: l.frame.clone(), position: [l.position[0] as f64, l.position[1] as f64, l.position[2] as f64], orientation: [0.0, 0.0, 0.0, 1.0] })
             .collect();
-        let topic = if format == Format::Mcap { NAMED_LOCATIONS[0] } else { NAMED_LOCATIONS[1] };
-        writes.push((topic.into(), lcm::INTERACTIVE_MARKER_UPDATE_TYPE.into(), lcm::encode_named_locations(&header, "map_builder", &locations)));
+        writes.push((streams.leaf("named_locations"), lcm::INTERACTIVE_MARKER_UPDATE_TYPE.into(), lcm::encode_named_locations(&header, "map_builder", &locations)));
     }
     match format {
         Format::Db => {
@@ -156,7 +189,7 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
             .streams()?
             .into_iter()
             .map(|s| s.name)
-            .filter(|name| (name.starts_with(&floor_name(0)[..floor_name(0).len() - 1]) || name.starts_with(legacy_prefix)) && !writes.iter().any(|(w, _, _)| w == name))
+            .filter(|name| (name.starts_with(&streams.floor_prefix()) || name.starts_with(legacy_prefix)) && !writes.iter().any(|(w, _, _)| w == name))
             .collect();
             let mut connection = db::Connection::open(path).with_context(|| format!("opening {} to write", path.display()))?;
             connection.busy_timeout(std::time::Duration::from_secs(10))?;
@@ -199,16 +232,44 @@ fn grid(plan: &FloorPlan, header: &Header) -> OccupancyGrid {
     }
 }
 
-/// A session rebuilt from an earlier save inside the recording, if it has one.
+/// The saved map a recording is reopened on: the newest named one (several maps = the one saved last), with the
+/// streams its voxels, path and annotations are on; None when it has no named map.
+fn newest_saved_map(recording: &Recording) -> Option<(String, Streams, Vec<u8>)> {
+    let mut best: Option<(f64, String, Streams, Vec<u8>)> = None;
+    for map in mapping::names::taken(recording) {
+        let streams = Streams::new(recording.format(), &map);
+        let name = streams.leaf("annotations");
+        let Some((_, payload)) = recording.latest(&name).ok().flatten() else { continue };
+        let saved_at = lcm::decode_string(&payload)
+            .ok()
+            .and_then(|text| serde_json::from_str::<SavedState>(&text).ok())
+            .map_or(0.0, |state| state.saved_at);
+        if best.as_ref().is_none_or(|(at, ..)| saved_at >= *at) {
+            best = Some((saved_at, map, streams, payload));
+        }
+    }
+    best.map(|(_, map, streams, payload)| (map, streams, payload))
+}
+
+/// A session rebuilt from an earlier save inside the recording, if it has one. A named map (the newest, when it has
+/// several) comes first and the session takes its name; without one, the flat `map/...` of versions before map names,
+/// then the older `map_builder` save.
 pub fn load(recording: &Recording, mut session: Session) -> Result<Option<(Session, MapData)>> {
-    let (map_name, path_name, annotations_name, _, _) = names();
-    let (legacy_map, legacy_path, legacy_annotations, _) = legacy_names(recording.format());
-    let (map_name, path_name, annotations_name, payload) = match recording.latest(&annotations_name)? {
-        Some((_, payload)) => (map_name, path_name, annotations_name, payload),
-        None => match recording.latest(&legacy_annotations)? {
-            Some((_, payload)) => (legacy_map, legacy_path, legacy_annotations, payload),
-            None => return Ok(None),
-        },
+    let (map_name, path_name, annotations_name, payload) = match newest_saved_map(recording) {
+        Some((map, streams, payload)) => {
+            session.map_name = map;
+            (streams.leaf("voxels"), streams.leaf("path"), streams.leaf("annotations"), payload)
+        }
+        None => {
+            let legacy = legacy_names(recording.format());
+            let found = legacy.iter().find_map(|(map, path, annotations, _)| {
+                recording.latest(annotations).ok().flatten().map(|(_, payload)| (map.clone(), path.clone(), annotations.clone(), payload))
+            });
+            match found {
+                Some(found) => found,
+                None => return Ok(None),
+            }
+        }
     };
     let state: SavedState = serde_json::from_str(&lcm::decode_string(&payload)?).with_context(|| format!("reading {annotations_name}"))?;
     if state.schema != SCHEMA {
@@ -248,7 +309,7 @@ pub fn load(recording: &Recording, mut session: Session) -> Result<Option<(Sessi
     session.build = state.build;
     session.erased = state.erased;
     session.saved_at = Some(state.saved_at);
-    session.history.push(format!("Restored from the recording's saved map ({} voxels)", n));
+    session.history.push(format!("Restored from the recording's saved map \"{}\" ({} voxels)", session.map(), n));
     let map = MapData { voxel_size: state.voxel_size, points, normals, removed: vec![false; n], raw_path: Vec::new(), corrected_path, loops: Vec::new() };
     Ok(Some((session, map)))
 }
@@ -275,7 +336,7 @@ mod tests {
             }
             _ => mcap_io::write_fixture(&path, &[("/lidar", "lcm", lcm::POINT_CLOUD2_TYPE, 1.0, cloud), ("/named_locations", "lcm", lcm::INTERACTIVE_MARKER_UPDATE_TYPE, 1.0, named)]),
         }
-        let mut session = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), ..Default::default() };
+        let mut session = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), map_name: "v1".into(), ..Default::default() };
         // opening reads them in, once
         read_named_locations(&Recording::open(&path).unwrap(), &mut session);
         assert_eq!(session.annotations.named_locations.iter().map(|l| (l.name.as_str(), l.frame.as_str(), l.position)).collect::<Vec<_>>(), vec![("kitchen", "premap", [1.0, 2.0, 0.0])]);
@@ -303,14 +364,21 @@ mod tests {
 
         let recording = Recording::open(&path).unwrap();
         let streams: Vec<String> = recording.streams().unwrap().into_iter().map(|s| s.name).collect();
-        for suffix in ["voxels", "path", "annotations", "views", "slice", "floor_0"] {
-            assert!(streams.contains(&format!("map/{suffix}")), "{format}: {streams:?}");
+        // every stream of the map is under its name, spelled the way the format allows
+        let own = Streams::new(recording.format(), "v1");
+        for leaf in ["cloud", "voxels", "path", "annotations", "views", "slice", "floor_0", "named_locations"] {
+            assert!(streams.contains(&own.leaf(leaf)), "{format}: {leaf} not in {streams:?}");
         }
+        assert_eq!(mapping::names::taken(&recording), ["v1"], "{format}");
         assert!(streams.iter().any(|s| s.ends_with("lidar")), "the original data is still there");
-        assert!(streams.iter().any(|s| s == mapping::pipeline::GLOBAL_MAP_STREAM), "the map is dimos's premap too: {streams:?}");
-        assert_eq!(streams.len(), 9);
+        // nothing on the flat names of versions before map names
+        assert!(!streams.iter().any(|s| s == mapping::pipeline::GLOBAL_MAP_STREAM), "{format}: {streams:?}");
+        assert!(!streams.iter().any(|s| s.starts_with("map/voxels")), "{format}: {streams:?}");
+        assert_eq!(streams.len(), 10, "{format}: {streams:?}");
+        // the recording's own /named_locations is left as it was: the map's list is its own stream
+        assert!(streams.iter().any(|s| s.trim_start_matches('/') == "named_locations"), "{format}: {streams:?}");
         // the named locations as saved (the map's coordinates, the frame they came in): what dimos seeds a premap's from
-        let (_, payload) = recording.latest(if format == "db" { "named_locations" } else { "/named_locations" }).unwrap().unwrap();
+        let (_, payload) = recording.latest(&own.leaf("named_locations")).unwrap().unwrap();
         let saved = lcm::decode_named_locations(&payload).unwrap();
         let expected: Vec<_> = ws.session.annotations.named_locations.iter().map(|l| (l.name.clone(), l.frame.clone(), [l.position[0] as f64, l.position[1] as f64, l.position[2] as f64])).collect();
         assert_eq!(saved.iter().map(|l| (l.name.clone(), l.frame_id.clone(), l.position)).collect::<Vec<_>>(), expected);
@@ -319,6 +387,7 @@ mod tests {
         assert!((expected[0].2[0] - 1.0).abs() > 0.1, "the kitchen turned with the map (rotate_yaw)");
 
         let (restored, map) = load(&recording, Session::default()).unwrap().unwrap();
+        assert_eq!(restored.map_name, "v1", "{format}: reopening restores the map it was saved as");
         assert_eq!(map.points.len(), visible);
         assert_eq!(restored.annotations, ws.session.annotations);
         assert_eq!(restored.plans.len(), 1);
@@ -332,6 +401,124 @@ mod tests {
         let (_, a, _) = again.visible_points();
         let (_, b, _) = ws.visible_points();
         assert!((a[0][0] - b[0][0]).abs() < 1e-3 && (a[0][1] - b[0][1]).abs() < 1e-3);
+    }
+
+    /// a second map of the same space, saved under its own name: the first one's streams stay as they were
+    fn two_maps(format: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("run.{format}"));
+        let cloud = lcm::encode_xyz_cloud(&Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        match format {
+            "db" => db::write_stream(&mut db::Connection::open(&path).unwrap(), "lidar", lcm::POINT_CLOUD2_TYPE, &[(1.0, cloud)]).unwrap(),
+            _ => mcap_io::write_fixture(&path, &[("/lidar", "lcm", lcm::POINT_CLOUD2_TYPE, 1.0, cloud)]),
+        }
+        let session = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), map_name: "v1".into(), ..Default::default() };
+        let mut ws = Workspace::new(session, Some(room_map()));
+        ws.add_box("table", Box3::from_bounds([2.0, 3.0, 0.7], [3.2, 3.8, 0.8]), "user").unwrap();
+        save(&ws, |_, _| {}).unwrap();
+        let first = ws.session.annotations.clone();
+        // the same space again, under another name
+        assert_eq!(ws.set_map_name("office").unwrap(), "office");
+        ws.add_box("desk", Box3::from_bounds([0.0, 0.0, 0.7], [1.0, 1.0, 0.8]), "user").unwrap();
+        save(&ws, |_, _| {}).unwrap();
+
+        let recording = Recording::open(&path).unwrap();
+        assert_eq!(mapping::names::taken(&recording), ["office", "v1"], "{format}");
+        // each name's annotations are its own
+        let read = |map: &str| {
+            let name = Streams::new(recording.format(), map).leaf("annotations");
+            let (_, payload) = recording.latest(&name).unwrap().unwrap();
+            serde_json::from_str::<SavedState>(&lcm::decode_string(&payload).unwrap()).unwrap()
+        };
+        assert_eq!(read("v1").annotations.boxes.len(), 1, "{format}");
+        assert_eq!(read("office").annotations.boxes.len(), 2, "{format}");
+        assert_eq!(read("v1").annotations, first, "{format}: the first map is untouched");
+        assert_eq!(read("v1").frame, "map/v1", "{format}");
+        assert_eq!(read("office").frame, "map/office", "{format}");
+        // reopening takes the one saved last
+        let (restored, _) = load(&recording, Session::default()).unwrap().unwrap();
+        assert_eq!(restored.map_name, "office", "{format}");
+        // and the default name for a next map counts past both
+        assert_eq!(mapping::names::default_for(&recording), "v2", "{format}");
+    }
+
+    #[test]
+    fn two_maps_of_one_space_in_a_db() {
+        two_maps("db");
+    }
+
+    #[test]
+    fn two_maps_of_one_space_in_an_mcap() {
+        two_maps("mcap");
+    }
+
+    /// a recording saved by a version before map names: it still opens, and saving it again goes under a name
+    /// without moving or dropping what was there
+    #[test]
+    fn a_flat_save_from_before_map_names_still_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.mcap");
+        // "map" is the frame a save from before map names was written in (today it is map/<name>)
+        let header = Header::at(7.0, "map");
+        let points: Vec<[f32; 3]> = (0..40).map(|i| [i as f32 * 0.05, 0.0, 0.0]).collect();
+        let state = SavedState {
+            schema: SCHEMA.into(),
+            saved_at: 7.0,
+            frame: "map".into(),
+            world_frame: "world".into(),
+            transform: Transform::default(),
+            voxel_size: 0.05,
+            annotations: Annotations { boxes: vec![crate::session::BoxAnnotation { id: "b1".into(), label: "chair".into(), ..Default::default() }], ..Default::default() },
+            floor_streams: Vec::new(),
+            build: None,
+            erased: Vec::new(),
+        };
+        mcap_io::write_fixture(
+            &path,
+            &[
+                ("/lidar", "lcm", lcm::POINT_CLOUD2_TYPE, 1.0, lcm::encode_xyz_cloud(&Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None)),
+                ("map/voxels", "lcm", lcm::POINT_CLOUD2_TYPE, 7.0, lcm::encode_xyz_cloud(&header, &points, None)),
+                ("map/annotations", "lcm", lcm::STRING_TYPE, 7.0, lcm::encode_string(&serde_json::to_string(&state).unwrap())),
+                ("map_cloud", "lcm", lcm::POINT_CLOUD2_TYPE, 7.0, lcm::encode_xyz_cloud(&header, &points, None)),
+            ],
+        );
+        let recording = Recording::open(&path).unwrap();
+        assert_eq!(mapping::names::taken(&recording), Vec::<String>::new(), "a flat save is not a named map");
+        let fresh = Session { id: "s".into(), recording_path: path.display().to_string(), map_name: mapping::names::default_for(&recording), ..Default::default() };
+        let (restored, map) = load(&recording, fresh).unwrap().unwrap();
+        assert_eq!(map.points.len(), points.len(), "the flat map/voxels is still read");
+        assert_eq!(restored.annotations.boxes.len(), 1);
+        assert_eq!(restored.map_name, "v1", "the next save goes under a name");
+        drop(recording);
+
+        // saving it again writes the named streams and leaves the flat ones alone
+        let ws = Workspace::new(restored, Some(map));
+        save(&ws, |_, _| {}).unwrap();
+        let recording = Recording::open(&path).unwrap();
+        let streams: Vec<String> = recording.streams().unwrap().into_iter().map(|s| s.name).collect();
+        assert_eq!(mapping::names::taken(&recording), ["v1"]);
+        for kept in ["map/voxels", "map/annotations", "map_cloud"] {
+            assert!(streams.contains(&kept.to_string()), "{kept} is still there: {streams:?}");
+        }
+        assert!(streams.contains(&"map/v1/cloud".to_string()), "{streams:?}");
+        // and reopening now takes the named map, not the flat one
+        let (again, _) = load(&recording, Session::default()).unwrap().unwrap();
+        assert_eq!(again.map_name, "v1");
+    }
+
+    /// a name that isn't a plain identifier is refused, not quietly turned into one
+    #[test]
+    fn a_name_that_cannot_be_a_frame_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.db");
+        db::write_stream(&mut db::Connection::open(&path).unwrap(), "lidar", lcm::STRING_TYPE, &[(1.0, lcm::encode_string("x"))]).unwrap();
+        let session = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), map_name: "v1".into(), ..Default::default() };
+        let mut ws = Workspace::new(session, Some(room_map()));
+        for bad in ["my map", "map/v1", "", "1v", "a-b"] {
+            assert!(ws.set_map_name(bad).is_err(), "{bad:?} should be refused");
+            assert_eq!(ws.session.map_name, "v1", "{bad:?} left the name as it was");
+        }
+        assert_eq!(ws.set_map_name("  office  ").unwrap(), "office", "the typed name is trimmed, never mangled");
     }
 
     #[test]

@@ -250,6 +250,10 @@ pub struct Session {
     #[serde(default = "yes")]
     pub writable: bool,
     pub name: String,
+    /// What the map is saved under inside the recording: every stream of it goes under this name, and its tf frame is
+    /// `map/<name>` (mapping::names). Defaults to the first `v<n>` the recording hasn't got a map under; the page can
+    /// set it to anything that is a plain identifier.
+    pub map_name: String,
     /// "raw" (nothing built yet), "map" (a map to edit)
     pub stage: String,
     pub build: Option<BuildSummary>,
@@ -281,6 +285,26 @@ pub struct MapData {
     pub raw_path: Vec<[f32; 3]>,
     pub corrected_path: Vec<[f32; 3]>,
     pub loops: Vec<([f32; 3], [f32; 3])>,
+}
+
+impl Session {
+    /// The name the map is saved under, the recording's first (`v1`) for a session from before map names (or one
+    /// built by hand in a test): never empty, so the streams it names never are either.
+    pub fn map(&self) -> &str {
+        if self.map_name.is_empty() {
+            mapping::names::FIRST
+        } else {
+            &self.map_name
+        }
+    }
+
+    /// Takes a map name the page typed, refusing one that isn't a plain identifier (never mangling it into one).
+    pub fn set_map_name(&mut self, name: &str) -> Result<()> {
+        let name = name.trim();
+        mapping::names::check(name)?;
+        self.map_name = name.to_string();
+        Ok(())
+    }
 }
 
 fn yes() -> bool {

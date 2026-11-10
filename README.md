@@ -15,7 +15,7 @@ everything else is optional and in any order.
   correction, which needs the scans placed first); open, it has its own Run button and settings. Progress bar, ETA and
   Cancel. Every step writes into the recording in place ([docs/schema.md](docs/schema.md#what-generate-writes)), and a
   step whose input the recording doesn't have yet runs the earlier one first (it reads what's there from the file: its
-  streams, its tf and `map/pipeline`).
+  streams, its tf and the map's `pipeline` stream).
   0. **Estimate odometry (Point-LIO)**, offered for a lidar and an IMU with no odometry whose lidar nothing in tf moves
      (a raw [lite_record](https://github.com/jeff-hykin/lite_record) recording): dimos's Point-LIO estimator
      (`pointlio-core`, what `dimos-pointlio` runs) over the lidar and the IMU, in the app. The IMU under the lidar's
@@ -40,7 +40,8 @@ everything else is optional and in any order.
      temporary db in the data folder), with its stitching knobs under Advanced.
   3. **Global map**: every scan placed through the corrected tf (on by default), ray traced (on by default; the ray
      tracer's tunables under Advanced), decimated (a final voxel and stray-point removal), written into the recording as
-     `map_cloud` (one cloud, at the recording's start: the premap dimos relocalization loads) and beside it as `<name>_map_cloud.pc2.lcm`; it becomes
+     the map's own `cloud` stream (`map/<name>/cloud` in an .mcap, `map_<name>_cloud` in a .db: one cloud, at the recording's start — the premap
+     dimos relocalization loads) and beside it as `<name>_map_cloud.pc2.lcm`; it becomes
      the map in the editor. Optionally an `.rrd` beside the recording too: the map, the paths, each AprilTag drawn as its
      own pattern with its id, and the streams picked at the rates picked (color images at 2 Hz by default).
 - **Already has a map** (a `global_map` PointCloud2: dimos's `global_map` stream, `/global_map` or `<ns>/global_map`):
@@ -63,7 +64,7 @@ everything else is optional and in any order.
 - **Slicer** (the yellow orb, pulsing until a map has a slice): a 4-step view of the map, not an edit. It flies out to
   the whole map, then cuts it to a height band (live), turns it so the walls line up with x and y (a top-down x-ray
   over a grid, with an "auto" angle from the walls' directions), crops x / y with a draggable rectangle, and flies back
-  to the result. 3D, 2D and the minimap all show it; it's saved as seven numbers (`map/slice`).
+  to the result. 3D, 2D and the minimap all show it; it's saved as seven numbers (the map's `slice` stream).
 - **Edit** (the green orb): a palette of tools. **Erase** (one stroke takes everything the brush covers, from the floor
   up to the slice's top, the floor itself stays; a lone speck goes in one click; nothing is ever added), **Draw** / **Line** (voxels from the floor up to a height), **Straighten wall** (drag along
   a noisy wall: the wall in the band becomes one clean slab of its own thickness; nothing outside the band changes), **Fill floor** (brush over a hole in the floor: a plane is fit to the floor around it,
@@ -73,7 +74,9 @@ everything else is optional and in any order.
   **named points and areas** (no-go zones), **3D boxes, planes and points**, **Clean up** (floating specks, outliers,
   floor, walls, crop, level), **Saved views**. All undoable. On a phone or tablet one finger uses the picked tool, two
   fingers pan and pinch zooms (the 3D view: one finger turns, two pan and zoom), and a double tap closes a polygon.
-- **Save** into the recording, in place: the map, annotations and views become `map/*` streams in the same file
+- **Save** into the recording, in place: the map, annotations and views become streams in the same file, under the
+  map's **name** — a recording can hold several maps of the same space, so each is saved under one (`v1`, then `v2`,
+  ...: the Save panel's box takes any plain identifier, and the map's tf frame is `map/<name>`)
   ([docs/schema.md](docs/schema.md)), ready for a navigation blueprint to read.
 - **Share** (top bar) → **as HTML**: one self-contained `.html` anyone can open offline, no Desktop: the voxels the 3D
   view shows (current edits, cropped to the slice, at the map's voxel size), in the same look (the editor's renderer

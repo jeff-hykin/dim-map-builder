@@ -57,7 +57,8 @@ pub fn default_streams(recording: &Recording) -> Result<Vec<RrdStream>> {
         .filter(|s| s.count > 0)
         .filter_map(|s| match s.kind {
             Kind::Image | Kind::Video => Some(RrdStream { enabled: s.name.contains("color") && !s.name.contains("depth"), hz: 2.0, name: s.name }),
-            Kind::Cloud if s.name != crate::pipeline::GLOBAL_MAP_STREAM => Some(RrdStream { enabled: false, hz: 2.0, name: s.name }),
+            // the editor's own map clouds (a named map's, or the flat one older recordings carry) aren't inputs
+            Kind::Cloud if s.name != crate::pipeline::GLOBAL_MAP_STREAM && crate::names::of_stream(&s.name).is_none() => Some(RrdStream { enabled: false, hz: 2.0, name: s.name }),
             Kind::Odometry | Kind::PoseStamped if !s.name.contains("april_tags") => Some(RrdStream { enabled: false, hz: 10.0, name: s.name }),
             _ => None,
         })

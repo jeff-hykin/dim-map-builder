@@ -211,6 +211,8 @@ export interface Session {
     /** when it isn't writable: the shell command that makes it so (chown / chmod) */
     writeFix?: string | null
     name: string
+    /** what the map is saved under inside the recording: its streams go under it and its tf frame is `map/<name>` */
+    mapName: string
     stage: "raw" | "map"
     build: BuildSummary | null
     buildOptions: BuildOptions | null
@@ -488,6 +490,8 @@ export const api = {
     op: (id: string, op: string, region: Region, params: Record<string, unknown> = {}, preview = false) =>
         call<OpResult>(`api/sessions/${id}/op`, json({ op, region, params, preview })),
     modify: (id: string, body: Record<string, unknown>) => call<OpResult>(`api/sessions/${id}/modify`, json(body)),
+    /** the name the map is saved under; a plain identifier (a letter, then letters, digits and underscores) */
+    setMapName: (id: string, name: string) => call<{ mapName: string }>(`api/sessions/${id}/map-name`, { method: "PUT", body: JSON.stringify({ name }) }),
     setSlice: (id: string, slice: Slice | null) => call(`api/sessions/${id}/slice`, { method: "PUT", body: JSON.stringify(slice) }),
     alignment: (id: string) => call<{ yaw: number | null }>(`api/sessions/${id}/alignment`),
     floor: (id: string) => call<FloorModel>(`api/sessions/${id}/floor`),

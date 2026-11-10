@@ -108,6 +108,8 @@ pub fn summary(app: &App, workspace: &Workspace) -> Value {
         object.insert("job".into(), json!(app.job(&session.id)));
         object.insert("odometryPending".into(), json!(workspace.odometry_pending));
         object.insert("recordedMap".into(), json!(workspace.recorded_map));
+        // the name the map is saved under, resolved (a session from before map names has none of its own)
+        object.insert("mapName".into(), json!(session.map()));
         let history = &session.history;
         object.insert("history".into(), json!(history[history.len().saturating_sub(30)..]));
     }
@@ -209,6 +211,8 @@ pub fn routes() -> Routes<Arc<App>> {
         .when("you need the floor height at places on each storey")
         .endpoint("PUT", "api/sessions/{id}/slice", "Set (undoable) the slicer's view: { zMin, zMax, yaw, xMin, xMax, yMin, yMax } in map meters, or null / {} to clear it. Returns { ok: true }.", with_id(json!({ "zMin": n("bottom of the slice, m"), "zMax": n("top of the slice, m"), "yaw": n("radians"), "xMin": n("m, along the slice's yawed x"), "xMax": n("m, along the slice's yawed x"), "yMin": n("m, along the slice's yawed y"), "yMax": n("m, along the slice's yawed y") })), set_slice)
         .when("you want to show only a slab or box of the map")
+        .endpoint("PUT", "api/sessions/{id}/map-name", "Set the name the map is saved under inside the recording: every stream of it goes under that name (map/<name>/voxels, map/<name>/cloud, map/<name>/named_locations, ... in an .mcap; map_<name>_voxels, ... in a .db) and its tf frame is map/<name>. It has to be a plain identifier (a letter, then letters, digits and underscores) and is never silently changed into one. Returns { mapName }.", with_id(json!({ "name": required(s("the map's name, e.g. v1")) })), set_map_name)
+        .when("you want to save the map under a name of its own (a recording can hold several)")
         .endpoint("GET", "api/sessions/{id}/alignment", "The suggested yaw (radians) that lines the walls up with x and y: { yaw }.", with_id(json!({})), alignment)
         .when("you need the rotation that squares the walls to the axes")
         .endpoint("POST", "api/sessions/{id}/modify", "Brush edits on a storey (undoable), map-frame x, y meters. tool=erase: remove what stands on the floor along path [[x, y], ...] of radius, up to zEnd (m over the local floor when relative, default 1.8; fullColumn = everything up to the next storey): every voxel in the columns the brush touches goes but the floor (a lone speck goes in one click), nothing is added. tool=draw: add voxels along path of width (default 0.1) up to height (default 1 m). tool=straighten: replace a noisy wall along from..to (width band, default 0.4; up to zEnd, default 2.5) with one straight slab (thickness = the wall's own unless given). tool=fill_floor: fill the holes in the floor along path of radius (default 0.5): a plane is fit (RANSAC + least squares) to the floor's top surface within 1.5 m of the stroke, so a tilted floor or ramp is followed and furniture tops are ignored; every brushed column with no floor near the plane and nothing standing on it (a wall, furniture) gets the surrounding floor's thickness of voxels on it; an error when there's too little floor around to fit. Returns { label, changed, remaining } (fill_floor also detail: the plane's z, tilt, thickness).", with_id(json!({ "tool": required(s("erase | draw | straighten | fill_floor")), "floor": required(int("storey index")), "path": path_2d("erase/draw/fill_floor: [[x, y], ...]"), "radius": n("erase/fill_floor: brush radius, m"), "width": n("draw/straighten: band width, m"), "height": n("draw: wall height, m"), "from": numbers("straighten: [x, y]"), "to": numbers("straighten: [x, y]"), "thickness": n("straighten: slab thickness, m"), "zEnd": n("erase/straighten: how high it reaches, m (erase default 1.8, straighten 2.5)"), "relative": b("zEnd over the local floor (default true)"), "fullColumn": b("erase/straighten: reach up to the next storey, ignoring zEnd") })), modify)
@@ -596,7 +600,10 @@ async fn generate_status(State(app): State<Arc<App>>, Path(id): Path<String>) ->
     if let Some(job) = running.clone().filter(|job| job.kind == "open") {
         return accepted(job);
     }
-    let path = std::path::PathBuf::from(workspace.lock().unwrap().session.recording_path.clone());
+    let (path, map) = {
+        let ws = workspace.lock().unwrap();
+        (std::path::PathBuf::from(ws.session.recording_path.clone()), ws.session.map().to_string())
+    };
     let path2 = path.clone();
     let slow = blocking(move || Ok(dimos_recording::Recording::open(&path2)?.tf_bytes_to_read()? >= crate::app::SLOW_TF_BYTES)).await?;
     if slow {
@@ -612,7 +619,7 @@ async fn generate_status(State(app): State<Arc<App>>, Path(id): Path<String>) ->
         }
     }
     let data = app.store.dir.clone();
-    Ok(Json(blocking(move || crate::pipeline::status(&data, &path)).await?).into_response())
+    Ok(Json(blocking(move || crate::pipeline::status(&data, &path, &map)).await?).into_response())
 }
 
 /// `pointLio: true`: Point-LIO's odometry first, when the recording still needs it
@@ -633,8 +640,11 @@ async fn generate_tags(State(app): State<Arc<App>>, Path(id): Path<String>, Body
 
 async fn generate_tf(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): Body) -> Result<Json<Value>> {
     let (id, workspace) = session(&app, &id)?;
-    let path = std::path::PathBuf::from(workspace.lock().unwrap().session.recording_path.clone());
-    let defaults = blocking(move || Ok(crate::pipeline::default_correction(&path))).await?;
+    let (path, map) = {
+        let ws = workspace.lock().unwrap();
+        (std::path::PathBuf::from(ws.session.recording_path.clone()), ws.session.map().to_string())
+    };
+    let defaults = blocking(move || Ok(crate::pipeline::default_correction(&path, &map))).await?;
     let options = merged(defaults, &body).context("tf correction options")?;
     // the tags step's options, for when it has to run first
     let tag_options = match body.get("tags").filter(|v| v.is_object()) {
@@ -733,6 +743,13 @@ async fn set_slice(State(app): State<Arc<App>>, Path(id): Path<String>, Body(bod
     };
     edit(&app, id, move |w| w.set_slice(slice)).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn set_map_name(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): Body) -> Result<Json<Value>> {
+    let (id, _) = session(&app, &id)?;
+    let name = body["name"].as_str().context("name is required")?.to_string();
+    let name = edit(&app, id, move |w| w.set_map_name(&name)).await?;
+    Ok(Json(json!({ "mapName": name })))
 }
 
 async fn alignment(State(app): State<Arc<App>>, Path(id): Path<String>) -> Result<Json<Value>> {
