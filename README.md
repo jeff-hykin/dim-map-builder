@@ -74,6 +74,10 @@ everything else is optional and in any order.
   **named points and areas** (no-go zones), **3D boxes, planes and points**, **Clean up** (floating specks, outliers,
   floor, walls, crop, level), **Saved views**. All undoable. On a phone or tablet one finger uses the picked tool, two
   fingers pan and pinch zooms (the 3D view: one finger turns, two pan and zoom), and a double tap closes a polygon.
+- **Pick a map** after picking a recording, when it holds more than one of the space: each is listed with when it was
+  saved, and "Start another map" begins a new one beside them. With one map (or none) there is nothing to pick and it
+  opens straight away. Opening a map brings back its voxels, annotations and places, and re-saving it under the same
+  name is how you edit it.
 - **Save** into the recording, in place: the map, annotations and views become streams in the same file, under the
   map's **name** — a recording can hold several maps of the same space, so each is saved under one (`v1`, then `v2`,
   ...: the Save panel's box takes any plain identifier, and the map's tf frame is `map/<name>`)

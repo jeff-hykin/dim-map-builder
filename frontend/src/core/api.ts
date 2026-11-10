@@ -203,6 +203,22 @@ export interface LastSession {
     stage: string
 }
 
+/** one of a recording's maps, as `api.maps` lists them */
+export interface MapInfo {
+    name: string
+    /** when it was last saved into the recording, or null (generated but never saved) */
+    savedAt: number | null
+    saved: boolean
+}
+
+export interface RecordingMaps {
+    maps: MapInfo[]
+    /** the name a new map of this recording would get */
+    default: string
+    /** an .mcap with no index: its maps can't be listed without reading all of it */
+    unindexed: boolean
+}
+
 export interface Session {
     id: string
     recordingId: string
@@ -436,7 +452,10 @@ export interface GenerateStatus {
 
 export const api = {
     state: () => call<{ active: string | null; session: Session | null; last: LastSession | null; recordingsDir: string }>("api/state"),
-    open: (recording: { id: string; path: string; name: string; writable?: boolean }) => call<Session>("api/open", json(recording)),
+    /** which maps a recording already holds, for the map picker (before opening it) */
+    maps: (path: string) => call<RecordingMaps>(`api/maps?path=${encodeURIComponent(path)}`),
+    /** `map`: which of the recording's maps to open; a name it has none under starts a new one */
+    open: (recording: { id: string; path: string; name: string; writable?: boolean; map?: string }) => call<Session>("api/open", json(recording)),
     session: (id: string) => call<Session>(`api/sessions/${id}`),
     discard: (id: string) => call(`api/sessions/${id}`, { method: "DELETE" }),
     points: async (id: string): Promise<Float32Array> => {

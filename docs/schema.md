@@ -29,7 +29,7 @@ streams of versions before map names are left exactly as they were, so a recordi
 | `<map>/views` | `std_msgs.String` | JSON: the saved 2D views (the "2D maps"), the same list as `annotations.views` |
 | `<map>/slice` | `std_msgs.String` | JSON: the slicer's view `{ zMin, zMax, yaw, xMin, xMax, yMin, yMax }` or `null`, the same as `annotations.slice` |
 | `<map>/floor_<n>` | `nav_msgs.OccupancyGrid` | Only when exported (Saved views → Export occupancy grids): storey `n`'s grid, `-1` unknown, `0` free floor, `100` occupied. `info.origin.position` = the grid's (0,0) corner, with `z` = the floor's height |
-| `<map>/named_locations` | `visualization_msgs.InteractiveMarkerUpdate` | The whole list of places by name, in the map's coordinates: what dimos's relocalization seeds a premap's locations from. The recording's own `/named_locations` (as the robot recorded it) is only ever read, to seed this list once |
+| `<map>/named_locations` | `visualization_msgs.InteractiveMarkerUpdate` | The whole list of places by name, in the map's coordinates: what dimos's relocalization seeds a premap's locations from, and where the editor reads an existing map's places back from. The recording's own `/named_locations` (as the robot recorded it) only ever seeds a map that has no save of its own, so a recording can drop that stream without a saved map losing its places |
 
 Every edit kind lands in these: the voxel edits (cleanup, erase, draw, straightened walls) in `<map>/voxels`; the map
 transform, boxes, planes, points, polygons, floors, named points, areas, saved views and the slice in
@@ -74,8 +74,10 @@ takes `areas` with `kind == "no-go"` for the floor it's on, and rasterizes those
 
 ## Re-opening
 
-Opening a recording that has a map's `annotations` (the newest, when it has several maps; or, from versions before map
-names, the flat `map/annotations`, or `map_builder_annotations` from earlier still) and no working
+Opening a recording asks which of its maps to open when it holds more than one (`GET api/maps` lists them); with one
+there is nothing to pick, and with none the first save starts a new map under `default`. Opening a map reads its
+`annotations` (or, from versions before map names, the flat `map/annotations`, or `map_builder_annotations` from earlier
+still) and its own `named_locations`, and no working
 session for it restores the map, the transform, every annotation, the saved views and the grids from these streams.
 
 # What Generate writes

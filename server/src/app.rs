@@ -98,15 +98,30 @@ impl App {
     /// Opens (or resumes) the session for a recording. A recording with an earlier save and no session restores it.
     /// Nothing here reads messages: a `.db` lists its streams, an `.mcap` reads its summary (and the chunks holding
     /// an earlier save). An `.mcap` with no summary (cut short) opens at once and is read in an "open" job.
-    pub fn open(self: &Arc<Self>, recording_id: &str, path: &str, name: &str, writable: bool) -> Result<Arc<Mutex<Workspace>>> {
+    ///
+    /// `map` is which of the recording's maps to open (`maps_of` lists them, and the page's picker asks when there is
+    /// more than one): a name it has a save under is restored, any other name starts a new map under it. Without one,
+    /// a recording with exactly one map opens that, and one with none starts a new map under the first free name.
+    /// Asking for another map while the recording is already open switches the session to it (`switch_map`).
+    pub fn open(self: &Arc<Self>, recording_id: &str, path: &str, name: &str, writable: bool, map: Option<&str>) -> Result<Arc<Mutex<Workspace>>> {
         let path = PathBuf::from(path);
         dimos_recording::format_of(&path)?;
         if !path.is_file() {
             bail!("no such recording file: {}", path.display());
         }
+        if let Some(map) = map {
+            mapping::names::check(map)?;
+        }
         let id = session::session_id(&path);
         let workspace = match self.workspace(&id)? {
-            Some(workspace) => workspace,
+            Some(workspace) => {
+                // one session per recording: another of its maps asked for moves this session to that map
+                let switch = map.filter(|asked| workspace.lock().unwrap().session.map() != *asked);
+                if let Some(map) = switch {
+                    self.switch_map(&id, &workspace, &path, map, writable)?;
+                }
+                workspace
+            }
             None => {
                 let fresh = Session {
                     version: session::SESSION_VERSION,
@@ -116,22 +131,23 @@ impl App {
                     writable,
                     name: if name.is_empty() { path.file_name().unwrap_or_default().to_string_lossy().to_string() } else { name.into() },
                     stage: "raw".into(),
+                    map_name: map.unwrap_or_default().into(),
                     history: vec![format!("Opened {}", path.display())],
                     ..Default::default()
                 };
                 let unindexed = dimos_recording::format_of(&path)? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(&path);
-                let (session, map, odometry_pending, recorded_map) = if unindexed { (fresh.clone(), None, None, None) } else { Self::read_for_open(&path, fresh.clone())? };
+                let (session, data, odometry_pending, recorded_map) = if unindexed { (fresh.clone(), None, None, None) } else { Self::read_for_open(&path, fresh.clone(), map)? };
                 self.store.save(&session)?;
-                if let Some(map) = &map {
-                    self.store.save_map(&id, map)?;
+                if let Some(data) = &data {
+                    self.store.save_map(&id, data)?;
                 }
-                let mut workspace = Workspace::new(session, map);
+                let mut workspace = Workspace::new(session, data);
                 workspace.odometry_pending = odometry_pending;
                 workspace.recorded_map = recorded_map;
                 let workspace = Arc::new(Mutex::new(workspace));
                 self.workspaces.lock().unwrap().insert(id.clone(), workspace.clone());
                 if unindexed {
-                    self.start_open_job(&id, path.clone(), fresh)?;
+                    self.start_open_job(&id, path.clone(), fresh, map.map(str::to_string))?;
                 }
                 workspace
             }
@@ -143,16 +159,23 @@ impl App {
         Ok(workspace)
     }
 
-    /// What opening reads from the recording: an earlier save to restore (else `fresh`), whether it needs
-    /// Point-LIO's odometry first, and its own `global_map` stream if it has one.
-    fn read_for_open(path: &std::path::Path, mut fresh: Session) -> Result<(Session, Option<crate::session::MapData>, Option<String>, Option<String>)> {
+    /// What opening reads from the recording: the save of the map being opened (else `fresh`), whether it needs
+    /// Point-LIO's odometry first, and its own `global_map` stream if it has one. `pick` is the map asked for; None
+    /// takes the recording's one map when it has exactly one, and otherwise leaves `persist::load` to choose.
+    fn read_for_open(path: &std::path::Path, mut fresh: Session, pick: Option<&str>) -> Result<(Session, Option<crate::session::MapData>, Option<String>, Option<String>)> {
         let recording = Recording::open(path)?;
-        // a new map gets the first name the recording hasn't got one under (v1, else v2, ...); restoring a saved map
-        // below takes that map's name instead
-        fresh.map_name = mapping::names::default_for(&recording);
+        let taken = mapping::names::taken(&recording);
+        // nothing picked: the recording's one map when that is all it has, else let the save below choose (several) or
+        // start a new map under the first free name (none)
+        let pick = match pick {
+            Some(pick) => Some(pick.to_string()),
+            None if taken.len() == 1 => Some(taken[0].clone()),
+            None => None,
+        };
+        fresh.map_name = pick.clone().unwrap_or_else(|| mapping::names::next_free(&taken));
         let odometry_pending = crate::pipeline::odometry_pending(&recording.stream_list()?, |s| recording.has_messages(&s.name).unwrap_or(false));
         let recorded_map = mapping::recorded::find(&recording)?;
-        let (mut session, map) = match persist::load(&recording, fresh.clone()) {
+        let (mut session, map) = match persist::load(&recording, fresh.clone(), pick.as_deref()) {
             Ok(Some((session, map))) => (Session { saved_revision: 0, revision: 0, ..session }, Some(map)),
             Ok(None) => (fresh, None),
             Err(error) => {
@@ -161,8 +184,81 @@ impl App {
                 (session, None)
             }
         };
+        // seeds a map with no save of its own; one restored above already has its places (persist::load)
         persist::read_named_locations(&recording, &mut session);
         Ok((session, map, odometry_pending, recorded_map))
+    }
+
+    /// Moves the open session to another of its recording's maps: read again from the recording under that name (a
+    /// name with no save there starts a new map). Refused while there are edits the recording hasn't got yet — they
+    /// belong to the map that is open, and nothing here copies them over.
+    fn switch_map(self: &Arc<Self>, id: &str, workspace: &Arc<Mutex<Workspace>>, path: &std::path::Path, map: &str, writable: bool) -> Result<()> {
+        let base = {
+            let ws = workspace.lock().unwrap();
+            if ws.discarded {
+                bail!("no session {id} (discarded)");
+            }
+            if ws.session.revision != ws.session.saved_revision {
+                bail!(
+                    "\"{}\" has changes that aren't saved into the recording yet: save them (or discard the working copy) before opening another of this recording's maps",
+                    ws.session.map()
+                );
+            }
+            let mut history = ws.session.history.clone();
+            history.push(format!("Opened the recording's map \"{map}\""));
+            Session {
+                version: session::SESSION_VERSION,
+                id: ws.session.id.clone(),
+                recording_id: ws.session.recording_id.clone(),
+                recording_path: ws.session.recording_path.clone(),
+                writable,
+                name: ws.session.name.clone(),
+                stage: "raw".into(),
+                map_name: map.to_string(),
+                view: ws.session.view.clone(),
+                history,
+                ..Default::default()
+            }
+        };
+        let (session, data, odometry_pending, recorded_map) = Self::read_for_open(path, base, Some(map))?;
+        self.store.save(&session)?;
+        match &data {
+            Some(data) => self.store.save_map(id, data)?,
+            // nothing saved under that name: a new map, so the map that was open doesn't stay on disk as its voxels
+            None => self.store.clear_map(id)?,
+        }
+        let mut swapped = Workspace::new(session, data);
+        swapped.odometry_pending = odometry_pending;
+        swapped.recorded_map = recorded_map;
+        let revision = swapped.session.revision;
+        *workspace.lock().unwrap() = swapped;
+        self.invalidate_preview(id);
+        self.emit(json!({ "type": "session", "id": id, "revision": revision }));
+        Ok(())
+    }
+
+    /// The maps a recording already holds and the name a new one would get, for the page's map picker: it asks the
+    /// user which map to open when there is more than one, opens the only one when there is one, and starts a new map
+    /// under `default` when there is none. An `.mcap` with no index isn't listed (reading its streams would read all
+    /// of it): `unindexed` says so, and opening it reads them in the "open" job instead.
+    pub fn maps_of(path: &std::path::Path) -> Result<Value> {
+        dimos_recording::format_of(path)?;
+        if !path.is_file() {
+            bail!("no such recording file: {}", path.display());
+        }
+        let unindexed = dimos_recording::format_of(path)? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(path);
+        if unindexed {
+            return Ok(json!({ "maps": [], "default": mapping::names::FIRST, "unindexed": true }));
+        }
+        let recording = Recording::open(path)?;
+        let maps: Vec<Value> = mapping::names::taken(&recording)
+            .into_iter()
+            .map(|name| {
+                let saved_at = persist::saved_at(&recording, &name);
+                json!({ "name": name, "savedAt": saved_at, "saved": saved_at.is_some() })
+            })
+            .collect();
+        Ok(json!({ "maps": maps, "default": mapping::names::default_for(&recording), "unindexed": false }))
     }
 
     /// The recording's own `global_map` stream, for a session restored from disk (None for an .mcap with no index:
@@ -187,7 +283,7 @@ impl App {
 
     /// An .mcap with no summary: walk it once (bytes read / total, ETA, cancel), then restore an earlier save into the
     /// session if nothing was done to it meanwhile.
-    fn start_open_job(self: &Arc<Self>, id: &str, path: PathBuf, fresh: Session) -> Result<Job> {
+    fn start_open_job(self: &Arc<Self>, id: &str, path: PathBuf, fresh: Session, pick: Option<String>) -> Result<Job> {
         let session_id = id.to_string();
         self.start_job(id, "open", move |app, report, cancel| {
             let file = dimos_recording::mcap_io::McapFile::open(&path)?;
@@ -199,7 +295,7 @@ impl App {
                 return Err(if cancel.load(Ordering::Relaxed) { anyhow::anyhow!(Cancelled) } else { error });
             }
             drop(file);
-            let (session, map, odometry_pending, recorded_map) = Self::read_for_open(&path, fresh)?;
+            let (session, map, odometry_pending, recorded_map) = Self::read_for_open(&path, fresh, pick.as_deref())?;
             let shared = app.require(&session_id)?;
             let mut ws = shared.lock().unwrap();
             if ws.discarded {
@@ -586,7 +682,7 @@ mod tests {
         dimos_recording::db::write_stream(&mut db, "lidar", "sensor_msgs.PointCloud2", &[]).unwrap();
         drop(db);
         let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
-        let held = app.open("r.db", &recording.display().to_string(), "r", true).unwrap();
+        let held = app.open("r.db", &recording.display().to_string(), "r", true, None).unwrap();
         let id = held.lock().unwrap().session.id.clone();
         app.discard(&id).unwrap();
         app.set_view(&id, json!({ "late": true })).ok();
@@ -609,7 +705,7 @@ mod tests {
         drop(db);
         let path = recording.display().to_string();
         let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
-        let held = app.open("r.db", &path, "r", true).unwrap();
+        let held = app.open("r.db", &path, "r", true, None).unwrap();
         let id = held.lock().unwrap().session.id.clone();
         assert_eq!(held.lock().unwrap().session.map_name, "v1", "the first map of a recording");
 
@@ -622,12 +718,12 @@ mod tests {
         persist::save(&held.lock().unwrap().clone(), |_, _| {}).unwrap();
         let reopened = App::new(dir.path().join("data"), dir.path().to_path_buf());
         reopened.discard(&id).unwrap();
-        let again = reopened.open("r.db", &path, "r", true).unwrap();
+        let again = reopened.open("r.db", &path, "r", true, None).unwrap();
         assert_eq!(again.lock().unwrap().session.map_name, "v1", "reopening restores the map it was saved as");
 
         // a second map of the same space: the name counts up
         let fresh = App::new(dir.path().join("data2"), dir.path().to_path_buf());
-        let held2 = fresh.open("r.db", &path, "r", true).unwrap();
+        let held2 = fresh.open("r.db", &path, "r", true, None).unwrap();
         assert_eq!(held2.lock().unwrap().session.map_name, "v1", "a restored save keeps its name");
         let id2 = held2.lock().unwrap().session.id.clone();
         fresh.mutate(&id2, |w| w.set_map_name("v1")).unwrap();
@@ -636,6 +732,112 @@ mod tests {
         let recording_now = Recording::open(std::path::Path::new(&path)).unwrap();
         assert_eq!(mapping::names::taken(&recording_now), ["office", "v1"]);
         assert_eq!(mapping::names::default_for(&recording_now), "v2", "a next new map");
+    }
+
+    /// the map picker's three cases: a recording with no map (nothing to pick, a new one under the default name),
+    /// with one (nothing to pick, it opens), and with several (they are listed, and the one asked for opens)
+    #[test]
+    fn the_map_picker_lists_what_there_is_and_opens_the_one_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let recording = dir.path().join("r.db");
+        let mut db = dimos_recording::db::Connection::open(&recording).unwrap();
+        let scan = dimos_recording::lcm::encode_xyz_cloud(&dimos_recording::lcm::Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        dimos_recording::db::write_stream(&mut db, "lidar", "sensor_msgs.PointCloud2", &[(1.0, scan)]).unwrap();
+        drop(db);
+        let path = recording.display().to_string();
+        let file = std::path::Path::new(&path);
+        let names = |listed: &Value| listed["maps"].as_array().unwrap().iter().map(|m| m["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+
+        // (1) no map: nothing to pick, and a new map takes the default name
+        let listed = App::maps_of(file).unwrap();
+        assert_eq!(names(&listed), Vec::<String>::new());
+        assert_eq!(listed["default"], "v1");
+        assert_eq!(listed["unindexed"], false);
+        let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let held = app.open("r.db", &path, "r", true, None).unwrap();
+        let id = held.lock().unwrap().session.id.clone();
+        assert_eq!(held.lock().unwrap().session.map_name, "v1");
+        app.mutate(&id, |w| {
+            w.set_map(crate::workspace::tests::room_map());
+            w.add_box("table", mapping::voxels::Box3::from_bounds([2.0, 3.0, 0.7], [3.2, 3.8, 0.8]), "user")
+        })
+        .unwrap();
+        persist::save(&held.lock().unwrap().clone(), |_, _| {}).unwrap();
+
+        // (2) one map: it is listed with when it was saved, and opening without a pick takes it
+        let listed = App::maps_of(file).unwrap();
+        assert_eq!(names(&listed), ["v1"]);
+        assert!(listed["maps"][0]["saved"].as_bool().unwrap() && listed["maps"][0]["savedAt"].as_f64().unwrap() > 0.0);
+        assert_eq!(listed["default"], "v2", "a new map beside it");
+        let one = App::new(dir.path().join("data2"), dir.path().to_path_buf());
+        let only = one.open("r.db", &path, "r", true, None).unwrap();
+        assert_eq!(only.lock().unwrap().session.map_name, "v1");
+        assert_eq!(only.lock().unwrap().session.annotations.boxes.len(), 1, "its save came back");
+
+        // a second map of the same space, saved beside the first
+        let id2 = only.lock().unwrap().session.id.clone();
+        one.mutate(&id2, |w| w.set_map_name("office")).unwrap();
+        one.mutate(&id2, |w| w.add_box("desk", mapping::voxels::Box3::from_bounds([0.0, 0.0, 0.7], [1.0, 1.0, 0.8]), "user")).unwrap();
+        persist::save(&only.lock().unwrap().clone(), |_, _| {}).unwrap();
+
+        // (3) several maps: both listed, and the one asked for is the one that opens
+        let listed = App::maps_of(file).unwrap();
+        assert_eq!(names(&listed), ["office", "v1"]);
+        assert_eq!(listed["default"], "v2");
+        let picker = App::new(dir.path().join("data3"), dir.path().to_path_buf());
+        let picked = picker.open("r.db", &path, "r", true, Some("v1")).unwrap();
+        assert_eq!(picked.lock().unwrap().session.map_name, "v1");
+        assert_eq!(picked.lock().unwrap().session.annotations.boxes.len(), 1, "v1's save, not the newest");
+
+        // the recording is already open: picking another of its maps moves the session to it
+        let switched = picker.open("r.db", &path, "r", true, Some("office")).unwrap();
+        assert_eq!(switched.lock().unwrap().session.map_name, "office");
+        assert_eq!(switched.lock().unwrap().session.annotations.boxes.len(), 2, "office's save");
+        assert!(switched.lock().unwrap().map.is_some(), "its voxels came with it");
+
+        // a name the recording has no map under starts a new one, with nothing restored
+        let started = picker.open("r.db", &path, "r", true, Some("v2")).unwrap();
+        assert_eq!(started.lock().unwrap().session.map_name, "v2");
+        assert!(started.lock().unwrap().session.annotations.boxes.is_empty(), "a new map is empty");
+        assert!(started.lock().unwrap().map.is_none(), "and has no voxels yet");
+
+        // and a name that can't be a map's is refused rather than quietly changed
+        assert!(matches!(picker.open("r.db", &path, "r", true, Some("my map")), Err(_)), "a name that can't be a map's is refused");
+    }
+
+    /// edits that aren't in the recording yet belong to the map that is open: switching away is refused, not silent
+    #[test]
+    fn switching_maps_with_unsaved_edits_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let recording = dir.path().join("r.db");
+        let mut db = dimos_recording::db::Connection::open(&recording).unwrap();
+        let scan = dimos_recording::lcm::encode_xyz_cloud(&dimos_recording::lcm::Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        dimos_recording::db::write_stream(&mut db, "lidar", "sensor_msgs.PointCloud2", &[(1.0, scan)]).unwrap();
+        drop(db);
+        let path = recording.display().to_string();
+        let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
+        let held = app.open("r.db", &path, "r", true, None).unwrap();
+        let id = held.lock().unwrap().session.id.clone();
+        app.mutate(&id, |w| {
+            w.set_map(crate::workspace::tests::room_map());
+            w.add_box("table", mapping::voxels::Box3::from_bounds([2.0, 3.0, 0.7], [3.2, 3.8, 0.8]), "user")
+        })
+        .unwrap();
+        let error = match app.open("r.db", &path, "r", true, Some("office")) {
+            Err(error) => format!("{error:#}"),
+            Ok(_) => panic!("switching away from unsaved edits should be refused"),
+        };
+        assert!(error.contains("aren't saved into the recording yet"), "{error}");
+        assert_eq!(held.lock().unwrap().session.map_name, "v1", "the open map stayed");
+        // saved, it moves
+        persist::save(&held.lock().unwrap().clone(), |_, _| {}).unwrap();
+        app.mutate(&id, |w| {
+            w.session.saved_revision = w.session.revision;
+            Ok(())
+        })
+        .unwrap();
+        let moved = app.open("r.db", &path, "r", true, Some("office")).unwrap();
+        assert_eq!(moved.lock().unwrap().session.map_name, "office");
     }
 
     /// a raw lidar + IMU recording still offers Point-LIO after a restart restores its session
@@ -649,7 +851,7 @@ mod tests {
         dimos_recording::db::write_stream(&mut db, "rig/imu", "sensor_msgs.Imu", &[(1.0, vec![0; 8])]).unwrap();
         drop(db);
         let opened = App::new(dir.path().join("data"), dir.path().to_path_buf());
-        let id = opened.open("r.db", &recording.display().to_string(), "r", true).unwrap().lock().unwrap().session.id.clone();
+        let id = opened.open("r.db", &recording.display().to_string(), "r", true, None).unwrap().lock().unwrap().session.id.clone();
         assert!(opened.require(&id).unwrap().lock().unwrap().odometry_pending.is_some());
         let restarted = App::new(dir.path().join("data"), dir.path().to_path_buf());
         assert!(restarted.require(&id).unwrap().lock().unwrap().odometry_pending.is_some());
@@ -670,7 +872,7 @@ mod tests {
         std::fs::write(&path, &bytes[..summary_start - 13]).unwrap();
 
         let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
-        let held = app.open("", &path.display().to_string(), "r", true).unwrap();
+        let held = app.open("", &path.display().to_string(), "r", true, None).unwrap();
         let id = held.lock().unwrap().session.id.clone();
         assert_eq!(held.lock().unwrap().session.stage, "raw", "opened without reading it");
         assert_eq!(app.job(&id).unwrap().kind, "open");
@@ -701,7 +903,7 @@ mod tests {
         dimos_recording::mcap_io::write_fixture(&path, &[("/lidar", "lcm", pc2, 1.0, cloud(1.0, &[[9.0, 9.0, 9.0]])), ("/global_map", "lcm", pc2, 1.0, cloud(1.0, &grid[..10])), ("/global_map", "lcm", pc2, 2.0, cloud(2.0, &grid))]);
         let before = std::fs::read(&path).unwrap();
         let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
-        let held = app.open("", &path.display().to_string(), "r", false).unwrap();
+        let held = app.open("", &path.display().to_string(), "r", false, None).unwrap();
         let id = held.lock().unwrap().session.id.clone();
         assert_eq!(held.lock().unwrap().recorded_map.as_deref(), Some("/global_map"));
         app.use_recorded_map(&id, None, None).unwrap();
@@ -722,7 +924,7 @@ mod tests {
 
         let plain = dir.path().join("plain.mcap");
         dimos_recording::mcap_io::write_fixture(&plain, &[("/lidar", "lcm", pc2, 1.0, cloud(1.0, &[[9.0, 9.0, 9.0]]))]);
-        let held = app.open("", &plain.display().to_string(), "plain", true).unwrap();
+        let held = app.open("", &plain.display().to_string(), "plain", true, None).unwrap();
         let id = held.lock().unwrap().session.id.clone();
         assert!(held.lock().unwrap().recorded_map.is_none());
         assert!(app.use_recorded_map(&id, None, None).unwrap_err().to_string().contains("no global_map"));
@@ -735,7 +937,7 @@ mod tests {
         let path = dir.path().join("r.mcap");
         dimos_recording::mcap_io::write_fixture(&path, &[("/lidar", "cdr", "sensor_msgs/msg/PointCloud2", 1.0, vec![1, 2])]);
         let app = App::new(dir.path().join("data"), dir.path().to_path_buf());
-        let held = app.open("", &path.display().to_string(), "r", true).unwrap();
+        let held = app.open("", &path.display().to_string(), "r", true, None).unwrap();
         let id = held.lock().unwrap().session.id.clone();
         assert!(app.job(&id).is_none());
     }

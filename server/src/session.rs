@@ -397,6 +397,19 @@ impl Store {
         Ok(())
     }
 
+    /// Forgets the built map's arrays, keeping the session (switching to a map the recording hasn't got a save for).
+    pub fn clear_map(&self, id: &str) -> Result<()> {
+        let dir = self.session_dir(id)?;
+        for name in ["map.bin", "removed.bin"] {
+            match std::fs::remove_file(dir.join(name)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+
     pub fn delete(&self, id: &str) -> Result<()> {
         let dir = self.session_dir(id)?;
         if dir.exists() {

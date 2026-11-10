@@ -169,8 +169,10 @@ pub fn routes() -> Routes<Arc<App>> {
         .role("context")
         .endpoint("GET", "api/state", "What the page loads: { active (the open session id, or null), session (its full state: annotations, plans, job, history...), last (when nothing is open: the session open before a restart, offered, not loaded), recordingsDir (Desktop's recordings folder) }. Only a recording opened since the server started is open.", json!({}), state)
         .when("you need to know which recording is open, or which was open last")
-        .endpoint("POST", "api/open", "Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and edits come back). path = absolute path (Desktop's GET /gateways/desktop/recordings lists them) or relative to the recordings folder. Returns the session's full state (as GET api/sessions/{id}) at once: only the recording's index is read (an .mcap's summary, a .db's stream list). An .mcap with no summary (cut short) is read in the background as an open job (job: bytes read / total, ETA, cancel); GET api/sessions/{id}/generate answers 202 with it until it's done.", json!({ "path": required(s("the recording file")), "name": s("display name"), "id": s("Desktop's recording id"), "writable": b("false for a read-only folder: saving is refused, recordings are never copied (default true)") }), open)
+        .endpoint("POST", "api/open", "Open a recording (.mcap / .db) in the Map Editor: every open page switches to it (its saved map and edits come back). path = absolute path (Desktop's GET /gateways/desktop/recordings lists them) or relative to the recordings folder. Returns the session's full state (as GET api/sessions/{id}) at once: only the recording's index is read (an .mcap's summary, a .db's stream list). An .mcap with no summary (cut short) is read in the background as an open job (job: bytes read / total, ETA, cancel); GET api/sessions/{id}/generate answers 202 with it until it's done.", json!({ "path": required(s("the recording file")), "name": s("display name"), "id": s("Desktop's recording id"), "writable": b("false for a read-only folder: saving is refused, recordings are never copied (default true)"), "map": s("which of the recording's maps to open (GET api/maps lists them); a name it has no map under starts a new one. Default: its only map, or a new one when it has none or several") }), open)
         .when("you need to open a recording in the Map Editor")
+        .endpoint("GET", "api/maps", "The maps a recording already holds (a recording can hold several of the same space): { maps: [{ name, savedAt, saved }], default (the name a new map would get), unindexed (an .mcap with no index: its maps can't be listed without reading all of it) }. Pass one of the names as POST api/open's `map`. Takes path= (absolute, or relative to the recordings folder).", json!({ "path": required(s("the recording file")) }), recording_maps)
+        .when("you need to know which maps a recording already holds, before opening one")
         .endpoint("GET", "api/build-defaults", "The default map build options (voxelSize, loopClosure, rayTracing, every, maxRange, tfTolerance, worldFrame, cloudStream, ray, pgo), as an object POST .../build takes.", json!({}), |  | async { Json(json!(mapping::build::BuildOptions::default())) })
         .when("you want the default options before building a map")
         .endpoint("GET", "api/view", "What the user is looking at: camera position/target, the map-frame bounds of the visible voxels (visibleBounds), the selection, the page's ui (mode, tool, planFloor, look), and (screenshot=true, default) a screenshot of the 3D view with a 1 m grid, axis labels and annotation labels drawn on it (images[0]).", json!({ "screenshot": b("include a screenshot (default true)"), "topDown": b("screenshot from straight above the current target instead of the user's angle (the user's camera is restored after)"), "session": s("session id (default: the recording open in the page)") }), get_view)
@@ -433,15 +435,31 @@ async fn state(State(app): State<Arc<App>>) -> Result<Json<Value>> {
     Ok(Json(json!({ "active": active, "session": session, "last": last, "recordingsDir": app.recordings_dir })))
 }
 
+/// A recording's path as given: absolute, or relative to the recordings folder.
+fn resolve_recording(app: &Arc<App>, path: &str) -> Result<std::path::PathBuf> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(anyhow::anyhow!("path is required").into());
+    }
+    Ok(if std::path::Path::new(path).is_absolute() { std::path::PathBuf::from(path) } else { app.recordings_dir.join(path) })
+}
+
+/// `GET api/maps?path=<recording>`: which maps the recording holds, for the page's picker (App::maps_of).
+async fn recording_maps(State(app): State<Arc<App>>, Query(args): Args) -> Result<Json<Value>> {
+    let path = resolve_recording(&app, args.get("path").map_or("", String::as_str))?;
+    Ok(Json(blocking(move || App::maps_of(&path)).await?))
+}
+
 async fn open(State(app): State<Arc<App>>, Body(body): Body) -> Result<Json<Value>> {
-    let path = body["path"].as_str().context("path is required")?.to_string();
-    let path = if std::path::Path::new(&path).is_absolute() { path } else { app.recordings_dir.join(&path).display().to_string() };
+    let path = resolve_recording(&app, body["path"].as_str().context("path is required")?)?;
+    let path = path.display().to_string();
     let id = body["id"].as_str().unwrap_or_default().to_string();
     let name = body["name"].as_str().unwrap_or_default().to_string();
+    let map = body["map"].as_str().map(str::trim).filter(|m| !m.is_empty()).map(str::to_string);
     // the steps write into the file itself: a writable folder isn't enough (a recording root made is read-only to us)
     let writable = body["writable"].as_bool().unwrap_or(true) && recording_writable(std::path::Path::new(&path));
     let app2 = app.clone();
-    let workspace = blocking(move || app2.open(&id, &path, &name, writable)).await?;
+    let workspace = blocking(move || app2.open(&id, &path, &name, writable, map.as_deref())).await?;
     let value = summary(&app, &workspace.lock().unwrap());
     // every open page follows (the one that asked already has it)
     app.emit(json!({ "type": "opened", "id": value["id"] }));

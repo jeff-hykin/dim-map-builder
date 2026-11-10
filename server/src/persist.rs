@@ -232,32 +232,71 @@ fn grid(plan: &FloorPlan, header: &Header) -> OccupancyGrid {
     }
 }
 
-/// The saved map a recording is reopened on: the newest named one (several maps = the one saved last), with the
-/// streams its voxels, path and annotations are on; None when it has no named map.
-fn newest_saved_map(recording: &Recording) -> Option<(String, Streams, Vec<u8>)> {
-    let mut best: Option<(f64, String, Streams, Vec<u8>)> = None;
-    for map in mapping::names::taken(recording) {
-        let streams = Streams::new(recording.format(), &map);
-        let name = streams.leaf("annotations");
-        let Some((_, payload)) = recording.latest(&name).ok().flatten() else { continue };
-        let saved_at = lcm::decode_string(&payload)
-            .ok()
-            .and_then(|text| serde_json::from_str::<SavedState>(&text).ok())
-            .map_or(0.0, |state| state.saved_at);
-        if best.as_ref().is_none_or(|(at, ..)| saved_at >= *at) {
-            best = Some((saved_at, map, streams, payload));
-        }
-    }
-    best.map(|(_, map, streams, payload)| (map, streams, payload))
+/// Map `map`'s save in the recording (the payload of its annotations stream), if it has one.
+fn saved_map(recording: &Recording, map: &str) -> Option<(Streams, Vec<u8>)> {
+    let streams = Streams::new(recording.format(), map);
+    let payload = recording.latest(&streams.leaf("annotations")).ok().flatten()?.1;
+    Some((streams, payload))
 }
 
-/// A session rebuilt from an earlier save inside the recording, if it has one. A named map (the newest, when it has
-/// several) comes first and the session takes its name; without one, the flat `map/...` of versions before map names,
-/// then the older `map_builder` save.
-pub fn load(recording: &Recording, mut session: Session) -> Result<Option<(Session, MapData)>> {
-    let (map_name, path_name, annotations_name, payload) = match newest_saved_map(recording) {
-        Some((map, streams, payload)) => {
-            session.map_name = map;
+/// When map `map` was last saved into the recording, if it was (the Open panel's map picker shows it).
+pub fn saved_at(recording: &Recording, map: &str) -> Option<f64> {
+    let (_, payload) = saved_map(recording, map)?;
+    let text = lcm::decode_string(&payload).ok()?;
+    serde_json::from_str::<SavedState>(&text).ok().map(|state| state.saved_at)
+}
+
+/// The saved map a recording is reopened on when nothing says which: the newest named one (several maps = the one
+/// saved last); None when it has no named map with a save.
+fn newest_saved_map(recording: &Recording) -> Option<(Streams, Vec<u8>)> {
+    let mut best: Option<(f64, Streams, Vec<u8>)> = None;
+    for map in mapping::names::taken(recording) {
+        let Some((streams, payload)) = saved_map(recording, &map) else { continue };
+        let saved_at = saved_at(recording, &map).unwrap_or(0.0);
+        if best.as_ref().is_none_or(|(at, ..)| saved_at >= *at) {
+            best = Some((saved_at, streams, payload));
+        }
+    }
+    best.map(|(_, streams, payload)| (streams, payload))
+}
+
+/// Map `map`'s own places, as its `named_locations` stream holds them. They are already in the map's coordinates (the
+/// save wrote them there), so nothing goes through `transform` — and the recording's flat `/named_locations` is not
+/// consulted for a map that has its own, so a robot can drop that stream. Ids are carried over from `have` where a
+/// name matches, so they stay the same across a reopen.
+fn own_named_locations(recording: &Recording, streams: &Streams, have: &[crate::session::NamedLocation]) -> Option<Vec<crate::session::NamedLocation>> {
+    let (_, payload) = recording.latest(&streams.leaf("named_locations")).ok().flatten()?;
+    let list = lcm::decode_named_locations(&payload).ok()?;
+    Some(
+        list.into_iter()
+            .enumerate()
+            .map(|(index, l)| crate::session::NamedLocation {
+                id: have.iter().find(|h| h.name == l.name).map_or_else(|| format!("place-{index}"), |h| h.id.clone()),
+                position: [l.position[0] as f32, l.position[1] as f32, l.position[2] as f32],
+                name: l.name,
+                frame: l.frame_id,
+            })
+            .collect(),
+    )
+}
+
+/// A session rebuilt from a save inside the recording, if it has one. `map` says which of the recording's maps to
+/// open: a name it has no save under is a new map, so there is nothing to restore (and no older save stands in for
+/// it). None takes the newest named save, and without one the flat `map/...` save of versions before map names, then
+/// the older `map_builder` one.
+pub fn load(recording: &Recording, mut session: Session, map: Option<&str>) -> Result<Option<(Session, MapData)>> {
+    let found = match map {
+        Some(map) => match saved_map(recording, map) {
+            Some(found) => Some(found),
+            None => return Ok(None),
+        },
+        None => newest_saved_map(recording),
+    };
+    let mut restored = None;
+    let (map_name, path_name, annotations_name, payload) = match found {
+        Some((streams, payload)) => {
+            session.map_name = streams.map.clone();
+            restored = Some(streams.clone());
             (streams.leaf("voxels"), streams.leaf("path"), streams.leaf("annotations"), payload)
         }
         None => {
@@ -306,6 +345,13 @@ pub fn load(recording: &Recording, mut session: Session) -> Result<Option<(Sessi
     session.transform = state.transform;
     session.annotations = state.annotations;
     session.plans = plans;
+    if let Some(streams) = &restored {
+        // its own places, never the recording's flat /named_locations (read_named_locations)
+        session.annotations.named_locations_read = true;
+        if let Some(list) = own_named_locations(recording, streams, &session.annotations.named_locations) {
+            session.annotations.named_locations = list;
+        }
+    }
     session.build = state.build;
     session.erased = state.erased;
     session.saved_at = Some(state.saved_at);
@@ -386,7 +432,7 @@ mod tests {
         assert_eq!(expected[1].1, "premap", "a new one takes the list's frame");
         assert!((expected[0].2[0] - 1.0).abs() > 0.1, "the kitchen turned with the map (rotate_yaw)");
 
-        let (restored, map) = load(&recording, Session::default()).unwrap().unwrap();
+        let (restored, map) = load(&recording, Session::default(), None).unwrap().unwrap();
         assert_eq!(restored.map_name, "v1", "{format}: reopening restores the map it was saved as");
         assert_eq!(map.points.len(), visible);
         assert_eq!(restored.annotations, ws.session.annotations);
@@ -436,7 +482,7 @@ mod tests {
         assert_eq!(read("v1").frame, "map/v1", "{format}");
         assert_eq!(read("office").frame, "map/office", "{format}");
         // reopening takes the one saved last
-        let (restored, _) = load(&recording, Session::default()).unwrap().unwrap();
+        let (restored, _) = load(&recording, Session::default(), None).unwrap().unwrap();
         assert_eq!(restored.map_name, "office", "{format}");
         // and the default name for a next map counts past both
         assert_eq!(mapping::names::default_for(&recording), "v2", "{format}");
@@ -485,7 +531,7 @@ mod tests {
         let recording = Recording::open(&path).unwrap();
         assert_eq!(mapping::names::taken(&recording), Vec::<String>::new(), "a flat save is not a named map");
         let fresh = Session { id: "s".into(), recording_path: path.display().to_string(), map_name: mapping::names::default_for(&recording), ..Default::default() };
-        let (restored, map) = load(&recording, fresh).unwrap().unwrap();
+        let (restored, map) = load(&recording, fresh, None).unwrap().unwrap();
         assert_eq!(map.points.len(), points.len(), "the flat map/voxels is still read");
         assert_eq!(restored.annotations.boxes.len(), 1);
         assert_eq!(restored.map_name, "v1", "the next save goes under a name");
@@ -502,8 +548,88 @@ mod tests {
         }
         assert!(streams.contains(&"map/v1/cloud".to_string()), "{streams:?}");
         // and reopening now takes the named map, not the flat one
-        let (again, _) = load(&recording, Session::default()).unwrap().unwrap();
+        let (again, _) = load(&recording, Session::default(), None).unwrap().unwrap();
         assert_eq!(again.map_name, "v1");
+    }
+
+    /// An existing map's places come from its own `named_locations` stream: the recording's flat `/named_locations`
+    /// can be gone (a robot dropping it as dead weight) and they still come back — and when it is there it is not
+    /// consulted, so a decoy list in it can't replace the map's own. The positions must come back as they were
+    /// saved, not through `transform` a second time.
+    fn own_places(format: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("run.{format}"));
+        let cloud = lcm::encode_xyz_cloud(&Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        match format {
+            "db" => db::write_stream(&mut db::Connection::open(&path).unwrap(), "lidar", lcm::POINT_CLOUD2_TYPE, &[(1.0, cloud)]).unwrap(),
+            _ => mcap_io::write_fixture(&path, &[("/lidar", "lcm", lcm::POINT_CLOUD2_TYPE, 1.0, cloud)]),
+        }
+        // the session is built here, so `named_locations_read` is false the way a save from before this read it
+        let session = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), map_name: "v1".into(), ..Default::default() };
+        let mut ws = Workspace::new(session, Some(room_map()));
+        ws.add_named_location("dock", [3.0, 1.0, 0.0]).unwrap();
+        ws.add_named_location("kitchen", [1.0, 4.0, 0.0]).unwrap();
+        // a map that isn't square to the world: a list put through `transform` twice lands somewhere else
+        ws.rotate_yaw(30.0).unwrap();
+        assert!(!ws.session.annotations.named_locations_read, "nothing has read a list into it");
+        let saved: Vec<(String, [f32; 3])> = ws.session.annotations.named_locations.iter().map(|l| (l.name.clone(), l.position)).collect();
+        assert_eq!(saved.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(), ["dock", "kitchen"]);
+        save(&ws, |_, _| {}).unwrap();
+
+        let recording = Recording::open(&path).unwrap();
+        let streams: Vec<String> = recording.streams().unwrap().into_iter().map(|s| s.name).collect();
+        assert!(!streams.iter().any(|s| s.trim_start_matches('/') == "named_locations"), "{format}: no flat stream here: {streams:?}");
+        let (restored, _) = load(&recording, Session::default(), Some("v1")).unwrap().unwrap();
+        let back: Vec<(String, [f32; 3])> = restored.annotations.named_locations.iter().map(|l| (l.name.clone(), l.position)).collect();
+        assert_eq!(back.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(), ["dock", "kitchen"], "{format}");
+        for ((name, was), (_, now)) in saved.iter().zip(&back) {
+            for axis in 0..3 {
+                assert!((was[axis] - now[axis]).abs() < 1e-3, "{format}: {name} moved: {was:?} -> {now:?}");
+            }
+        }
+        assert!(restored.annotations.named_locations_read, "{format}: the map has its own list, so the flat one is not its seed");
+        assert!(!restored.annotations.named_locations[0].frame.is_empty(), "{format}: the frame it was written with is kept");
+        // reading the recording's list into it now is a no-op
+        let mut again = restored.clone();
+        read_named_locations(&recording, &mut again);
+        assert_eq!(again.annotations.named_locations, restored.annotations.named_locations, "{format}");
+        drop(recording);
+
+        // a flat /named_locations in the recording does not replace the map's own
+        let decoy = lcm::encode_named_locations(&Header::at(2.0, ""), "robot", &[lcm::NamedLocation { name: "elsewhere".into(), frame_id: "premap".into(), position: [99.0, 99.0, 99.0], orientation: [0.0, 0.0, 0.0, 1.0] }]);
+        match format {
+            "db" => db::write_stream(&mut db::Connection::open(&path).unwrap(), "named_locations", lcm::INTERACTIVE_MARKER_UPDATE_TYPE, &[(2.0, decoy)]).unwrap(),
+            _ => mcap_io::append(&path, &[mcap_io::NewChannel { topic: "/named_locations".into(), kind: lcm::INTERACTIVE_MARKER_UPDATE_TYPE.into(), messages: vec![(2.0, decoy)] }]).unwrap(),
+        }
+        let recording = Recording::open(&path).unwrap();
+        let (restored, _) = load(&recording, Session::default(), Some("v1")).unwrap().unwrap();
+        assert_eq!(restored.annotations.named_locations.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["dock", "kitchen"], "{format}: the flat list was not consulted");
+    }
+
+    #[test]
+    fn an_existing_maps_places_come_from_its_own_stream_in_a_db() {
+        own_places("db");
+    }
+
+    #[test]
+    fn an_existing_maps_places_come_from_its_own_stream_in_an_mcap() {
+        own_places("mcap");
+    }
+
+    /// a recording with no map of its own still seeds a new map's places from the robot's /named_locations
+    #[test]
+    fn a_new_map_still_seeds_its_places_from_the_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.mcap");
+        let cloud = lcm::encode_xyz_cloud(&Header::at(1.0, "lidar"), &[[1.0, 0.0, 0.0]], None);
+        let kitchen = lcm::NamedLocation { name: "kitchen".into(), frame_id: "premap".into(), position: [1.0, 2.0, 0.0], orientation: [0.0, 0.0, 0.0, 1.0] };
+        let named = lcm::encode_named_locations(&Header::at(1.0, ""), "run", &[kitchen]);
+        mcap_io::write_fixture(&path, &[("/lidar", "lcm", lcm::POINT_CLOUD2_TYPE, 1.0, cloud), ("/named_locations", "lcm", lcm::INTERACTIVE_MARKER_UPDATE_TYPE, 1.0, named)]);
+        let recording = Recording::open(&path).unwrap();
+        assert!(load(&recording, Session::default(), None).unwrap().is_none(), "nothing saved in it yet");
+        let mut session = Session { id: "s".into(), recording_path: path.display().to_string(), map_name: "v1".into(), ..Default::default() };
+        read_named_locations(&recording, &mut session);
+        assert_eq!(session.annotations.named_locations.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["kitchen"]);
     }
 
     /// a name that isn't a plain identifier is refused, not quietly turned into one

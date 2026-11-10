@@ -126,8 +126,28 @@ provides:
                                         type: boolean
                                         description: 'false for a read-only folder: saving is refused, recordings are never
                                             copied (default true)'
+                                    map:
+                                        type: string
+                                        description: 'which of the recording''s maps to open (GET api/maps lists them); a
+                                            name it has no map under starts a new one. Default: its only map, or a new one
+                                            when it has none or several'
                                 required:
                                     - path
+        /api/maps:
+            get:
+                description: >-
+                    The maps a recording already holds (a recording can hold several of the same space): { maps: [{ name,
+                    savedAt, saved }], default (the name a new map would get), unindexed (an .mcap with no index: its maps
+                    can't be listed without reading all of it) }. Pass one of the names as POST api/open's `map`. Takes path=
+                    (absolute, or relative to the recordings folder).
+                x-when: you need to know which maps a recording already holds, before opening one
+                parameters:
+                    -   name: path
+                        in: query
+                        required: true
+                        schema:
+                            type: string
+                        description: the recording file
         /api/build-defaults:
             get:
                 description: >-

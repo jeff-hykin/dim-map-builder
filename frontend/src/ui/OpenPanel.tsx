@@ -1,7 +1,7 @@
 // Open: pick a recording from Desktop's shared recordings folder (newest first), see its streams, open it; or browse to any .db / .mcap on this machine.
 import { useEffect, useState } from "react"
 import { Button, Card, Column, EmptyState, IconButton, List, ListRow, Row, SearchInput, Segmented, Text, TextInput } from "dimos-react"
-import { files, recordings, type BrowseEntry, type DesktopRecording, type RecordingMetadata } from "../core/api.ts"
+import { api, files, recordings, type BrowseEntry, type DesktopRecording, type RecordingMaps, type RecordingMetadata } from "../core/api.ts"
 import type { Context } from "./context.ts"
 import { AppButton } from "./AppButton.tsx"
 // @deno-types="../dim-app/source/zenoh.d.ts"
@@ -20,6 +20,62 @@ function age(seconds: number) {
         return `${Math.round(ago / 3600)} h ago`
     }
     return new Date(seconds * 1000).toLocaleDateString()
+}
+
+/** Pick which of a recording's maps to open. A recording can hold several of the same space: with more than one the
+ * maps are listed (and a new one can be started beside them), and with one -- or none -- there is nothing to pick, so
+ * it is a single Open that takes the only map, or starts the first. */
+function OpenMaps({ path, opening, disabled, onOpen }: { path: string; opening: boolean; disabled?: boolean; onOpen: (map?: string) => void | Promise<void>; }) {
+    const [maps, setMaps] = useState<RecordingMaps | null>(null)
+    const [problem, setProblem] = useState<string | null>(null)
+    useEffect(() => {
+        setMaps(null)
+        setProblem(null)
+        let live = true
+        api.maps(path).then((body) => live && setMaps(body)).catch((error) => live && setProblem(error.message))
+        return () => {
+            live = false
+        }
+    }, [path])
+    const open = (map?: string) => onOpen(map)
+    const label = opening ? "Opening…" : "Open"
+    // several maps: pick one (or start another beside them)
+    if (maps && maps.maps.length > 1) {
+        return (
+            <Column gap={6} data-map-picker>
+                <Text small muted>This recording holds {maps.maps.length} maps of the space. Pick the one to open.</Text>
+                <List>
+                    {maps.maps.map((map) => (
+                        <ListRow
+                            key={map.name}
+                            icon="map"
+                            title={map.name}
+                            subtitle={map.savedAt ? `saved ${age(map.savedAt)}` : "generated, never saved"}
+                            onClick={() => !opening && !disabled && open(map.name)}
+                            data-open-map={map.name}
+                        />
+                    ))}
+                </List>
+                <Row>
+                    <Button size="sm" loading={opening} disabled={opening || disabled} data-open-map="" onClick={() => open(maps.default)}>
+                        {opening ? "Opening…" : `Start another map (${maps.default})`}
+                    </Button>
+                </Row>
+            </Column>
+        )
+    }
+    return (
+        <Column gap={4}>
+            {problem && <Text small tone="warn">Couldn't list this recording's maps: {problem}</Text>}
+            {maps?.maps.length === 1 && <Text small muted>Opens its map “{maps.maps[0].name}”.</Text>}
+            {maps && !maps.maps.length && !maps.unindexed && <Text small muted>No map saved in it yet: a new one, “{maps.default}”.</Text>}
+            <Row>
+                <Button size="sm" variant="primary" loading={opening} disabled={opening || disabled} data-open-map={maps?.maps[0]?.name ?? ""} onClick={() => open(maps?.maps[0]?.name)}>
+                    {label}
+                </Button>
+            </Row>
+        </Column>
+    )
 }
 
 export function OpenPanel({ context }: { context: Context }) {
@@ -128,22 +184,18 @@ export function OpenPanel({ context }: { context: Context }) {
                                             data-testid="onboard-no-pointclouds"
                                         />
                                     )}
-                                    <Row>
-                                        <Button
-                                            size="sm"
-                                            variant="primary"
-                                            loading={opening === recording.id}
+                                    <div data-open={recording.id}>
+                                        <OpenMaps
+                                            path={recording.path}
+                                            opening={opening === recording.id}
                                             disabled={opening !== null || !hasLidar(details)}
-                                            data-open={recording.id}
-                                            onClick={async () => {
+                                            onOpen={async (map) => {
                                                 setOpening(recording.id)
-                                                await context.openRecording({ id: recording.id, path: recording.path, name: recording.name, writable: recording.writable })
+                                                await context.openRecording({ id: recording.id, path: recording.path, name: recording.name, writable: recording.writable, map })
                                                 setOpening(null)
                                             }}
-                                        >
-                                            {opening === recording.id ? "Opening…" : "Open"}
-                                        </Button>
-                                    </Row>
+                                        />
+                                    </div>
                                 </Card>
                             )}
                         </div>
@@ -186,10 +238,10 @@ function FileBrowser({ context }: { context: Context }) {
         // a remembered folder that's gone falls back to $HOME
         files.browse(rememberedDir()).catch(() => files.browse("")).then(show).catch((error) => setProblem(error.message))
     }, [])
-    const open = async (entry: BrowseEntry) => {
+    const open = async (entry: BrowseEntry, map?: string) => {
         setOpening(true)
         // the path is the id: the session (and "Continue" after a restart) is keyed by the path
-        await context.openRecording({ id: entry.path, path: entry.path, name: entry.name, writable: entry.writable })
+        await context.openRecording({ id: entry.path, path: entry.path, name: entry.name, writable: entry.writable, map })
         setOpening(false)
     }
 
@@ -218,11 +270,9 @@ function FileBrowser({ context }: { context: Context }) {
                             <Card padded style={{ margin: "4px 0 8px" }}>
                                 <Text small mono muted>{entry.path}</Text>
                                 {!entry.writable && <Text small tone="warn">It (or its folder) is read-only, and the Generate steps and Save write into the recording: move it somewhere writable first.</Text>}
-                                <Row>
-                                    <Button size="sm" variant="primary" loading={opening} disabled={opening} data-browse-open={entry.name} onClick={() => open(entry)}>
-                                        {opening ? "Opening…" : "Open"}
-                                    </Button>
-                                </Row>
+                                <div data-browse-open={entry.name}>
+                                    <OpenMaps path={entry.path} opening={opening} onOpen={(map) => open(entry, map)} />
+                                </div>
                             </Card>
                         )}
                     </div>

@@ -288,7 +288,7 @@ export function App() {
     )
 
     const openRecording = useCallback(
-        async (recording: { id: string; path: string; name: string; writable?: boolean }) => {
+        async (recording: { id: string; path: string; name: string; writable?: boolean; map?: string }) => {
             const fresh = await run(api.open(recording))
             if (fresh) {
                 setModal(null)
