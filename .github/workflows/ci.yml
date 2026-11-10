@@ -8,7 +8,7 @@ jobs:
         strategy:
             fail-fast: false
             matrix:
-                os: [ubuntu-latest, macos-15]
+                os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
         runs-on: ${{ matrix.os }}
         steps:
             - uses: actions/checkout@v4
@@ -33,6 +33,14 @@ jobs:
                           curl -sfI "https://pub-18ed8210d82a4563a7e7269c4ce48a1c.r2.dev/$(basename "$out" | cut -c1-32).narinfo" > /dev/null || { echo "::error::.#$attr ($out) isn't in the R2 cache"; exit 1; }
                       fi
                   done
+                  # and the native .#dimosApp, which is what Desktop builds on a system dimos.yaml lists nothing for
+                  if [ "$CHECK_CACHE" = true ]; then
+                      out=$(readlink -f result)
+                      key=$(mktemp) && printf '%s' "$NIX_SIGNING_KEY" > "$key"
+                      nix copy --to "s3://dimos-nix-cache?endpoint=$R2_CACHE_ENDPOINT&region=auto&secret-key=$key" "$out"
+                      rm -f "$key"
+                      curl -sfI "https://pub-18ed8210d82a4563a7e7269c4ce48a1c.r2.dev/$(basename "$out" | cut -c1-32).narinfo" > /dev/null || { echo "::error::.#dimosApp ($out) isn't in the R2 cache"; exit 1; }
+                  fi
                   exit $failed
               env:
                   R2_CACHE_ENDPOINT: ${{ vars.R2_CACHE_ENDPOINT }}
