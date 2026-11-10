@@ -30,7 +30,7 @@ jobs:
                           key=$(mktemp) && printf '%s' "$NIX_SIGNING_KEY" > "$key"
                           nix copy --to "s3://dimos-nix-cache?endpoint=$R2_CACHE_ENDPOINT&region=auto&secret-key=$key" "$out"
                           rm -f "$key"
-                          curl -sfI "https://pub-18ed8210d82a4563a7e7269c4ce48a1c.r2.dev/$(basename "$out" | cut -c1-32).narinfo" > /dev/null || { echo "::error::.#$attr ($out) isn't in the R2 cache"; exit 1; }
+                          curl -sfI --retry 5 --retry-all-errors "https://pub-18ed8210d82a4563a7e7269c4ce48a1c.r2.dev/$(basename "$out" | cut -c1-32).narinfo" > /dev/null || { echo "::error::.#$attr ($out) isn't in the R2 cache"; exit 1; }
                       fi
                   done
                   # and the native .#dimosApp, which is what Desktop builds on a system dimos.yaml lists nothing for
@@ -39,7 +39,7 @@ jobs:
                       key=$(mktemp) && printf '%s' "$NIX_SIGNING_KEY" > "$key"
                       nix copy --to "s3://dimos-nix-cache?endpoint=$R2_CACHE_ENDPOINT&region=auto&secret-key=$key" "$out"
                       rm -f "$key"
-                      curl -sfI "https://pub-18ed8210d82a4563a7e7269c4ce48a1c.r2.dev/$(basename "$out" | cut -c1-32).narinfo" > /dev/null || { echo "::error::.#dimosApp ($out) isn't in the R2 cache"; exit 1; }
+                      curl -sfI --retry 5 --retry-all-errors "https://pub-18ed8210d82a4563a7e7269c4ce48a1c.r2.dev/$(basename "$out" | cut -c1-32).narinfo" > /dev/null || { echo "::error::.#dimosApp ($out) isn't in the R2 cache"; exit 1; }
                   fi
                   exit $failed
               env:
