@@ -109,9 +109,9 @@ This version needs a dimOS Desktop whose dimos gateway is API 4.0 (the `/gateway
 provide them won't install it. Page errors also go to Desktop's error feed (`POST /gateways/desktop/ui/errors`, dim-app
 `errors.js`) so its agent sees them; an older Desktop just drops those.
 
-In Desktop: App Store → add `https://github.com/jeff-hykin/dim-map-builder` (branch `dimos-desktop2`), or
+In Desktop: App Store → add `https://github.com/dimensionalOS/dim-map-editor` (branch `dimos-desktop2`), or
 
-    dimos-desktop install --name dim-map-builder https://github.com/jeff-hykin/dim-map-builder
+    dimos-desktop install --name dim-map-builder https://github.com/dimensionalOS/dim-map-editor
 
 ## Layout
 
