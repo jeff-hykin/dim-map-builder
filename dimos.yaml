@@ -1234,6 +1234,8 @@ provides:
 nix:
     cache:
         aarch64-linux:
+            - packages.aarch64-linux.dimosApp
             - packages.aarch64-darwin.dimosApp-aarch64-linux
         x86_64-linux:
+            - packages.x86_64-linux.dimosApp
             - packages.aarch64-darwin.dimosApp-x86_64-linux

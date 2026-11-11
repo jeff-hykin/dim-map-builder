@@ -3,6 +3,11 @@ on:
     push:
     pull_request:
     workflow_dispatch:
+        inputs:
+            cross:
+                description: also build (and push) the cross builds dimos.yaml lists for this runner
+                type: boolean
+                default: false
 jobs:
     build:
         strategy:
@@ -19,12 +24,12 @@ jobs:
                       extra-substituters = https://pub-18ed8210d82a4563a7e7269c4ce48a1c.r2.dev https://dimos-desktop.cachix.org
                       extra-trusted-public-keys = dimos-nix-cache-1:f6JE9qRFzxGAbwEYBxRkB7LsSYvIVv9BXfhsRm0kqPk= dimos-desktop.cachix.org-1:A4P35aGJGmCan92LWyamtSFXMqaVE+VRFYnrJ8QMTeQ=
             - run: nix build .#dimosApp -L
-            # builds every prebuilt dimos.yaml's nix.cache lists for this runner's system (--no-link: ./result stays the native build); on a push to the default branch or a tag, pushes each and fails unless it's in the cache
+            # with the cross input only: also builds the cross builds dimos.yaml's nix.cache lists for this runner's system (a fallback, never required) (--no-link: ./result stays the native build); on a push to the default branch or a tag, pushes each and fails unless it's in the cache
             - run: |
                   system=$(nix eval --impure --raw --expr builtins.currentSystem)
                   if [ "$CHECK_CACHE" = true ] && [ -z "$NIX_SIGNING_KEY" ]; then echo "::error::NIX_SIGNING_KEY isn't set: this push's prebuilts won't reach the cache"; exit 1; fi
                   failed=0
-                  for attr in $(grep -oE "packages\.$system\.[A-Za-z0-9_+-]+" dimos.yaml | sort -u); do
+                  for attr in $([ "$CROSS" = true ] && grep -oE "packages\.$system\.[A-Za-z0-9_+-]+" dimos.yaml | grep -v "\.dimosApp$" | sort -u); do
                       out=$(nix build --no-link --print-out-paths ".#$attr" -L) || { echo "::error::.#$attr didn't build"; failed=1; continue; }
                       if [ "$CHECK_CACHE" = true ]; then
                           key=$(mktemp) && printf '%s' "$NIX_SIGNING_KEY" > "$key"
@@ -47,6 +52,7 @@ jobs:
                   AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
                   AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
                   NIX_SIGNING_KEY: ${{ secrets.NIX_SIGNING_KEY }}
+                  CROSS: ${{ inputs.cross }}
                   CHECK_CACHE: ${{ github.event_name == 'push' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/')) }}
             - uses: denoland/setup-deno@v2
               with:
