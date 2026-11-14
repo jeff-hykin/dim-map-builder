@@ -123,6 +123,9 @@
                                 version = "0.1.0";
                                 doCheck = false;
                                 strictDeps = true;
+                                # panic locations name each crate's source file, which put the whole vendor dir (700+ crate
+                                # sources) in the server's runtime closure: written as vendor/<crate> instead
+                                RUSTFLAGS = "--remap-path-prefix=${vendorDir}=vendor";
                             } // extra;
                             cargoArtifacts = craneLib.buildDepsOnly (common // {
                                 # only the build's artifacts are reused; a `cargo check` pass would be a second compile nobody reads
@@ -133,6 +136,8 @@
                             inherit cargoArtifacts;
                             # nothing builds on this target dir, so don't archive it into $out
                             doInstallCargoArtifacts = false;
+                            # fails the build if a crate source path sneaks back into the binary
+                            disallowedReferences = [ vendorDir ];
                         } // install);
 
                     craneLib = (crane.mkLib pkgs).overrideToolchain (_: rust);
