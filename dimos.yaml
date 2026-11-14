@@ -1,5 +1,5 @@
 title: Map Editor
-version: "0.3.8"
+version: "0.3.9"
 spec-version: v1.5 # the dimos.yaml spec version this file follows
 uses:
     # The installed dimos's gateway: where recordings live, and Dimensional cloud (logging in is Desktop's Settings →
