@@ -388,9 +388,9 @@ dependencies = [
  "asn1-rs-derive",
  "asn1-rs-impl",
  "displaydoc",
- "nom 7.1.3",
+ "nom",
  "num-traits",
- "rusticata-macros 4.1.0",
+ "rusticata-macros",
  "thiserror",
  "time",
 ]
@@ -861,12 +861,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "circular"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fc239e0f6cb375d2402d48afb92f76f5404fd1df208a41930ec81eda078bea"
-
-[[package]]
 name = "clap"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1063,21 +1057,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crc"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
-dependencies = [
- "crc-catalog",
-]
-
-[[package]]
-name = "crc-catalog"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
-
-[[package]]
 name = "crc32fast"
 version = "1.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1188,6 +1167,15 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "cu_vslam_rs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfc1a6c523ad42857cb3cdec69fda48bfe35ca7bb50f7050e929935eec6be0c2"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -1337,10 +1325,10 @@ checksum = "07da5016415d5a3c4dd39b11ed26f915f52fc4e0dc197d87908bc916e51bc1a6"
 dependencies = [
  "asn1-rs",
  "displaydoc",
- "nom 7.1.3",
+ "nom",
  "num-bigint",
  "num-traits",
- "rusticata-macros 4.1.0",
+ "rusticata-macros",
 ]
 
 [[package]]
@@ -1361,6 +1349,17 @@ dependencies = [
  "block-buffer",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "dim_slam"
+version = "0.1.0"
+source = "git+https://github.com/dimensionalOS/dimSLAM?rev=b6323a5f6e3781cae524fa905e031e285311bb51#b6323a5f6e3781cae524fa905e031e285311bb51"
+dependencies = [
+ "cu_vslam_rs",
+ "nalgebra 0.35.0",
+ "serde",
+ "tracing",
 ]
 
 [[package]]
@@ -1423,22 +1422,6 @@ dependencies = [
  "quote",
  "syn 3.0.6",
  "toml 1.1.8+spec-1.1.0",
-]
-
-[[package]]
-name = "dimos-pointlio"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos?rev=17fdb6b945da617acc37038297f0caa8b5297fac#17fdb6b945da617acc37038297f0caa8b5297fac"
-dependencies = [
- "dimos-module",
- "lcm-msgs",
- "livox-wire",
- "pointlio-core",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "validator",
 ]
 
 [[package]]
@@ -1640,15 +1623,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "etherparse"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17304d06addb3283cdc4bd528e42dd95e73c8ee2d6492ffce415e93660885449"
-dependencies = [
- "arrayvec",
 ]
 
 [[package]]
@@ -2909,17 +2883,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
-name = "livox-wire"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/livox-wire?rev=441c4a16dbe2adb0683ece976cc800c6d7fbc790#441c4a16dbe2adb0683ece976cc800c6d7fbc790"
-dependencies = [
- "crc",
- "etherparse",
- "pcap-parser",
- "tracing",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3012,7 +2975,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "arrayvec",
- "dimos-pointlio",
+ "dim_slam",
  "dimos-recording",
  "dimos-voxel-ray-tracing",
  "kiddo",
@@ -3339,15 +3302,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nom"
-version = "8.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "nonempty-collections"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3602,17 +3556,6 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-
-[[package]]
-name = "pcap-parser"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1099a3a64b376c536394622c9e5ea8ecfac3e3e44f88857b1e7da114135d3df4"
-dependencies = [
- "circular",
- "nom 8.0.0",
- "rusticata-macros 5.0.0",
-]
 
 [[package]]
 name = "peg"
@@ -3899,15 +3842,6 @@ dependencies = [
  "fdeflate",
  "flate2",
  "miniz_oxide 0.8.9",
-]
-
-[[package]]
-name = "pointlio-core"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-module-pointlio.git?rev=22a5403f827d030b248ae473c2808b5d405b3d55#22a5403f827d030b248ae473c2808b5d405b3d55"
-dependencies = [
- "nalgebra 0.35.0",
- "serde",
 ]
 
 [[package]]
@@ -5346,16 +5280,7 @@ version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf0c4a6ece9950b9abdb62b1cfcf2a68b3b67a10ba445b3bb85be2a293d0632"
 dependencies = [
- "nom 7.1.3",
-]
-
-[[package]]
-name = "rusticata-macros"
-version = "5.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f40620447734539bcc6c64e9c66fed2410e17b46986733f1090c922d85f7105b"
-dependencies = [
- "nom 8.0.0",
+ "nom",
 ]
 
 [[package]]
@@ -7429,10 +7354,10 @@ dependencies = [
  "data-encoding",
  "der-parser",
  "lazy_static",
- "nom 7.1.3",
+ "nom",
  "oid-registry",
  "ring",
- "rusticata-macros 4.1.0",
+ "rusticata-macros",
  "thiserror",
  "time",
 ]

@@ -68,7 +68,7 @@ pub struct Workspace {
     pub discarded: bool,
     /// the local floor, for the map version and storey levels it was made from
     floor_cache: Option<(u64, Vec<f32>, Arc<FloorModel>)>,
-    /// why Point-LIO should estimate the recording's odometry before a build (a lidar + IMU with no odometry:
+    /// why dimSLAM should estimate the recording's odometry before a build (a lidar + IMU with no odometry:
     /// crate::pipeline::odometry_pending), or None; read from its streams when it's opened
     pub odometry_pending: Option<String>,
     /// the recording's own `global_map` cloud stream (mapping::recorded), which can be the map without Generate; read

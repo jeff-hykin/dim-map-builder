@@ -57,7 +57,7 @@ pub struct App {
 pub const SLOW_TF_BYTES: u64 = 1 << 30;
 pub const READING_TF: &str = "Reading the tf tree";
 
-/// How much of a build's progress bar Point-LIO takes when it runs first (it reads the lidar and the IMU once, the map
+/// How much of a build's progress bar dimSLAM takes when it runs first (it reads the lidar and the IMU once, the map
 /// build reads the scans twice)
 const ODOMETRY_SHARE: f64 = 0.4;
 
@@ -160,7 +160,7 @@ impl App {
     }
 
     /// What opening reads from the recording: the save of the map being opened (else `fresh`), whether it needs
-    /// Point-LIO's odometry first, and its own `global_map` stream if it has one. `pick` is the map asked for; None
+    /// dimSLAM's odometry first, and its own `global_map` stream if it has one. `pick` is the map asked for; None
     /// takes the recording's one map when it has exactly one, and otherwise leaves `persist::load` to choose.
     fn read_for_open(path: &std::path::Path, mut fresh: Session, pick: Option<&str>) -> Result<(Session, Option<crate::session::MapData>, Option<String>, Option<String>)> {
         let recording = Recording::open(path)?;
@@ -271,7 +271,7 @@ impl App {
         mapping::recorded::find(&Recording::open(path).ok()?).ok().flatten()
     }
 
-    /// Whether a restored session's recording still needs Point-LIO's odometry (as `read_for_open` decides).
+    /// Whether a restored session's recording still needs dimSLAM's odometry (as `read_for_open` decides).
     fn odometry_pending_of(path: &std::path::Path) -> Option<String> {
         let unindexed = dimos_recording::format_of(path).ok()? == dimos_recording::Format::Mcap && !dimos_recording::mcap_index::is_indexed(path);
         if unindexed || !path.is_file() {
@@ -490,7 +490,7 @@ impl App {
             if let Some(reason) = pending {
                 Self::require_writable(&shared)?;
                 let path = shared.lock().unwrap().session.recording_path.clone();
-                shared.lock().unwrap().session.history.push(format!("Estimating the odometry with Point-LIO ({reason})"));
+                shared.lock().unwrap().session.history.push(format!("Estimating the odometry with dimSLAM ({reason})"));
                 let map = shared.lock().unwrap().session.map().to_string();
                 let record = crate::pipeline::run_odometry(&app.store.dir, std::path::Path::new(&path), &map, crate::pipeline::Share::whole(report).part(0.0, ODOMETRY_SHARE, &[]), cancel)?;
                 notes = record.notes.clone();
@@ -551,7 +551,7 @@ impl App {
             let workspace = workspace.lock().unwrap();
             (workspace.session.recording_path.clone(), workspace.odometry_pending.is_some())
         };
-        // a lidar + IMU recording with no odometry has nothing placing its scans until Point-LIO runs: no preview
+        // a lidar + IMU recording with no odometry has nothing placing its scans until dimSLAM runs: no preview
         if pending {
             return Ok(None);
         }
@@ -840,7 +840,7 @@ mod tests {
         assert_eq!(moved.lock().unwrap().session.map_name, "office");
     }
 
-    /// a raw lidar + IMU recording still offers Point-LIO after a restart restores its session
+    /// a raw lidar + IMU recording still offers dimSLAM after a restart restores its session
     #[test]
     fn a_restored_session_still_needs_odometry() {
         let dir = tempfile::tempdir().unwrap();

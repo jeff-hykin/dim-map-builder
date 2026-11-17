@@ -1,46 +1,58 @@
-//! Point-LIO over a recording that has a lidar and an IMU but nothing placing the lidar's scans (no odometry, and
-//! every tf edge above the lidar static): dimos's estimator (pointlio-core, what dimos-pointlio runs), fed the
+//! dimSLAM over a recording that has a lidar and an IMU but nothing placing the lidar's scans (no odometry, and
+//! every tf edge above the lidar static): dimSLAM's filter (`dim_slam::DimSlamCore`, lidar + IMU only), fed the
 //! recording's own messages, writes the odometry back in place the way lite_record's post_process does:
 //! - `odom → <root>` on the tf (root: the top of the static tree the lidar hangs from, `base_link` here), so the
 //!   static edges below it place every sensor,
-//! - the same poses as nav_msgs.Odometry on `/pointlio_odometry`,
-//! - in an .mcap, the scans motion-compensated (deskewed by the estimator's per-point states) on `/pointlio_lidar`,
-//!   its channel naming the raw lidar in `derived_from` so the map build takes it instead.
+//! - the same poses as nav_msgs.Odometry on `/dimslam_odometry`,
+//! - in an .mcap, the scans motion-compensated on `/dimslam_lidar`, its channel naming the raw lidar in
+//!   `derived_from` so the map build takes it instead. dimSLAM publishes one pose per scan, at the scan's end, and
+//!   gives back no points: each point is moved to the scan's end along the poses interpolated between the previous
+//!   scan's end and this one's (the pose's own twist when there is no previous pose that close), by its own time.
+//!
+//! Recordings Point-LIO processed before keep working: their `/pointlio_odometry` is odometry (any Odometry stream
+//! is) and their `/pointlio_lidar` a corrected copy (its `derived_from`), whatever the names.
 //!
 //! Everything written is on the log clock (the lidar's header stamps moved by `clock::offset`), like the tf it joins.
-//! The IMU's accelerations go in as g: m/s² (dimos, most drivers) is told from g (Livox's ROS driver) by their norm.
-//! The lidar → IMU extrinsic is tf's when tf connects the two frames, else Point-LIO's default (a Mid-360's IMU).
+//! The IMU's accelerations go in as m/s²: m/s² (dimos, most drivers) is told from g (Livox's ROS driver) by their norm.
+//! The lidar → IMU extrinsic is tf's when tf connects the two frames, else a Mid-360's (its IMU inside the lidar).
 use crate::build::{Cancelled, Progress};
 use crate::tf::{iso, parts, Iso, TfTree};
 use anyhow::{bail, Context, Result};
+use dim_slam::nalgebra as slam_na;
+use dim_slam::odometry_fusion::lio_odometry::LioConfig;
+use dim_slam::{DimSlamCore, DimSlamCoreConfig, ImuConfig, ImuSample, LidarConfig, LidarScan};
 use dimos_recording::lcm::{self, Header, Odometry, Pose, PointCloud2};
 use dimos_recording::mcap_io::{DERIVED_FROM_KEY, GENERATION_KEY, LCM_TYPE_KEY};
 use dimos_recording::{Format, Kind, Recording, StreamInfo};
-use nalgebra::Point3;
-use dimos_pointlio::pointlio_core::{Config, LivoxPoint, PointLio};
+use nalgebra::{Point3, Translation3, UnitQuaternion, Vector3};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const ODOM_FRAME: &str = "odom";
-/// the odometry and the deskewed scans, named as lite_record names its own Point-LIO output
-pub const ODOMETRY_TOPIC: &str = "/pointlio_odometry";
-pub const CLOUD_TOPIC: &str = "/pointlio_lidar";
+/// the odometry and the deskewed scans, named for the estimator that made them
+pub const ODOMETRY_TOPIC: &str = "/dimslam_odometry";
+pub const CLOUD_TOPIC: &str = "/dimslam_lidar";
 const GRAVITY: f64 = 9.80665;
 /// an IMU whose accelerations average more than this is in m/s² (gravity alone is 1 g = 9.8 m/s²)
 const METRES_PER_SECOND_SQUARED_ABOVE: f64 = 4.0;
 /// IMU samples averaged to tell the units
 const UNIT_SAMPLES: usize = 200;
-/// Point-LIO's settings here: its defaults (dimos's)
-pub fn config() -> Config {
-    Config::default()
+/// imu ← lidar for a Livox Mid-360 (its IMU's place in the lidar, Livox's spec): when tf doesn't connect the two
+const MID360_LIDAR_IN_IMU: [f64; 3] = [-0.011, -0.02329, 0.04412];
+/// the filter runs a scan once the IMU passes its end, a scan or two behind: one held this long never gets a pose
+const PENDING_SECONDS: f64 = 5.0;
+
+/// dimSLAM's settings here: its defaults (Point-LIO's) for one IMU and one lidar, whose frames `estimate` fills in.
+pub fn config() -> DimSlamCoreConfig {
+    DimSlamCoreConfig { imus: vec![ImuConfig::default()], lidars: vec![LidarConfig::default()], ..Default::default() }
 }
 
-pub const STAGE: &str = "Point-LIO: estimating odometry";
+pub const STAGE: &str = "dimSLAM: estimating odometry";
 
-/// The lidar and IMU streams Point-LIO runs on.
+/// The lidar and IMU streams dimSLAM runs on.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Inputs {
     pub lidar: String,
@@ -51,7 +63,7 @@ fn is_imu(stream: &StreamInfo) -> bool {
     stream.type_name.replace("/msg/", ".").replace('/', ".") == lcm::IMU_TYPE
 }
 
-/// The lidar and IMU Point-LIO would run on, or None: the recording has odometry already, no IMU, or no lidar (a
+/// The lidar and IMU dimSLAM would run on, or None: the recording has odometry already, no IMU, or no lidar (a
 /// cloud stream of scans, not a map or a corrected copy). The IMU is the one under the lidar's topic prefix, else the
 /// only IMU there is; the lidar the one with the most messages. `has_messages` in place of the counts (opening a .db
 /// doesn't count its rows).
@@ -72,7 +84,7 @@ pub fn inputs(streams: &[StreamInfo], has_messages: impl Fn(&StreamInfo) -> bool
     Some(Inputs { lidar: lidar.name.clone(), imu: imu.name.clone() })
 }
 
-/// Whether tf moves `lidar_frame` already (an edge on its way to its root isn't static): Point-LIO isn't needed then.
+/// Whether tf moves `lidar_frame` already (an edge on its way to its root isn't static): dimSLAM isn't needed then.
 pub fn moved_by_tf(tree: &TfTree, lidar_frame: &str) -> bool {
     let edges = tree.edges();
     let mut at = lidar_frame.trim_start_matches('/').to_string();
@@ -86,17 +98,19 @@ pub fn moved_by_tf(tree: &TfTree, lidar_frame: &str) -> bool {
     false
 }
 
-/// What Point-LIO made of the recording.
+/// What dimSLAM made of the recording.
 pub struct Estimate {
     pub inputs: Inputs,
     pub lidar_frame: String,
     pub imu_frame: String,
     /// imu ← lidar
     pub extrinsic: Iso,
-    /// from tf (else Point-LIO's default)
+    /// from tf (else a Mid-360's)
     pub extrinsic_from_tf: bool,
     /// the IMU's accelerations were in m/s² (else g)
     pub acc_in_ms2: bool,
+    /// the lidar's points carry their own times (else its scans are written as they are, not motion-compensated)
+    pub point_times: bool,
     /// added to the lidar's header stamps to put them on the log clock
     pub clock_offset: f64,
     /// the IMU's pose in odom at the end of each scan, on the lidar's clock
@@ -112,7 +126,7 @@ impl Estimate {
         let [x, y, z] = parts(&self.extrinsic).0;
         let mut notes = vec![
             format!(
-                "Point-LIO: {} poses from {} scans of {} + {}, {:.1} m of path, start to end {:.2} m",
+                "dimSLAM: {} poses from {} scans of {} + {}, {:.1} m of path, start to end {:.2} m",
                 self.poses.len(),
                 self.scans,
                 self.inputs.lidar,
@@ -121,16 +135,19 @@ impl Estimate {
                 self.start_to_end()
             ),
             format!(
-                "Point-LIO: IMU in {}, lidar → IMU ({:.3}, {:.3}, {:.3}) m {}",
+                "dimSLAM: IMU in {}, lidar → IMU ({:.3}, {:.3}, {:.3}) m {}",
                 if self.acc_in_ms2 { "m/s²" } else { "g" },
                 x,
                 y,
                 z,
-                if self.extrinsic_from_tf { "from tf" } else { "(Point-LIO's default, a Mid-360's: tf doesn't connect the two)" }
+                if self.extrinsic_from_tf { "from tf" } else { "(a Mid-360's: tf doesn't connect the two)" }
             ),
         ];
+        if !self.point_times {
+            notes.push(format!("dimSLAM: {}'s points carry no times: its scans are written at each pose as they are, not motion-compensated", self.inputs.lidar));
+        }
         if self.max_speed > 5.0 {
-            notes.push(format!("warning: Point-LIO's estimate moved at {:.0} m/s at its fastest: it may have lost track", self.max_speed));
+            notes.push(format!("warning: dimSLAM's estimate moved at {:.0} m/s at its fastest: it may have lost track", self.max_speed));
         }
         notes
     }
@@ -170,10 +187,15 @@ fn read(point: &[u8], (offset, datatype): (usize, u8)) -> f64 {
     }
 }
 
-/// A scan as Point-LIO's Livox points: each point's time after the header stamp from `offset_time` (ns, Livox),
-/// `timestamp` (absolute, s or ns: Livox's ROS driver) or `time` / `t` (relative: s as a float, ns as an integer);
-/// reflectivity from `intensity` as it is, Livox's `tag` when there is one. A scan with no point times is one instant.
-pub fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>> {
+/// A header's stamp in ns.
+fn stamp_ns(header: &Header) -> i64 {
+    header.stamp_sec as i64 * 1_000_000_000 + header.stamp_nsec as i64
+}
+
+/// A scan as dimSLAM's: each point's time after the header stamp from `offset_time` (ns, Livox), `timestamp`
+/// (absolute, s or ns: Livox's ROS driver) or `time` / `t` (relative: s as a float, ns as an integer), no times when
+/// it has none of those (every point at the stamp); Livox's `tag` and the intensity (or reflectivity) as they are.
+pub fn lidar_scan(cloud: &PointCloud2, frame_id: &str) -> Result<LidarScan> {
     if cloud.is_bigendian {
         bail!("big-endian clouds aren't supported");
     }
@@ -182,19 +204,19 @@ pub fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>> {
         _ => bail!("the cloud has no x, y, z"),
     };
     let stamp = cloud.header.ts();
-    let offset_ns: Box<dyn Fn(&[u8]) -> f64> = if let Some(f) = field_reader(cloud, "offset_time") {
-        Box::new(move |p| read(p, f))
+    let offset_ns: Option<Box<dyn Fn(&[u8]) -> f64>> = if let Some(f) = field_reader(cloud, "offset_time") {
+        Some(Box::new(move |p| read(p, f)))
     } else if let Some(f) = field_reader(cloud, "timestamp") {
-        Box::new(move |p| {
+        Some(Box::new(move |p| {
             let v = read(p, f);
             // seconds or nanoseconds: whichever is nearer the header stamp
             if (v - stamp).abs() < (v - stamp * 1e9).abs() { (v - stamp) * 1e9 } else { v - stamp * 1e9 }
-        })
+        }))
     } else if let Some(f) = field_reader(cloud, "time").or_else(|| field_reader(cloud, "t")) {
         let float = matches!(f.1, 7 | 8);
-        Box::new(move |p| if float { read(p, f) * 1e9 } else { read(p, f) })
+        Some(Box::new(move |p| if float { read(p, f) * 1e9 } else { read(p, f) }))
     } else {
-        Box::new(|_| 0.0)
+        None
     };
     let intensity = field_reader(cloud, "intensity").or_else(|| field_reader(cloud, "reflectivity"));
     let tag = field_reader(cloud, "tag");
@@ -203,21 +225,15 @@ pub fn livox_points(cloud: &PointCloud2) -> Result<Vec<LivoxPoint>> {
     if step == 0 || cloud.data.len() < n * step {
         bail!("the cloud has {} bytes for {n} points of {step}", cloud.data.len());
     }
-    Ok(cloud
-        .data
-        .chunks_exact(step)
-        .take(n)
-        .map(|p| LivoxPoint {
-            x: read(p, x) as f32,
-            y: read(p, y) as f32,
-            z: read(p, z) as f32,
-            reflectivity: intensity.map_or(0, |f| read(p, f).round().clamp(0.0, u16::MAX as f64) as u16),
-            tag: tag.map_or(0, |f| read(p, f) as u8),
-            // Point-LIO's Livox handler drops lines past scan_line: other lidars' rings aren't Livox lines
-            line: 0,
-            offset_time: offset_ns(p).max(0.0) as u64,
-        })
-        .collect())
+    let points = cloud.data.chunks_exact(step).take(n);
+    Ok(LidarScan {
+        timestamp_ns: stamp_ns(&cloud.header),
+        frame_id: frame_id.to_string(),
+        points: points.clone().map(|p| [read(p, x) as f32, read(p, y) as f32, read(p, z) as f32]).collect(),
+        offsets_ns: offset_ns.map_or_else(Vec::new, |offset| points.clone().map(|p| offset(p).clamp(0.0, u32::MAX as f64) as u32).collect()),
+        tags: tag.map_or_else(Vec::new, |f| points.clone().map(|p| read(p, f) as u8).collect()),
+        intensities: intensity.map_or_else(Vec::new, |f| points.clone().map(|p| read(p, f) as f32).collect()),
+    })
 }
 
 /// The first message's header frame on `stream`, and up to `count` decoded messages of it.
@@ -232,9 +248,81 @@ fn first_messages<T>(recording: &Recording, stream: &str, count: usize, decode: 
     Ok(found)
 }
 
-/// Runs Point-LIO over `inputs` (one read of the recording), reporting progress; `spool`, when given, collects the
+fn to_slam(pose: &Iso) -> slam_na::Isometry3<f64> {
+    let ([x, y, z], [i, j, k, w]) = parts(pose);
+    slam_na::Isometry3::from_parts(slam_na::Translation3::new(x, y, z), slam_na::UnitQuaternion::from_quaternion(slam_na::Quaternion::new(w, i, j, k)))
+}
+
+fn from_slam(pose: &slam_na::Isometry3<f64>) -> Iso {
+    let (t, q) = (pose.translation.vector, pose.rotation);
+    iso([t.x, t.y, t.z], [q.i, q.j, q.k, q.w])
+}
+
+/// A scan waiting for its pose: when it began and ended (ns, the lidar's clock), its points as the filter reads them.
+struct Pending {
+    begin: i64,
+    end: i64,
+    /// x, y, z, intensity, and the point's time after `begin` (ns)
+    points: Vec<([f32; 4], u32)>,
+}
+
+/// The scan's points the filter reads (Livox's low-confidence returns, the blind range and all but every
+/// `keep_every`th point left out, as its own thinning does), with their times and intensities.
+fn pending(scan: &LidarScan, lio: &LioConfig) -> Pending {
+    let points: Vec<([f32; 4], u32)> = dim_slam::odometry_fusion::surface_points(scan, lio.min_range, lio.keep_every)
+        .iter()
+        // surface_points carries the intensity times 255 and the time in ms
+        .map(|p| ([p.position[0], p.position[1], p.position[2], p.reflectivity / 255.0], (p.time_ms as f64 * 1e6).round().max(0.0) as u32))
+        .collect();
+    let last = scan.offsets_ns.iter().copied().max().unwrap_or(0) as i64;
+    Pending { begin: scan.timestamp_ns, end: scan.timestamp_ns + last, points }
+}
+
+/// The body's motion from the scan's end back to `dt` seconds before it: interpolated along `from` (an earlier pose,
+/// `span` seconds before the end) to `to` when there is one, else the end's twist held constant (body frame).
+fn back_from_end(to: &Iso, from: Option<(&Iso, f64)>, twist: (Vector3<f64>, Vector3<f64>), dt: f64) -> Iso {
+    match from {
+        Some((from, span)) => {
+            let s = 1.0 - dt / span;
+            let turn = (from.rotation.inverse() * to.rotation).scaled_axis();
+            let rotation = from.rotation * UnitQuaternion::from_scaled_axis(turn * s);
+            let translation = from.translation.vector + (to.translation.vector - from.translation.vector) * s;
+            to.inverse() * Iso::from_parts(Translation3::from(translation), rotation)
+        }
+        None => {
+            let (linear, angular) = twist;
+            Iso::from_parts(Translation3::from(-linear * dt), UnitQuaternion::from_scaled_axis(-angular * dt))
+        }
+    }
+}
+
+/// `scan`'s points moved to its end (in the lidar's frame): each along the IMU's motion between its own time and the
+/// end. `previous`: the pose before this one, when it is no more than a scan back.
+fn deskew(scan: &Pending, end: &Iso, previous: Option<(&Iso, f64)>, twist: (Vector3<f64>, Vector3<f64>), extrinsic: &Iso) -> Vec<[f32; 4]> {
+    let lidar_in_imu_inverse = extrinsic.inverse();
+    let span = (scan.end - scan.begin) as f64 / 1e9;
+    let mut cached: Option<(u32, Iso)> = None;
+    scan.points
+        .iter()
+        .map(|&([x, y, z, intensity], offset)| {
+            let motion = match cached {
+                Some((at, motion)) if at == offset => motion,
+                _ => {
+                    let dt = span - offset as f64 / 1e9;
+                    let motion = lidar_in_imu_inverse * back_from_end(end, previous, twist, dt) * extrinsic;
+                    cached = Some((offset, motion));
+                    motion
+                }
+            };
+            let q = motion * Point3::new(x as f64, y as f64, z as f64);
+            [q.x as f32, q.y as f32, q.z as f32, intensity]
+        })
+        .collect()
+}
+
+/// Runs dimSLAM over `inputs` (one read of the recording), reporting progress; `spool`, when given, collects the
 /// deskewed scans (in the lidar's frame, at each scan's end on the lidar's clock) for `write`.
-pub fn estimate(recording: &Recording, tree: &TfTree, inputs: &Inputs, config: &Config, spool: Option<&Path>, report: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<Estimate> {
+pub fn estimate(recording: &Recording, tree: &TfTree, inputs: &Inputs, config: &DimSlamCoreConfig, spool: Option<&Path>, report: &mut dyn FnMut(Progress), cancel: &AtomicBool) -> Result<Estimate> {
     let first_scan = first_messages(recording, &inputs.lidar, 1, dimos_recording::decode_point_cloud2)?;
     let (_, first_scan) = first_scan.first().with_context(|| format!("no readable scan on {}", inputs.lidar))?;
     let lidar_frame = first_scan.header.frame_id.trim_start_matches('/').to_string();
@@ -243,28 +331,37 @@ pub fn estimate(recording: &Recording, tree: &TfTree, inputs: &Inputs, config: &
     let imu_frame = first_imu.header.frame_id.trim_start_matches('/').to_string();
     let norm = imu_head.iter().map(|(_, m)| m.linear_acceleration.iter().map(|a| a * a).sum::<f64>().sqrt()).sum::<f64>() / imu_head.len() as f64;
     let acc_in_ms2 = norm > METRES_PER_SECOND_SQUARED_ABOVE;
-    let acc_scale = if acc_in_ms2 { 1.0 / GRAVITY } else { 1.0 };
+    let to_ms2 = if acc_in_ms2 { 1.0 } else { GRAVITY };
+    let point_times = lidar_scan(first_scan, "").map(|scan| !scan.offsets_ns.is_empty()).unwrap_or(false);
 
-    let mut config = config.clone();
     let from_tf = (lidar_frame != imu_frame).then(|| tree.lookup(&imu_frame, &lidar_frame, first_scan.header.ts(), f64::INFINITY)).flatten();
-    let extrinsic = match from_tf {
-        Some(extrinsic) => {
-            let r = extrinsic.rotation.to_rotation_matrix();
-            let m = r.matrix();
-            config.extrinsic_r = (0..9).map(|i| m[(i / 3, i % 3)]).collect();
-            config.extrinsic_t = extrinsic.translation.vector.iter().copied().collect();
-            extrinsic
-        }
-        None => {
-            let r = &config.extrinsic_r;
-            let m = nalgebra::Matrix3::new(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]);
-            let rotation = nalgebra::UnitQuaternion::from_matrix(&m);
-            Iso::from_parts(nalgebra::Translation3::new(config.extrinsic_t[0], config.extrinsic_t[1], config.extrinsic_t[2]), rotation)
-        }
-    };
-    let lidar_in_imu_inverse = extrinsic.inverse();
-    let mut lio = PointLio::new(&config);
+    let extrinsic = from_tf.unwrap_or_else(|| iso(MID360_LIDAR_IN_IMU, [0.0, 0.0, 0.0, 1.0]));
+    // the filter's own frame names: the IMU is its body, the lidar mounted in it by the extrinsic (a lidar and IMU
+    // both stamped with one frame are still two places)
+    let slam_lidar = if lidar_frame.is_empty() { "lidar".to_string() } else { lidar_frame.clone() };
+    let slam_imu = if imu_frame.is_empty() || imu_frame == slam_lidar { format!("{slam_lidar}_imu") } else { imu_frame.clone() };
+    let mut config = config.clone();
+    config.odom_frame_id = ODOM_FRAME.to_string();
+    config.output_frame_id = slam_imu.clone();
+    if config.imus.is_empty() {
+        config.imus.push(ImuConfig::default());
+    }
+    if config.lidars.is_empty() {
+        config.lidars.push(LidarConfig::default());
+    }
+    config.imus.truncate(1);
+    config.lidars.truncate(1);
+    config.imus[0].frame_id = slam_imu.clone();
+    config.lidars[0].frame_id = slam_lidar.clone();
+    let mut slam = DimSlamCore::new(config).map_err(|e| anyhow::anyhow!("dimSLAM's config: {e}"))?;
+    // tf as the filter asks it: the lidar ← its body (the IMU)
+    let imu_in_lidar = to_slam(&extrinsic.inverse());
+    let mount = |parent: &str, child: &str| (parent == slam_lidar && child == slam_imu).then_some(imu_in_lidar);
+    let lio = LioConfig::default();
+
     let mut spool = spool.map(|path| std::fs::File::create(path).map(BufWriter::new)).transpose().context("the deskewed scans' spool")?;
+    let deskewing = spool.is_some();
+    let mut waiting: VecDeque<Pending> = VecDeque::new();
     let mut poses: Vec<(f64, Iso)> = Vec::new();
     let mut offsets: Vec<(f64, f64)> = Vec::new();
     let mut scans = 0usize;
@@ -275,36 +372,37 @@ pub fn estimate(recording: &Recording, tree: &TfTree, inputs: &Inputs, config: &
     let started = std::time::Instant::now();
     let mut last_report = std::time::Instant::now();
     let mut failure: Option<anyhow::Error> = None;
-    let mut drain = |lio: &mut PointLio, poses: &mut Vec<(f64, Iso)>, path_length: &mut f64, max_speed: &mut f64| -> Result<()> {
-        loop {
-            let before = lio.lidar_buffer_len();
-            if lio.process() {
-                let odom = lio.odometry();
-                let pose = iso(odom.pos, odom.quat);
-                if let Some((t, last)) = poses.last() {
-                    let step = (pose.translation.vector - last.translation.vector).norm();
-                    *path_length += step;
-                    if odom.ts > *t {
-                        *max_speed = max_speed.max(step / (odom.ts - t));
-                    }
-                }
-                if let Some(w) = spool.as_mut() {
-                    let cloud: Vec<[f32; 4]> = lio
-                        .body_cloud()
-                        .iter()
-                        .map(|p| {
-                            let q = lidar_in_imu_inverse * Point3::new(p.x as f64, p.y as f64, p.z as f64);
-                            [q.x as f32, q.y as f32, q.z as f32, p.intensity]
-                        })
-                        .collect();
-                    spool_scan(w, odom.ts, &cloud)?;
-                }
-                poses.push((odom.ts, pose));
-            }
-            if lio.lidar_buffer_len() == before {
-                return Ok(());
+    // the newest pose the filter published, placed with its scan (deskewed onto the spool)
+    let mut take = |slam: &mut DimSlamCore, waiting: &mut VecDeque<Pending>, poses: &mut Vec<(f64, Iso)>, path_length: &mut f64, max_speed: &mut f64| -> Result<()> {
+        let Some(published) = slam.maybe_publish() else { return Ok(()) };
+        let at = published.timestamp_ns;
+        let ts = at as f64 / 1e9;
+        let pose = from_slam(&published.pose);
+        if let Some(w) = spool.as_mut() {
+            // its scan: the one ending nearest the pose, of those begun by then (any before it got no pose)
+            let mine = waiting.iter().enumerate().filter(|(_, s)| s.begin <= at).min_by_key(|(_, s)| (s.end - at).abs()).map(|(i, _)| i);
+            if let Some(index) = mine {
+                waiting.drain(..index);
+                let scan = waiting.pop_front().expect("found above");
+                let span = (scan.end - scan.begin) as f64 / 1e9;
+                // the previous pose interpolates across this scan when it is at most a scan back from its start
+                let previous = poses.last().filter(|(t, _)| span > 0.0 && ts - t <= 2.0 * span).map(|(t, p)| (p, ts - t));
+                let (l, a) = (published.twist.linear, published.twist.angular);
+                let twist = (Vector3::new(l.x, l.y, l.z), Vector3::new(a.x, a.y, a.z));
+                spool_scan(w, ts, &deskew(&scan, &pose, previous, twist, &extrinsic))?;
+            } else {
+                spool_scan(w, ts, &[])?;
             }
         }
+        if let Some((t, last)) = poses.last() {
+            let step = (pose.translation.vector - last.translation.vector).norm();
+            *path_length += step;
+            if ts > *t {
+                *max_speed = max_speed.max(step / (ts - t));
+            }
+        }
+        poses.push((ts, pose));
+        Ok(())
     };
     let on_progress = |done: u64, total: u64| progress.set((done, total));
     recording.for_each_payload_of(&[&inputs.lidar, &inputs.imu], Some(&on_progress), |which, log, encoding, payload| {
@@ -314,16 +412,26 @@ pub fn estimate(recording: &Recording, tree: &TfTree, inputs: &Inputs, config: &
         }
         if which == 1 {
             let Ok(imu) = dimos_recording::decode_imu(encoding, payload) else { return Ok(true) };
-            lio.feed_imu(imu.header.ts(), imu.angular_velocity, imu.linear_acceleration.map(|a| a * acc_scale));
+            let [gx, gy, gz] = imu.angular_velocity;
+            let [ax, ay, az] = imu.linear_acceleration.map(|a| a * to_ms2);
+            let sample = ImuSample { timestamp_ns: stamp_ns(&imu.header), frame_id: slam_imu.clone(), angular_velocity: slam_na::Vector3::new(gx, gy, gz), linear_acceleration: slam_na::Vector3::new(ax, ay, az) };
+            slam.handle_imu(&sample, &mount);
         } else {
             let Ok(cloud) = dimos_recording::decode_point_cloud2(encoding, payload) else { return Ok(true) };
-            let Ok(points) = livox_points(&cloud) else { return Ok(true) };
-            let stamp = cloud.header.ts();
-            offsets.push((log, stamp));
-            lio.feed_lidar((cloud.header.stamp_sec as i64 * 1_000_000_000 + cloud.header.stamp_nsec as i64).max(0) as u64, &points);
+            let Ok(scan) = lidar_scan(&cloud, &slam_lidar) else { return Ok(true) };
+            offsets.push((log, cloud.header.ts()));
+            if deskewing {
+                let held = pending(&scan, &lio);
+                let newest = held.begin;
+                waiting.push_back(held);
+                while waiting.front().is_some_and(|s| (newest - s.begin) as f64 / 1e9 > PENDING_SECONDS) {
+                    waiting.pop_front();
+                }
+            }
+            slam.handle_cloud(&scan, &mount);
             scans += 1;
         }
-        if let Err(error) = drain(&mut lio, &mut poses, &mut path_length, &mut max_speed) {
+        if let Err(error) = take(&mut slam, &mut waiting, &mut poses, &mut path_length, &mut max_speed) {
             failure = Some(error);
             return Ok(false);
         }
@@ -337,11 +445,12 @@ pub fn estimate(recording: &Recording, tree: &TfTree, inputs: &Inputs, config: &
     if let Some(error) = failure {
         return Err(error);
     }
+    drop(take);
     if let Some(mut w) = spool {
         w.flush()?;
     }
     if poses.is_empty() {
-        bail!("Point-LIO made no poses from {} + {} ({scans} scans): is {} the lidar the IMU {} is in?", inputs.lidar, inputs.imu, inputs.lidar, inputs.imu);
+        bail!("dimSLAM made no poses from {} + {} ({scans} scans): is {} the lidar the IMU {} is in?", inputs.lidar, inputs.imu, inputs.lidar, inputs.imu);
     }
     Ok(Estimate {
         inputs: inputs.clone(),
@@ -350,6 +459,7 @@ pub fn estimate(recording: &Recording, tree: &TfTree, inputs: &Inputs, config: &
         extrinsic,
         extrinsic_from_tf: from_tf.is_some(),
         acc_in_ms2,
+        point_times,
         clock_offset: crate::clock::offset(offsets),
         poses,
         scans,
@@ -357,6 +467,7 @@ pub fn estimate(recording: &Recording, tree: &TfTree, inputs: &Inputs, config: &
         max_speed,
     })
 }
+
 
 /// One deskewed scan onto the spool `write` reads: its time, its point count, then x, y, z, intensity (f32) each.
 fn spool_scan(w: &mut impl Write, ts: f64, points: &[[f32; 4]]) -> std::io::Result<()> {
@@ -381,12 +492,12 @@ pub struct Written {
     pub clouds: usize,
 }
 
-/// The edge the odometry goes on: odom → the root of the lidar's static tree (pointlio_odom when that root is
+/// The edge the odometry goes on: odom → the root of the lidar's static tree (dimslam_odom when that root is
 /// called odom), and root ← lidar.
 fn edge_for(tree: &TfTree, lidar_frame: &str) -> (String, String, Iso) {
     let root = crate::frames::root_of(tree, lidar_frame).unwrap_or_else(|| lidar_frame.to_string());
     let lidar_in_root = tree.lookup(&root, lidar_frame, 0.0, f64::INFINITY).unwrap_or_else(Iso::identity);
-    let parent = if root == ODOM_FRAME { "pointlio_odom".to_string() } else { ODOM_FRAME.to_string() };
+    let parent = if root == ODOM_FRAME { "dimslam_odom".to_string() } else { ODOM_FRAME.to_string() };
     (parent, root, lidar_in_root)
 }
 
@@ -458,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lidar_and_an_imu_with_no_odometry_get_point_lio() {
+    fn a_lidar_and_an_imu_with_no_odometry_get_dimslam() {
         let any = |s: &StreamInfo| s.count > 0;
         let office = vec![stream("/livox/lidar", "sensor_msgs/msg/PointCloud2", 4717), stream("/livox/imu", "sensor_msgs/msg/Imu", 94634), stream("/tf", "tf2_msgs/msg/TFMessage", 2000)];
         assert_eq!(inputs(&office, any), Some(Inputs { lidar: "/livox/lidar".into(), imu: "/livox/imu".into() }));
@@ -477,13 +588,13 @@ mod tests {
         placed.push(stream("/odom", "nav_msgs/msg/Odometry", 100));
         assert_eq!(inputs(&placed, any), None);
         // a corrected copy isn't a lidar to run it on
-        let mut copy = vec![stream("/imu", "sensor_msgs.Imu", 10), stream("/pointlio_lidar", "sensor_msgs.PointCloud2", 10)];
+        let mut copy = vec![stream("/imu", "sensor_msgs.Imu", 10), stream("/dimslam_lidar", "sensor_msgs.PointCloud2", 10)];
         copy[1].derived_from = Some("/lidar".into());
         assert_eq!(inputs(&copy, any), None);
     }
 
     #[test]
-    fn tf_that_moves_the_lidar_needs_no_point_lio() {
+    fn tf_that_moves_the_lidar_needs_no_dimslam() {
         let mut tree = TfTree::default();
         for t in 0..3 {
             tree.add(t as f64, "base_link", "livox_frame", iso([0.1, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]));
@@ -533,6 +644,7 @@ mod tests {
             extrinsic,
             extrinsic_from_tf: false,
             acc_in_ms2: true,
+            point_times: true,
             clock_offset: 0.0,
             poses,
             scans: 5,
@@ -578,15 +690,36 @@ mod tests {
         let xyz = |x: f32| [x.to_le_bytes(), 2f32.to_le_bytes(), 3f32.to_le_bytes()].concat();
         // Livox's ROS driver: offset_time (ns) and an absolute timestamp (s)
         let livox = cloud(&[("x", 0, 7), ("y", 4, 7), ("z", 8, 7), ("intensity", 12, 7), ("tag", 16, 2), ("line", 17, 2), ("offset_time", 20, 6), ("timestamp", 24, 8)], 32, &[[xyz(1.0), 17f32.to_le_bytes().to_vec(), vec![0x10, 3, 0, 0], 5_000_000u32.to_le_bytes().to_vec(), 100.005f64.to_le_bytes().to_vec()].concat()]);
-        let p = livox_points(&livox).unwrap()[0];
-        assert_eq!((p.x, p.reflectivity, p.tag, p.line, p.offset_time), (1.0, 17, 0x10, 0, 5_000_000));
+        let scan = lidar_scan(&livox, "lidar").unwrap();
+        assert_eq!((scan.points[0], scan.intensities[0], scan.tags[0], scan.offsets_ns[0], scan.timestamp_ns), ([1.0, 2.0, 3.0], 17.0, 0x10, 5_000_000, 100_000_000_000));
         // only the absolute timestamp, in ns
         let absolute = cloud(&[("x", 0, 7), ("y", 4, 7), ("z", 8, 7), ("timestamp", 16, 8)], 24, &[[xyz(1.0), vec![0; 4], (100.002e9f64).to_le_bytes().to_vec()].concat()]);
-        assert!((livox_points(&absolute).unwrap()[0].offset_time as i64 - 2_000_000).abs() < 1000);
+        assert!((lidar_scan(&absolute, "lidar").unwrap().offsets_ns[0] as i64 - 2_000_000).abs() < 1000);
         // a relative time in seconds; none at all
         let relative = cloud(&[("x", 0, 7), ("y", 4, 7), ("z", 8, 7), ("time", 12, 7)], 16, &[[xyz(1.0), 0.01f32.to_le_bytes().to_vec()].concat()]);
-        assert!((livox_points(&relative).unwrap()[0].offset_time as i64 - 10_000_000).abs() < 1000);
-        let bare = cloud(&[("x", 0, 7), ("y", 4, 7), ("z", 8, 7)], 12, &[xyz(1.0)]);
-        assert_eq!(livox_points(&bare).unwrap()[0].offset_time, 0);
+        assert!((lidar_scan(&relative, "lidar").unwrap().offsets_ns[0] as i64 - 10_000_000).abs() < 1000);
+        let bare = lidar_scan(&cloud(&[("x", 0, 7), ("y", 4, 7), ("z", 8, 7)], 12, &[xyz(1.0)]), "lidar").unwrap();
+        assert!(bare.offsets_ns.is_empty() && bare.tags.is_empty() && bare.intensities.is_empty());
+    }
+
+    /// a wall 2 m ahead seen while the rig walks toward it at 1 m/s (the IMU 10 cm behind the lidar): a point taken
+    /// halfway through the scan is 5 cm further from where the lidar is at the scan's end, along the poses or the twist
+    #[test]
+    fn a_scans_points_move_to_its_end() {
+        let extrinsic = iso([0.1, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]);
+        let scan = Pending { begin: 0, end: 100_000_000, points: vec![([2.0, 0.0, 0.0, 5.0], 50_000_000), ([2.0, 0.0, 0.0, 5.0], 100_000_000)] };
+        let end = iso([1.1, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]);
+        let start = iso([1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]);
+        let still = (Vector3::zeros(), Vector3::zeros());
+        for (previous, twist) in [(Some((&start, 0.1)), still), (None, (Vector3::new(1.0, 0.0, 0.0), Vector3::zeros()))] {
+            let moved = deskew(&scan, &end, previous, twist, &extrinsic);
+            assert!((moved[0][0] - 1.95).abs() < 1e-5 && moved[0][1].abs() < 1e-6 && moved[0][3] == 5.0, "{moved:?}");
+            assert!((moved[1][0] - 2.0).abs() < 1e-6, "the scan's last point is already at its end");
+        }
+        // turning: 90°/s about z, the IMU at the lidar: a point 50 ms back turns 4.5° back
+        let turned = iso([0.0; 3], [0.0, 0.0, (0.05f64 * std::f64::consts::FRAC_PI_2).sin(), (0.05f64 * std::f64::consts::FRAC_PI_2).cos()]);
+        let moved = deskew(&scan, &turned, Some((&Iso::identity(), 0.1)), still, &Iso::identity());
+        let angle = (moved[0][1] as f64).atan2(moved[0][0] as f64).to_degrees();
+        assert!((angle + 4.5).abs() < 1e-3, "{angle}");
     }
 }

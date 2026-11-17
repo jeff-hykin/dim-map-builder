@@ -1,11 +1,11 @@
 // Generate: the corrected map, or any of the steps that make it, each written into the recording in place.
-// 0. odometry with Point-LIO, for a lidar + IMU that nothing moves yet (odom → the lidar's tree on the tf, deskewed
+// 0. odometry with dimSLAM, for a lidar + IMU that nothing moves yet (odom → the lidar's tree on the tf, deskewed
 // scans), 1. fiducial markers from images, AprilTag or ArUco (raw_april_tags, april_tags), 2. a corrected tf tree (loop
 // closure, with the tags, written as the edge above the odometry: world → odom), 3. the global map (through the
 // corrected tf, ray traced, decimated: map_cloud + a .pc2.lcm beside the recording, optionally an .rrd).
 // Each step is collapsed to its title and a checkbox: Generate runs the checked ones (the server runs an earlier one
 // a later one needs first). Fiducials only feed the tf correction, so they go with it; nothing can be corrected
-// before Point-LIO places the scans. The defaults work for most recordings: press "Generate corrected map".
+// before dimSLAM places the scans. The defaults work for most recordings: press "Generate corrected map".
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type CloudChoice, type FrameNode, type GenerateStatus } from "../core/api.ts"
 import { ReadOnlyAlert } from "./ReadOnlyAlert.tsx"
@@ -184,7 +184,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const [tagOptions, setTagOptions] = useState<Options | null>(null)
     const [tfOptions, setTfOptions] = useState<Options | null>(null)
     const [globalOptions, setGlobalOptions] = useState<Options | null>(null)
-    /** step 0 (Point-LIO) checked; null = the default (checked when the recording needs it) */
+    /** step 0 (dimSLAM) checked; null = the default (checked when the recording needs it) */
     const [includeOdometry, setIncludeOdometry] = useState<boolean | null>(null)
     const [includeGlobal, setIncludeGlobal] = useState(true)
     /** a press that would replace the current map, waiting for a yes: Generate's, or the recorded map's */
@@ -262,13 +262,13 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     const edge = sensor ? edgeFor(frames, sensor, tfOptions?.grandparent ?? "") : null
     const markers = status?.tags.markers ?? []
 
-    // which steps Generate runs: Point-LIO's and the global map's are their own; the fiducials' is whether the
+    // which steps Generate runs: dimSLAM's and the global map's are their own; the fiducials' is whether the
     // correction uses them, the correction's whether the global map goes through it
     const odometryNeeded = !!status?.odometry.needed
     const withOdometry = odometryNeeded && (includeOdometry ?? true)
     const withTags = !!tfOptions?.useTags
     const withTf = globalOptions ? !!globalOptions.useCorrectedTf : true
-    // nothing can be corrected before Point-LIO places the scans; fiducials only feed the correction
+    // nothing can be corrected before dimSLAM places the scans; fiducials only feed the correction
     const includeOdometryStep = (included: boolean) => {
         setIncludeOdometry(included)
         if (!included) {
@@ -295,17 +295,17 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     }
 
     const runOdometry = () => run(api.generateOdometry(session.id))
-    const runTags = (pointLio = false) => run(api.generateTags(session.id, { ...(tagOptions ?? {}), pointLio }))
+    const runTags = (estimateOdometry = false) => run(api.generateTags(session.id, { ...(tagOptions ?? {}), estimateOdometry }))
     // the correction gates the tags the way step 1 does
     const tfRequest = () => ({ ...tfOptions, useTags: withTags, gates: tagOptions?.gates, sensorFrame: cloud?.isRoot ? tfOptions?.sensorFrame : "", tags: tagOptions })
-    const runTf = () => run(api.generateTf(session.id, { ...tfRequest(), pointLio: withOdometry }))
+    const runTf = () => run(api.generateTf(session.id, { ...tfRequest(), estimateOdometry: withOdometry }))
     const runGlobal = () => {
         if (built && confirming !== "generate") {
             setConfirming("generate")
             return
         }
         setConfirming(null)
-        run(api.generateGlobal(session.id, { ...globalOptions, useCorrectedTf: withTf, tf: tfRequest(), tags: tagOptions, pointLio: withOdometry }))
+        run(api.generateGlobal(session.id, { ...globalOptions, useCorrectedTf: withTf, tf: tfRequest(), tags: tagOptions, estimateOdometry: withOdometry }))
     }
     // Generate: the last checked step, which runs the checked ones before it first
     const nothingChecked = !includeGlobal && !withTf && !withTags && !withOdometry
@@ -414,10 +414,10 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                 {stepsShown && ready && (
                     <>
                         {(odometryNeeded || odometry?.record) && (
-                            <StepCard step="odometry" title="Estimate odometry (Point-LIO)" included={withOdometry} onInclude={includeOdometryStep} includeDisabled={!odometryNeeded} status={odometryStatus} running={running} disabled={!odometry?.inputs} run={runOdometry}>
+                            <StepCard step="odometry" title="Estimate odometry (dimSLAM)" included={withOdometry} onInclude={includeOdometryStep} includeDisabled={!odometryNeeded} status={odometryStatus} running={running} disabled={!odometry?.inputs} run={runOdometry}>
                                 {odometry?.inputs && (
                                     <Text small>
-                                        From <b>{odometry.inputs.lidar}</b> and the IMU <b>{odometry.inputs.imu}</b>: the lidar's motion, written as {odometry.record ? `${odometry.record.parent} → ${odometry.record.child}` : `odom → the top of ${odometry.lidarFrame ?? "the lidar"}'s frame tree`} on the tf and /pointlio_odometry, and{status.format === "mcap" ? " the scans motion-compensated on /pointlio_lidar, which the steps below use" : " nothing else (a .db keeps its raw scans)"}.
+                                        From <b>{odometry.inputs.lidar}</b> and the IMU <b>{odometry.inputs.imu}</b>: the lidar's motion, written as {odometry.record ? `${odometry.record.parent} → ${odometry.record.child}` : `odom → the top of ${odometry.lidarFrame ?? "the lidar"}'s frame tree`} on the tf and /dimslam_odometry, and{status.format === "mcap" ? " the scans motion-compensated on /dimslam_lidar, which the steps below use" : " nothing else (a .db keeps its raw scans)"}.
                                     </Text>
                                 )}
                                 {(odometry?.record?.notes ?? []).map((note) => <Text key={note} small muted>{note}</Text>)}
@@ -479,7 +479,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
                                     </Row>
                                 )
                                 : sensor && (odometryNeeded
-                                    ? <Text small tone={withOdometry ? undefined : "danger"} data-needs-odometry>Nothing moves {sensor} yet: every edge above it is static. {withOdometry ? "Point-LIO estimates its odometry first." : "Check Estimate odometry (Point-LIO) to place its scans."}</Text>
+                                    ? <Text small tone={withOdometry ? undefined : "danger"} data-needs-odometry>Nothing moves {sensor} yet: every edge above it is static. {withOdometry ? "dimSLAM estimates its odometry first." : "Check Estimate odometry (dimSLAM) to place its scans."}</Text>
                                     : <Text small tone="danger">Nothing moves {sensor}: every edge above it is static.</Text>)}
                             {tfOptions.useTags && markers.length > 0 && (
                                 <Field label="tags to leave out (on things that move)">

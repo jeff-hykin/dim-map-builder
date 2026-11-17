@@ -89,16 +89,14 @@
                         installPhase = "cp -R dist $out";
                     };
 
-                    # the git dependencies (one hash per repo + rev): the dimos ray tracer and Point-LIO, the dimos-module they build on, livox-wire, lcm-msgs
+                    # the git dependencies (one hash per repo + rev): the dimos ray tracer, the dimos-module it builds on, lcm-msgs, and dimSLAM
                     # vendored by nixpkgs (crane's own fetcher would pull dimos's LFS data), then handed to crane as a vendor dir
                     vendorDir = pkgs.rustPlatform.importCargoLock {
                         lockFile = ./Cargo.lock;
                         outputHashes = {
                             "dimos-voxel-ray-tracing-0.1.0" = "sha256-GFdIBvweICBNyEaHPcI2WS6O534NpZk6cnwrtvDDu78=";
                             "dimos-module-0.1.0" = "sha256-6ikqdS3sroOJGI4WGuSyFx2yZjtJ+4Qgt+IGlkFl+qA=";
-                            "dimos-pointlio-0.1.0" = "sha256-GFdIBvweICBNyEaHPcI2WS6O534NpZk6cnwrtvDDu78=";
-                            "livox-wire-0.1.0" = "sha256-wDNVchRiqm4N9wPGwvYJ9JssmPOC33wBTE4QT6vZkGA=";
-                            "pointlio-core-0.1.0" = "sha256-FjUcsZVI8nTcmKw8WhdxBuHelBjOCeJmyEsyqRxDvX0=";
+                            "dim_slam-0.1.0" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
                             "lcm-msgs-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
                         };
                     };

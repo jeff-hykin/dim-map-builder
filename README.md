@@ -16,13 +16,16 @@ everything else is optional and in any order.
   Cancel. Every step writes into the recording in place ([docs/schema.md](docs/schema.md#what-generate-writes)), and a
   step whose input the recording doesn't have yet runs the earlier one first (it reads what's there from the file: its
   streams, its tf and the map's `pipeline` stream).
-  0. **Estimate odometry (Point-LIO)**, offered for a lidar and an IMU with no odometry whose lidar nothing in tf moves
-     (a raw [lite_record](https://github.com/jeff-hykin/lite_record) recording): dimos's Point-LIO estimator
-     (`pointlio-core`, what `dimos-pointlio` runs) over the lidar and the IMU, in the app. The IMU under the lidar's
+  0. **Estimate odometry (dimSLAM)**, offered for a lidar and an IMU with no odometry whose lidar nothing in tf moves
+     (a raw [lite_record](https://github.com/jeff-hykin/lite_record) recording):
+     [dimSLAM](https://github.com/dimensionalOS/dimSLAM)'s filter (`dim_slam::DimSlamCore`, Point-LIO's estimator
+     grown to take any set of sensors) over the lidar and the IMU, in the app. The IMU under the lidar's
      topic prefix, else the only one; its accelerations in m/s² or g (told apart by their norm); the lidar → IMU
      extrinsic from tf when tf connects them (else a Mid-360's). Written in place: `odom → <the root of the lidar's
-     static tree>` on the tf, `/pointlio_odometry`, and in an `.mcap` the scans motion-compensated on `/pointlio_lidar`,
-     whose `derived_from` metadata names the raw lidar so the later steps use it instead.
+     static tree>` on the tf, `/dimslam_odometry`, and in an `.mcap` the scans motion-compensated on `/dimslam_lidar`
+     (each point moved to the scan's end along the poses between scans, by its own time; a lidar with no point times
+     is written as it is), whose `derived_from` metadata names the raw lidar so the later steps use it instead. A
+     recording Point-LIO did this for before (`/pointlio_odometry`, `/pointlio_lidar`) is read the same way.
   1. **Fiducial markers (AprilTag / ArUco)**: every image through a marker detector (tag36h11, 10 cm by default;
      kornia-apriltag, or for an OpenCV ArUco dictionary, `DICT_4X4_50` .. `DICT_7X7_1000`, `DICT_ARUCO_ORIGINAL`,
      `DICT_ARUCO_MIP_36h12`, cv2.aruco's decoding on kornia's quads; then a planar

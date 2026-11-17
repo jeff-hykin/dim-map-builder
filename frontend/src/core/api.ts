@@ -249,7 +249,7 @@ export interface Session {
     voxelSize: number | null
     bounds: [[number, number, number], [number, number, number]] | null
     job: Job | null
-    /** why Generate runs Point-LIO over the recording first (a lidar + IMU and no odometry), or null */
+    /** why Generate runs dimSLAM over the recording first (a lidar + IMU and no odometry), or null */
     odometryPending: string | null
     /** the recording's own global_map cloud stream (its newest message can be the map, skipping Generate), or null */
     recordedMap: string | null
@@ -407,7 +407,7 @@ export interface TfPlan {
 /** GET api/sessions/{id}/generate: what the recording has for each generation step, the defaults, what ran last */
 export interface GenerateStatus {
     format: "db" | "mcap"
-    /** step 0, Point-LIO: offered (needed) for a lidar + IMU with no odometry whose lidar nothing in tf moves */
+    /** step 0, dimSLAM: offered (needed) for a lidar + IMU with no odometry whose lidar nothing in tf moves */
     odometry: {
         inputs: { lidar: string; imu: string } | null
         lidarFrame: string | null

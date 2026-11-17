@@ -79,7 +79,7 @@ provides:
             get:
                 description: >-
                     The open map, briefly: session id, recording, stage (raw = not built yet / map), odometryPending (a lidar
-                    + IMU recording with no odometry: why Generate runs Point-LIO first), recordedMap (the recording's own
+                    + IMU recording with no odometry: why Generate runs dimSLAM first), recordedMap (the recording's own
                     global_map stream, which POST .../generate/recorded-map makes the map without generating), voxel count,
                     bounds, floors, annotation counts, running job, what can be undone, unsaved edits, recent history.
                 x-when: you need a quick summary of the open map before working on it
@@ -289,8 +289,8 @@ provides:
             post:
                 description: >-
                     Start (re)building the global map from the recording (loop closure + ray tracing). A recording with a
-                    lidar + IMU and no odometry (status odometryPending set) gets Point-LIO first, in place (as POST .../generate/odometry):
-                    odometry on the tf and /pointlio_odometry, deskewed scans. Runs in the background: returns { job }; poll
+                    lidar + IMU and no odometry (status odometryPending set) gets dimSLAM first, in place (as POST .../generate/odometry):
+                    odometry on the tf and /dimslam_odometry, deskewed scans. Runs in the background: returns { job }; poll
                     GET api/status (job) or watch the page. Every option is optional (GET api/build-defaults; nested ray /
                     pgo / tfTolerance pass through too).
                 x-when: you need to build or rebuild the 3D map from the recording
@@ -362,13 +362,13 @@ provides:
         /api/sessions/{id}/generate/odometry:
             post:
                 description: >-
-                    Step 0, Point-LIO, in the background, for a lidar + IMU recording with no odometry whose lidar nothing
-                    in tf moves (GET .../generate odometry.needed): dimos's Point-LIO estimator over the lidar and the IMU
-                    (its prefix's, else the only one; accelerations in m/s² or g, told apart by their norm; the lidar → IMU
-                    extrinsic from tf when it connects them), written into the recording in place: odom → <the lidar tree's
-                    root> on the tf, /pointlio_odometry, and in an .mcap the deskewed scans on /pointlio_lidar (derived_from
-                    the raw lidar, which the later steps then use). The tags / tf / global-map steps take pointLio: true to
-                    run it first.
+                    Step 0, dimSLAM, in the background, for a lidar + IMU recording with no odometry whose lidar nothing
+                    in tf moves (GET .../generate odometry.needed): dimSLAM's filter (Point-LIO's estimator, grown) over the
+                    lidar and the IMU (its prefix's, else the only one; accelerations in m/s² or g, told apart by their norm;
+                    the lidar → IMU extrinsic from tf when it connects them, else a Mid-360's), written into the recording in
+                    place: odom → <the lidar tree's root> on the tf, /dimslam_odometry, and in an .mcap the scans deskewed by
+                    their point times on /dimslam_lidar (derived_from the raw lidar, which the later steps then use). The
+                    tags / tf / global-map steps take estimateOdometry: true to run it first.
                 x-when: >-
                     you need odometry for a lidar + IMU recording that has none, before correcting its tf or building its
                     map
@@ -421,9 +421,9 @@ provides:
                                         items:
                                             type: number
                                         description: marker ids on moving things
-                                    pointLio:
+                                    estimateOdometry:
                                         type: boolean
-                                        description: run Point-LIO first when the recording needs it (step 0)
+                                        description: run dimSLAM first when the recording needs it (step 0; pointLio is the old name)
                 parameters:
                     -   name: id
                         in: path
@@ -470,9 +470,9 @@ provides:
                                         description: fast | high
                                     stitch:
                                         type: object
-                                    pointLio:
+                                    estimateOdometry:
                                         type: boolean
-                                        description: run Point-LIO first when the recording needs it (step 0)
+                                        description: run dimSLAM first when the recording needs it (step 0; pointLio is the old name)
                 parameters:
                     -   name: id
                         in: path
@@ -505,9 +505,9 @@ provides:
                                         type: object
                                     rrd:
                                         type: object
-                                    pointLio:
+                                    estimateOdometry:
                                         type: boolean
-                                        description: run Point-LIO first when the recording needs it (step 0)
+                                        description: run dimSLAM first when the recording needs it (step 0; pointLio is the old name)
                 parameters:
                     -   name: id
                         in: path

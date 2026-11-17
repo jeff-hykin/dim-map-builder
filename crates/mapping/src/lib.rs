@@ -17,7 +17,7 @@ pub mod icp;
 pub mod names;
 pub mod pgo;
 pub mod pipeline;
-pub mod pointlio;
+pub mod dimslam;
 pub mod recorded;
 pub mod rrd;
 pub mod tags;
