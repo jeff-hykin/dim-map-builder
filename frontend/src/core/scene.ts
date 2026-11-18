@@ -420,7 +420,26 @@ export class MapScene {
                 this.#namedMeshes.set(item.id, mesh)
                 this.#annotationGroup.add(mesh)
             }
-            mesh.position.set(...item.position)
+            // resting on the point (where it stands), not centered on it
+            mesh.position.set(item.position[0], item.position[1], item.position[2] + 0.09)
+            // its heading on arrival: an arrow along the ground from it
+            let arrow = mesh.children[0] as THREE.ArrowHelper | undefined
+            if (item.yaw == null) {
+                arrow?.removeFromParent()
+            } else {
+                if (!arrow) {
+                    arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, -0.07), 0.5, NAMED, 0.14, 0.09)
+                    arrow.traverse((part) => {
+                        part.renderOrder = 6
+                        const material = (part as THREE.Mesh).material as THREE.Material | undefined
+                        if (material) {
+                            material.depthTest = false
+                        }
+                    })
+                    mesh.add(arrow)
+                }
+                arrow.setDirection(new THREE.Vector3(Math.cos(item.yaw), Math.sin(item.yaw), 0))
+            }
             this.#labels.place(item.name, mesh.position.clone().add(new THREE.Vector3(0, 0, 0.25)), NAMED)
         }
         for (const [id, mesh] of this.#namedMeshes) {
@@ -689,10 +708,10 @@ export class MapScene {
         const p = new THREE.Vector3()
         const origin = ray.origin
         const direction = ray.direction
-        // only what's drawn: with one floor picked, the floors hidden above it don't take the click
-        const [zMin, zMax] = this.#floorBand ?? [-Infinity, Infinity]
+        // only what's drawn: what the slice's min / max z, its crop or the picked floor hide doesn't take the click
+        const shownZ = this.shownZ()
         for (let index = 0; index < positions.length; index += 3) {
-            if (positions[index + 2] < zMin || positions[index + 2] > zMax) {
+            if (!this.#shown(positions[index], positions[index + 1], positions[index + 2], shownZ)) {
                 continue
             }
             p.set(positions[index], positions[index + 1], positions[index + 2])
@@ -830,13 +849,33 @@ export class MapScene {
         this.viewer.requestRender()
     }
 
+    /** the heights the map is drawn between: the slice's min / max z and the floor band's, intersected */
+    shownZ(): [number, number] {
+        const slice = this.slice
+        const big = 1e9
+        return [Math.max(slice ? slice.zMin : -big, this.#floorBand ? this.#floorBand[0] : -big), Math.min(slice ? slice.zMax : big, this.#floorBand ? this.#floorBand[1] : big)]
+    }
+
+    /** whether a map-frame point is drawn: inside the shaders' clip box */
+    #shown(x: number, y: number, z: number, [zMin, zMax]: [number, number]): boolean {
+        const slice = this.slice
+        if (z < zMin || z > zMax) {
+            return false
+        }
+        if (!slice || !this.#clipXY) {
+            return true
+        }
+        const [cos, sin] = [Math.cos(slice.yaw ?? 0), Math.sin(slice.yaw ?? 0)]
+        const [tx, ty] = [cos * x - sin * y, sin * x + cos * y]
+        return tx >= slice.xMin && tx <= slice.xMax && ty >= slice.yMin && ty <= slice.yMax
+    }
+
     /** the shaders' clip box: the slice's (x, y in its turned frame) and the floor band's z, intersected */
     #applyClip() {
         const slice = this.slice
         const clipXY = this.#clipXY
         const big = 1e9
-        const zMin = Math.max(slice ? slice.zMin : -big, this.#floorBand ? this.#floorBand[0] : -big)
-        const zMax = Math.min(slice ? slice.zMax : big, this.#floorBand ? this.#floorBand[1] : big)
+        const [zMin, zMax] = this.shownZ()
         for (const layer of [this.map, this.raw]) {
             setClipBox(layer.material, [slice && clipXY ? slice.xMin : -big, slice && clipXY ? slice.yMin : -big, zMin], [slice && clipXY ? slice.xMax : big, slice && clipXY ? slice.yMax : big, zMax])
         }

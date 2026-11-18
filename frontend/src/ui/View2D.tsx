@@ -6,12 +6,13 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, type PrismAnnotation, type SavedView, type Slice } from "../core/api.ts"
 import { Store, useStore } from "../core/store.ts"
-import { columnFloors, computeSlice, floorHeightImage, PLAN_STYLE, setPlanTheme, sliceLayers, type FloorModel } from "../core/slice.ts"
+import { columnFloors, computeSlice, floorAt, floorHeightImage, PLAN_STYLE, setPlanTheme, sliceLayers, type FloorModel } from "../core/slice.ts"
 import { Card, Hud, Text, useTheme } from "dimos-react"
 import { gradientCss } from "dimos-react/three"
 import { ANNOTATION_COLORS } from "../core/colors.ts"
 import type { Context, View2d } from "./context.ts"
 import { modifyTool, planTool, polygonTool } from "./tools.ts"
+import { PlanMenu, type PlanMenuAt } from "./PlanMenu.tsx"
 import { classifyPress, DoubleTap, pinchView, type PressKind, Touches, zoomAt } from "../core/gestures.ts"
 
 const AREA_COLORS: Record<string, string> = { "no-go": ANNOTATION_COLORS.removal, zone: ANNOTATION_COLORS.agent, slow: ANNOTATION_COLORS.selected }
@@ -92,6 +93,9 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
     const mapRevision = useStore(scene?.mapRevision ?? NO_MAP).revision
     const [cameraTick, setCameraTick] = useState(0)
     const [planImage, setPlanImage] = useState<Raster | null>(null)
+    const [planMenu, setPlanMenu] = useState<PlanMenuAt | null>(null)
+    // where a right press went down: a right-drag pans, only a right-click opens the menu
+    const rightDown = useRef<[number, number] | null>(null)
     /** the view's camera; persisted for the main view, framed afresh for the minimap */
     const view = useRef<View2d | null>(null)
     const restoredFor = useRef<string | null>(null)
@@ -107,6 +111,8 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
     const press = useRef<{ x: number; y: number } | null>(null)
     const panning = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null)
     const dragVertex = useRef<{ id: string; index: number; polygon: [number, number][] } | null>(null)
+    // a named point being put down: where it stands, and where the drag points it (its heading)
+    const placing = useRef<{ from: [number, number]; to: [number, number] } | null>(null)
     /** the pointer pressing (the mouse, or the first finger) and what its press does */
     const primary = useRef<number | null>(null)
     const pressKind = useRef<PressKind>("tool")
@@ -358,6 +364,26 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             g.fillText(text, x, y)
         }
         const pending: (() => void)[] = []
+        // a heading: an arrow from a point (map frame) the way it faces
+        const heading = (x: number, y: number, yaw: number, color: string) => {
+            const [sx, sy] = toScreen(x, y)
+            const [tx, ty] = toScreen(x + Math.cos(yaw), y + Math.sin(yaw))
+            const angle = Math.atan2(ty - sy, tx - sx)
+            const length = minimap ? 10 : 22
+            const [ex, ey] = [sx + Math.cos(angle) * length, sy + Math.sin(angle) * length]
+            g.strokeStyle = color
+            g.fillStyle = color
+            g.lineWidth = minimap ? 1.5 : 2.5
+            g.beginPath()
+            g.moveTo(sx, sy)
+            g.lineTo(ex, ey)
+            g.stroke()
+            g.beginPath()
+            g.moveTo(ex + Math.cos(angle) * 4, ey + Math.sin(angle) * 4)
+            g.lineTo(ex + Math.cos(angle + 2.4) * 7, ey + Math.sin(angle + 2.4) * 7)
+            g.lineTo(ex + Math.cos(angle - 2.4) * 7, ey + Math.sin(angle - 2.4) * 7)
+            g.fill()
+        }
         const outline = (corners: [number, number][], color: string, fill: boolean, text?: string, dashed = false) => {
             if (!corners.length) {
                 return
@@ -415,8 +441,11 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 }
             }
         }
-        for (const point of session.annotations.planPoints.filter((p) => p.floor === storey)) {
+        for (const point of (session.annotations.namedLocations ?? []).filter((l) => storeyAt(floor, l.position[2]) === storey)) {
             const [sx, sy] = toScreen(point.position[0], point.position[1])
+            if (point.yaw != null) {
+                heading(point.position[0], point.position[1], point.yaw, ANNOTATION_COLORS.user)
+            }
             g.fillStyle = ANNOTATION_COLORS.user
             g.beginPath()
             g.arc(sx, sy, minimap ? 3 : 6, 0, Math.PI * 2)
@@ -425,6 +454,19 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             g.lineWidth = 2
             g.stroke()
             label(point.name, sx + 9, sy + 4, "#d8e6f4")
+        }
+        // the named point being put down, pointing where it's dragged
+        const draft = placing.current
+        if (draft) {
+            const [sx, sy] = toScreen(...draft.from)
+            const [ex, ey] = toScreen(...draft.to)
+            if (Math.hypot(ex - sx, ey - sy) > 5) {
+                heading(draft.from[0], draft.from[1], Math.atan2(draft.to[1] - draft.from[1], draft.to[0] - draft.from[0]), ANNOTATION_COLORS.selected)
+            }
+            g.fillStyle = ANNOTATION_COLORS.selected
+            g.beginPath()
+            g.arc(sx, sy, 6, 0, Math.PI * 2)
+            g.fill()
         }
         for (const draw of pending) {
             draw()
@@ -632,6 +674,9 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
         const down = (event: PointerEvent) => {
             const [x, y] = local(event)
             lastPointer.current = event.pointerType
+            if (event.button === 2) {
+                rightDown.current = [x, y]
+            }
             const kind = classifyPress(event.pointerType, event.button, touches.count)
             if (event.pointerType === "touch") {
                 touches.down(event.pointerId, [x, y])
@@ -664,7 +709,10 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             if (kind !== "tool") {
                 return
             }
-            if (["erase", "brush", "line", "straighten", "fill_floor"].includes(which)) {
+            if (which === "plan-point") {
+                placing.current = { from: at, to: at }
+                requestPaint()
+            } else if (["erase", "brush", "line", "straighten", "fill_floor"].includes(which)) {
                 stroke.current = { tool: which, path: [at] }
                 requestPaint()
             } else if (which === "select" && selectedPrism) {
@@ -705,6 +753,11 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
             const at = toWorld(x, y)
             if (pressed && dragVertex.current) {
                 dragVertex.current.polygon[dragVertex.current.index] = at
+                requestPaint()
+                return
+            }
+            if (pressed && placing.current) {
+                placing.current.to = at
                 requestPaint()
                 return
             }
@@ -774,14 +827,26 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
                 sendStroke(done).finally(() => redraw((n) => n + 1))
                 return
             }
+            if (placing.current) {
+                // a click puts it down with no heading, a drag points it where the drag went
+                const { from, to } = placing.current
+                placing.current = null
+                const yaw = moved > (event.pointerType === "touch" ? 10 : 5) ? Math.atan2(to[1] - from[1], to[0] - from[0]) : null
+                // what the plan draws there: its floor, and what's in the slice's range over it, inside the 3D slice's min / max z
+                const clip = clipRef.current
+                const [zMin, zMax] = [clip?.zMin ?? -1e9, clip?.zMax ?? 1e9]
+                const range = current().ui.slice
+                const ground = range.follow && floor ? floorAt(floor, storey, from[0], from[1]) ?? 0 : 0
+                const shown = { surfaces: [Math.max(zMin, ground + range.z0), Math.min(zMax, ground + range.z1)], floor: [zMin, zMax] }
+                run(api.add(session.id, { type: "namedLocation", floor: storey, name: planTool.get().name.trim() || "Spot", position: from, shown, yaw }), "Named point added, standing on what's there (⌘Z to undo)").finally(() => redraw((n) => n + 1))
+                return
+            }
             if (moved > (event.pointerType === "touch" ? 10 : 5)) {
                 return
             }
             const at = toWorld(x, y)
             const which = tool()
-            if (which === "plan-point") {
-                run(api.add(session.id, { type: "planPoint", floor: storey, name: planTool.get().name.trim() || "Spot", position: at }), "Point added (⌘Z to undo)")
-            } else if (which === "plan-area") {
+            if (which === "plan-area") {
                 planTool.update({ draft: [...planTool.get().draft, at] })
             } else if (which === "polygon") {
                 polygonTool.update({ draft: [...polygonTool.get().draft, at] })
@@ -849,7 +914,34 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
         }
         // a double tap is handled above; the dblclick a browser may send after it isn't a second one
         const double = () => lastPointer.current === "mouse" && finishDraft()
-        const menu = (event: Event) => event.preventDefault()
+        // right-click on a named point or an area on this storey: rename or delete it there
+        const menu = (event: MouseEvent) => {
+            event.preventDefault()
+            const [x, y] = local(event)
+            const pressed = rightDown.current
+            rightDown.current = null
+            if (minimap || (pressed && Math.hypot(x - pressed[0], y - pressed[1]) > 5)) {
+                return
+            }
+            const annotations = current().session?.annotations
+            if (!annotations) {
+                return
+            }
+            const near = (px: number, py: number) => {
+                const [sx, sy] = toScreen(px, py)
+                return Math.hypot(sx - x, sy - y) < 10
+            }
+            const point = (annotations.namedLocations ?? []).find((l) => storeyAt(floor, l.position[2]) === storey && near(l.position[0], l.position[1]))
+            if (point) {
+                setPlanMenu({ x: event.clientX, y: event.clientY, id: point.id, name: point.name, kind: "named point" })
+                return
+            }
+            const at = toWorld(x, y)
+            const area = [...annotations.areas].reverse().find((a) => a.floor === storey && inside(a.polygon, at[0], at[1]))
+            if (area) {
+                setPlanMenu({ x: event.clientX, y: event.clientY, id: area.id, name: area.name, kind: "area" })
+            }
+        }
         element.addEventListener("pointerdown", down)
         window.addEventListener("pointermove", move)
         window.addEventListener("pointerup", up)
@@ -925,6 +1017,7 @@ export function View2D({ context, kind, aligning = false }: { context: Context; 
     return (
         <div className={minimap ? "minimap-view" : "plan-view"} ref={host} data-view2d={kind} style={{ cursor }}>
             <canvas ref={canvas} />
+            {planMenu && session && <PlanMenu menu={planMenu} sessionId={session.id} run={run} onClose={() => setPlanMenu(null)} />}
             {heightImage && !minimap && (
                 <Hud position="bottom-left">
                     <Card glass padded={false} style={{ flexDirection: "row", alignItems: "center", gap: 8, padding: "4px 8px" }}>

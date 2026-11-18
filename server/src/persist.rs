@@ -105,11 +105,14 @@ pub fn read_named_locations(recording: &Recording, session: &mut Session) {
             session.annotations.named_locations = list
                 .into_iter()
                 .enumerate()
-                .map(|(index, l)| crate::session::NamedLocation {
-                    id: format!("place-{index}"),
-                    position: mapping::tf::transform_point(&to_map, [l.position[0] as f32, l.position[1] as f32, l.position[2] as f32]),
-                    name: l.name,
-                    frame: l.frame_id,
+                .map(|(index, l)| {
+                    let position = [l.position[0] as f32, l.position[1] as f32, l.position[2] as f32];
+                    // the heading turned with the position: where a step along it goes
+                    let yaw = crate::session::NamedLocation::yaw_of(l.orientation).map(|yaw| {
+                        let [a, b] = [mapping::tf::transform_point(&to_map, position), mapping::tf::transform_point(&to_map, [position[0] + yaw.cos(), position[1] + yaw.sin(), position[2]])];
+                        (b[1] - a[1]).atan2(b[0] - a[0])
+                    });
+                    crate::session::NamedLocation { id: format!("place-{index}"), position: mapping::tf::transform_point(&to_map, position), name: l.name, frame: l.frame_id, yaw }
                 })
                 .collect();
             session.history.push(format!("Read {} named locations from the recording", session.annotations.named_locations.len()));
@@ -178,7 +181,7 @@ pub fn save(workspace: &Workspace, mut progress: impl FnMut(u64, u64)) -> Result
             .annotations
             .named_locations
             .iter()
-            .map(|l| lcm::NamedLocation { name: l.name.clone(), frame_id: l.frame.clone(), position: [l.position[0] as f64, l.position[1] as f64, l.position[2] as f64], orientation: [0.0, 0.0, 0.0, 1.0] })
+            .map(|l| lcm::NamedLocation { name: l.name.clone(), frame_id: l.frame.clone(), position: [l.position[0] as f64, l.position[1] as f64, l.position[2] as f64], orientation: l.orientation() })
             .collect();
         writes.push((streams.leaf("named_locations"), lcm::INTERACTIVE_MARKER_UPDATE_TYPE.into(), lcm::encode_named_locations(&header, "map_builder", &locations)));
     }
@@ -273,6 +276,7 @@ fn own_named_locations(recording: &Recording, streams: &Streams, have: &[crate::
             .map(|(index, l)| crate::session::NamedLocation {
                 id: have.iter().find(|h| h.name == l.name).map_or_else(|| format!("place-{index}"), |h| h.id.clone()),
                 position: [l.position[0] as f32, l.position[1] as f32, l.position[2] as f32],
+                yaw: crate::session::NamedLocation::yaw_of(l.orientation),
                 name: l.name,
                 frame: l.frame_id,
             })
@@ -402,8 +406,8 @@ mod tests {
         ws.add_prism(0, "desk", vec![[1.0, 3.0], [2.0, 3.0], [2.0, 4.0]], 0.8, None, "user").unwrap();
         ws.add_view(crate::session::SavedView { name: "walls".into(), floor: 0, follow: true, z_min: 0.1, z_max: 1.8, ..Default::default() }).unwrap();
         ws.set_slice(Some(crate::session::Slice { z_min: -0.2, z_max: 2.0, yaw: 0.3, x_min: 0.0, x_max: 5.0, y_min: 0.5, y_max: 6.0 })).unwrap();
-        ws.add_named_location("dock", [3.0, 1.0, 0.0]).unwrap();
-        assert!(ws.add_named_location("dock", [0.0, 0.0, 0.0]).is_err(), "names are unique");
+        ws.add_named_location("dock", &[3.0, 1.0, 0.0], None, crate::workspace::Shown::ALL, None).unwrap();
+        assert!(ws.add_named_location("dock", &[0.0, 0.0, 0.0], None, crate::workspace::Shown::ALL, None).is_err(), "names are unique");
         let visible = ws.remaining();
         save(&ws, |_, _| {}).unwrap();
         save(&ws, |_, _| {}).unwrap(); // twice: replaces, never duplicates
@@ -567,8 +571,8 @@ mod tests {
         // the session is built here, so `named_locations_read` is false the way a save from before this read it
         let session = Session { id: "s".into(), recording_path: path.display().to_string(), stage: "map".into(), map_name: "v1".into(), ..Default::default() };
         let mut ws = Workspace::new(session, Some(room_map()));
-        ws.add_named_location("dock", [3.0, 1.0, 0.0]).unwrap();
-        ws.add_named_location("kitchen", [1.0, 4.0, 0.0]).unwrap();
+        ws.add_named_location("dock", &[3.0, 1.0, 0.0], None, crate::workspace::Shown::ALL, Some(0.5)).unwrap();
+        ws.add_named_location("kitchen", &[1.0, 4.0, 0.0], None, crate::workspace::Shown::ALL, None).unwrap();
         // a map that isn't square to the world: a list put through `transform` twice lands somewhere else
         ws.rotate_yaw(30.0).unwrap();
         assert!(!ws.session.annotations.named_locations_read, "nothing has read a list into it");
@@ -587,6 +591,10 @@ mod tests {
                 assert!((was[axis] - now[axis]).abs() < 1e-3, "{format}: {name} moved: {was:?} -> {now:?}");
             }
         }
+        // the heading turned with the map, and no heading stays none (all zeros on the wire)
+        let yaws: Vec<Option<f32>> = restored.annotations.named_locations.iter().map(|l| l.yaw).collect();
+        assert!((yaws[0].unwrap() - (0.5 + 30f32.to_radians())).abs() < 1e-3 && yaws[1].is_none(), "{format}: {yaws:?}");
+        assert_eq!(restored.annotations.named_locations[1].orientation(), [0.0; 4]);
         assert!(restored.annotations.named_locations_read, "{format}: the map has its own list, so the flat one is not its seed");
         assert!(!restored.annotations.named_locations[0].frame.is_empty(), "{format}: the frame it was written with is kept");
         // reading the recording's list into it now is a no-op

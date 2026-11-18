@@ -11,6 +11,8 @@ export interface MenuAt {
     point: [number, number, number] | null
     /** the named location under the click */
     named: string | null
+    /** the heights the 3D view draws: the location stands on what's in sight under the click */
+    shown: [number, number]
 }
 
 export function NamedLocationMenu({ menu, session, run, onDone, onClose }: { menu: MenuAt; session: Session; run: <T>(action: Promise<T>, done?: string) => Promise<T | undefined>; onDone: () => void; onClose: () => void }) {
@@ -39,7 +41,7 @@ export function NamedLocationMenu({ menu, session, run, onDone, onClose }: { men
         if (existing) {
             await run(api.patch(session.id, existing.id, { name }), `Renamed to “${name}”`)
         } else {
-            await run(api.add(session.id, { type: "namedLocation", name, position: menu.point }), `Added “${name}” (Save writes it into the recording)`)
+            await run(api.add(session.id, { type: "namedLocation", name, position: menu.point, shown: { surfaces: menu.shown } }), `Added “${name}” (Save writes it into the recording)`)
         }
         onDone()
         onClose()

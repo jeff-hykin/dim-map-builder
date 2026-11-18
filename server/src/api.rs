@@ -219,9 +219,9 @@ pub fn routes() -> Routes<Arc<App>> {
         .when("you need the rotation that squares the walls to the axes")
         .endpoint("POST", "api/sessions/{id}/modify", "Brush edits on a storey (undoable), map-frame x, y meters. tool=erase: remove what stands on the floor along path [[x, y], ...] of radius, up to zEnd (m over the local floor when relative, default 1.8; fullColumn = everything up to the next storey): every voxel in the columns the brush touches goes but the floor (a lone speck goes in one click), nothing is added. tool=draw: add voxels along path of width (default 0.1) up to height (default 1 m). tool=straighten: replace a noisy wall along from..to (width band, default 0.4; up to zEnd, default 2.5) with one straight slab (thickness = the wall's own unless given). tool=fill_floor: fill the holes in the floor along path of radius (default 0.5): a plane is fit (RANSAC + least squares) to the floor's top surface within 1.5 m of the stroke, so a tilted floor or ramp is followed and furniture tops are ignored; every brushed column with no floor near the plane and nothing standing on it (a wall, furniture) gets the surrounding floor's thickness of voxels on it; an error when there's too little floor around to fit. Returns { label, changed, remaining } (fill_floor also detail: the plane's z, tilt, thickness).", with_id(json!({ "tool": required(s("erase | draw | straighten | fill_floor")), "floor": required(int("storey index")), "path": path_2d("erase/draw/fill_floor: [[x, y], ...]"), "radius": n("erase/fill_floor: brush radius, m"), "width": n("draw/straighten: band width, m"), "height": n("draw: wall height, m"), "from": numbers("straighten: [x, y]"), "to": numbers("straighten: [x, y]"), "thickness": n("straighten: slab thickness, m"), "zEnd": n("erase/straighten: how high it reaches, m (erase default 1.8, straighten 2.5)"), "relative": b("zEnd over the local floor (default true)"), "fullColumn": b("erase/straighten: reach up to the next storey, ignoring zEnd") })), modify)
         .when("you need to erase, draw, straighten walls or fill holes in a floor")
-        .endpoint("GET", "api/sessions/{id}/annotations", "Every annotation, by kind: boxes, planes, points, floors, planPoints (named plan points), areas, prisms, views (saved 2D views), the slice; each with its id.", with_id(json!({})), list_annotations)
+        .endpoint("GET", "api/sessions/{id}/annotations", "Every annotation, by kind: boxes, planes, points, floors, namedLocations (dimos's named locations), areas, prisms, views (saved 2D views), the slice; each with its id.", with_id(json!({})), list_annotations)
         .when("you need the labelled boxes, points, areas or views on the map")
-        .endpoint("POST", "api/sessions/{id}/annotations", "Add an annotation (undoable). type=box {label, box}; plane {label, center, normal, size [w, h]}; point {label, position}; planPoint {floor, name, position [x, y]} (a named spot on a floor plan); area {floor, name, kind (\"no-go\" = navigation avoids it, \"zone\", ...), polygon [[x, y], ...]}; prism {floor, label, polygon, height (default 1), base?} (a polygon standing up from the local floor); view {name, floor, zMin, zMax, center?, follow} (a saved 2D view). label and name stand in for each other. source: who made it (default user; pass \"agent\"). Returns { id }.", with_id(json!({ "type": required(s("box | plane | point | planPoint | area | prism | view")), "label": s("box / plane / point / prism label"), "name": s("planPoint / area / view"), "box": box_schema.clone(), "center": numbers("plane: [x, y, z]; view: [x, y]"), "normal": numbers("plane: [x, y, z]"), "size": numbers("plane: [w, h]"), "position": numbers("point: [x, y, z]; planPoint: [x, y]"), "floor": int("storey index"), "kind": s("area kind: no-go, zone, ..."), "polygon": path_2d("[[x, y], ...]"), "height": n("prism: m (default 1)"), "base": n("prism: m over the local floor"), "zMin": n("view: m (default 0.1)"), "zMax": n("view: m (default 1.8)"), "follow": b("view: z over the local floor (default true)"), "source": s("user | agent") })), add_annotation)
+        .endpoint("POST", "api/sessions/{id}/annotations", "Add an annotation (undoable). type=box {label, box}; plane {label, center, normal, size [w, h]}; point {label, position}; namedLocation {name, position [x, y, z], or [x, y] with floor} (one of dimos's named locations, the premap module's: unique by name, written into the recording on Save; it stands on the top of what is at or under the point, the floor or a table, box or shelf, never in the air; shown {surfaces: [zMin, zMax], floor?} limits that to the heights a view draws; yaw: the heading to face on arrival, radians about +z, none for any; PATCH {yaw} sets or (null) clears it); planPoint {floor, name, position [x, y]} (the same, from a floor plan); area {floor, name, kind (\"no-go\" = navigation avoids it, \"zone\", ...), polygon [[x, y], ...]}; prism {floor, label, polygon, height (default 1), base?} (a polygon standing up from the local floor); view {name, floor, zMin, zMax, center?, follow} (a saved 2D view). label and name stand in for each other. source: who made it (default user; pass \"agent\"). Returns { id }.", with_id(json!({ "type": required(s("box | plane | point | namedLocation | planPoint | area | prism | view")), "label": s("box / plane / point / prism label"), "name": s("namedLocation / planPoint / area / view"), "box": box_schema.clone(), "center": numbers("plane: [x, y, z]; view: [x, y]"), "normal": numbers("plane: [x, y, z]"), "size": numbers("plane: [w, h]"), "position": numbers("point: [x, y, z]; namedLocation: [x, y, z], or [x, y] with floor; planPoint: [x, y]"), "floor": int("storey index"), "kind": s("area kind: no-go, zone, ..."), "polygon": path_2d("[[x, y], ...]"), "height": n("prism: m (default 1)"), "base": n("prism: m over the local floor"), "yaw": n("namedLocation: heading to face on arrival, radians about +z (default none)"), "zMin": n("view: m (default 0.1)"), "zMax": n("view: m (default 1.8)"), "follow": b("view: z over the local floor (default true)"), "source": s("user | agent") })), add_annotation)
         .when("you want to label an object, place, area or view on the map")
         .endpoint("PATCH", "api/sessions/{id}/annotations/{annotation}", "Change an annotation's fields by id (undoable; the body is merged into it), e.g. {\"label\": \"desk\"} or {\"box\": {\"center\": [..], \"size\": [..], \"yaw\": 0}}. Returns { ok: true }.", with_id(json!({ "annotation": required(s("annotation id")) })), patch_annotation)
         .when("you need to rename, move or resize an annotation")
@@ -235,7 +235,7 @@ pub fn routes() -> Routes<Arc<App>> {
         .when("you need to find furniture or other objects on the floor")
         .endpoint("POST", "api/sessions/{id}/plans", "Make 2D floor plans (occupancy: walls/furniture vs free floor) from the 3D map (undoable), one per storey when multiFloor (default true), optionally at explicit floor heights. Returns { floors: [{ index, name, z }] }; GET .../plans/{floor} gives each.", with_id(json!({ "multiFloor": b("one plan per storey (default true)"), "levels": numbers("floor heights (m); default: found from the map"), "options": json!({ "type": "object", "description": "{resolution (m per pixel, default 0.05), obstacleMin (0.15), obstacleMax (1.8), floorBand (0.12)}: meters over the floor" }) })), plans)
         .when("you need 2D floor plans made from the 3D map")
-        .endpoint("GET", "api/sessions/{id}/plans/{floor}", "A floor plan (images[0]: white free, black occupied, grey unknown; +y up) with its z, origin, resolution, width, height and pixelToMeters so pixels map to meters, plus that floor's named points and areas. `{floor}.png` is the bare image.", with_id(json!({ "floor": required(s("storey index (or `N.png` for the bare image)")) })), plan)
+        .endpoint("GET", "api/sessions/{id}/plans/{floor}", "A floor plan (images[0]: white free, black occupied, grey unknown; +y up) with its z, origin, resolution, width, height and pixelToMeters so pixels map to meters, plus the named locations standing on that floor and its areas. `{floor}.png` is the bare image.", with_id(json!({ "floor": required(s("storey index (or `N.png` for the bare image)")) })), plan)
         .when("you need to see a floor plan or map its pixels to meters")
         .endpoint("POST", "api/sessions/{id}/undo", "Undo the last edit (anyone's). Returns { undone: its label, or null }.", with_id(json!({})), undo)
         .when("you want to undo the last edit")
@@ -837,7 +837,19 @@ pub enum NewAnnotation {
     #[serde(rename_all = "camelCase")]
     PlanPoint { floor: usize, name: String, position: [f32; 2] },
     #[serde(rename_all = "camelCase")]
-    NamedLocation { name: String, position: [f32; 3] },
+    NamedLocation {
+        name: String,
+        /// [x, y, z], or [x, y] with `floor`
+        position: Vec<f32>,
+        #[serde(default)]
+        floor: Option<usize>,
+        /// what the page's view draws there: {surfaces: [zMin, zMax], floor?: [zMin, zMax]} (map frame)
+        #[serde(default)]
+        shown: Option<crate::workspace::Shown>,
+        /// the heading to face on arrival, radians about +z (none: any)
+        #[serde(default)]
+        yaw: Option<f32>,
+    },
     #[serde(rename_all = "camelCase")]
     Area { floor: usize, name: String, kind: String, polygon: Vec<[f32; 2]> },
     #[serde(rename_all = "camelCase")]
@@ -865,8 +877,8 @@ pub fn add(workspace: &mut Workspace, annotation: NewAnnotation) -> anyhow::Resu
         NewAnnotation::Box { label, region, source: by } => workspace.add_box(&label, parse_box(&serde_json::to_value(region)?)?, &source(by)),
         NewAnnotation::Plane { label, center, normal, size, source: by } => workspace.add_plane(&label, center, normal, size, &source(by)),
         NewAnnotation::Point { label, position, source: by } => workspace.add_point(&label, position, &source(by)),
-        NewAnnotation::PlanPoint { floor, name, position } => workspace.add_plan_point(floor, &name, position),
-        NewAnnotation::NamedLocation { name, position } => workspace.add_named_location(&name, position),
+        NewAnnotation::PlanPoint { floor, name, position } => workspace.add_named_location(&name, &position, Some(floor), Default::default(), None),
+        NewAnnotation::NamedLocation { name, position, floor, shown, yaw } => workspace.add_named_location(&name, &position, floor, shown.unwrap_or_default(), yaw),
         NewAnnotation::Area { floor, name, kind, polygon } => workspace.add_area(floor, &name, &kind, polygon),
         NewAnnotation::Prism { floor, label, polygon, height, base, source: by } => workspace.add_prism(floor, &label, polygon, height, base, &source(by)),
         NewAnnotation::View(view) => workspace.add_view(view),
@@ -876,7 +888,7 @@ pub fn add(workspace: &mut Workspace, annotation: NewAnnotation) -> anyhow::Resu
 async fn add_annotation(State(app): State<Arc<App>>, Path(id): Path<String>, Body(body): Body) -> Result<Json<Value>> {
     let (id, _) = session(&app, &id)?;
     let mut body = body;
-    // the agent's shorthand: a planPoint/area/view named by `label`, a box/point/plane/prism labelled by `name`; a view defaults to a floor plan's band
+    // the agent's shorthand: a namedLocation/planPoint/area/view named by `label`, a box/point/plane/prism labelled by `name`; a view defaults to a floor plan's band
     if body["type"] == "view" {
         for (key, value) in [("floor", json!(0)), ("follow", json!(true)), ("zMin", json!(0.1)), ("zMax", json!(1.8))] {
             if body.get(key).is_none_or(Value::is_null) {
@@ -885,7 +897,7 @@ async fn add_annotation(State(app): State<Arc<App>>, Path(id): Path<String>, Bod
         }
     }
     let (named, labelled) = (body.get("name").cloned(), body.get("label").cloned());
-    if matches!(body["type"].as_str(), Some("planPoint" | "area" | "view")) && named.is_none() {
+    if matches!(body["type"].as_str(), Some("namedLocation" | "planPoint" | "area" | "view")) && named.is_none() {
         body["name"] = labelled.unwrap_or(json!(""));
     } else if labelled.is_none() {
         body["label"] = named.unwrap_or(json!(""));
@@ -983,7 +995,7 @@ async fn plan(State(app): State<Arc<App>>, Path((id, floor)): Path<(String, Stri
         "width": plan.width,
         "height": plan.height,
         "pixelToMeters": "x = origin[0] + (column + 0.5) * resolution; y = origin[1] + (height - 1 - row + 0.5) * resolution (row 0 is the image's top)",
-        "points": annotations.plan_points.iter().filter(|p| p.floor == index).collect::<Vec<_>>(),
+        "points": annotations.named_locations.iter().filter(|l| workspace.storey_at(l.position[2]) == index).collect::<Vec<_>>(),
         "areas": annotations.areas.iter().filter(|a| a.floor == index).collect::<Vec<_>>(),
         "images": [{ "mimeType": "image/png", "data": image }],
     }))

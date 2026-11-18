@@ -482,7 +482,7 @@ export function App() {
             pushView()
         }
         scene.onViewChange = pushView
-        scene.onContextMenu = ({ x, y, point, named }) => setNamedMenu({ x, y, named, point: point ? [point.x, point.y, point.z] : null })
+        scene.onContextMenu = ({ x, y, point, named }) => setNamedMenu({ x, y, named, point: point ? [point.x, point.y, point.z] : null, shown: scene.shownZ() })
         scene.onEdit = (selection, change) => {
             const current = sessionRef.current
             if (!current) {

@@ -37,7 +37,7 @@ export function SavePanel({ context }: { context: Context }) {
                     </Text>
                 ))}
                 <Text small mono muted>
-                    {name("annotations")} · String (JSON) · {a.boxes.length} boxes, {a.planes.length} planes, {a.points.length} points, {a.planPoints.length} named spots, {a.areas.length} areas ({a.areas.filter((x) => x.kind === "no-go").length} no-go), {a.prisms?.length ?? 0} polygons
+                    {name("annotations")} · String (JSON) · {a.boxes.length} boxes, {a.planes.length} planes, {a.points.length} points, {a.areas.length} areas ({a.areas.filter((x) => x.kind === "no-go").length} no-go), {a.prisms?.length ?? 0} polygons
                 </Text>
                 <Text small mono muted>{name("views")} · String (JSON) · {a.views?.length ?? 0} saved 2D views</Text>
                 <Text small mono muted>{name("named_locations")} · InteractiveMarkerUpdate · {a.namedLocations?.length ?? 0} places</Text>

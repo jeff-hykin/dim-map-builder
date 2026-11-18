@@ -160,6 +160,32 @@ pub struct NamedLocation {
     pub name: String,
     pub position: [f32; 3],
     pub frame: String,
+    /// the heading to face on arrival (radians about +z, in the map frame); none: any
+    #[serde(default)]
+    pub yaw: Option<f32>,
+}
+
+impl NamedLocation {
+    /// Its orientation on the wire (dimos's goal poses): all zeros for no heading; a heading never identity, which
+    /// readers written before headings take for none (a heading of exactly +x is turned a microradian).
+    pub fn orientation(&self) -> [f64; 4] {
+        match self.yaw {
+            None => [0.0; 4],
+            Some(yaw) => {
+                let half = if yaw == 0.0 { 1e-6 } else { yaw as f64 } / 2.0;
+                [0.0, 0.0, half.sin(), half.cos()]
+            }
+        }
+    }
+
+    /// The heading an orientation on the wire gives (all zeros and identity: none), its yaw about +z.
+    pub fn yaw_of(q: [f64; 4]) -> Option<f32> {
+        let [x, y, z, w] = q;
+        if q.iter().all(|v| *v == 0.0) || (x == 0.0 && y == 0.0 && z == 0.0 && w == 1.0) {
+            return None;
+        }
+        Some((2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z)) as f32)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

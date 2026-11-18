@@ -1,8 +1,10 @@
 // Named points and areas on a storey, placed in the 2D view: a dock, a door, a kitchen, a no-go zone around the stairs.
+// A named point is one of dimos's named locations (the premap module's, unique by name), standing on what is under it.
 import { Column, Field, Heading, List, Row, Segmented, Select, Text, TextInput } from "dimos-react"
 import { api, type Area } from "../core/api.ts"
 import { useStore } from "../core/store.ts"
 import type { Context } from "./context.ts"
+import { storeyAt } from "./View2D.tsx"
 import { planTool } from "./tools.ts"
 import { AnnotationRow } from "./rows.tsx"
 
@@ -15,7 +17,7 @@ export function PlacesPanel({ context }: { context: Context }) {
         return null
     }
     const storey = Math.min(ui.planFloor, Math.max(0, (floor?.storeys.length ?? 1) - 1))
-    const points = session.annotations.planPoints.filter((p) => p.floor === storey)
+    const points = (session.annotations.namedLocations ?? []).filter((l) => storeyAt(floor, l.position[2]) === storey)
     const areas = session.annotations.areas.filter((a) => a.floor === storey)
     const remove = (id: string) => run(api.remove(session.id, id), "Deleted (⌘Z to undo)")
     return (
@@ -32,7 +34,7 @@ export function PlacesPanel({ context }: { context: Context }) {
                 />
                 {tool.tool === "area" && <Select size="sm" value={tool.kind} onChange={(kind: string) => planTool.update({ kind })} options={KINDS} />}
             </Row>
-            <Text small muted>{tool.tool === "point" ? "Click the 2D view to place it." : "Click corners; Enter or a double-click (double tap) closes the area, Esc cancels, Backspace drops the last corner."}</Text>
+            <Text small muted>{tool.tool === "point" ? "Click the 2D view to place it (it stands on the floor there, or on what's on it), or drag from the spot to point it the way the robot should face on arrival." : "Click corners; Enter or a double-click (double tap) closes the area, Esc cancels, Backspace drops the last corner."}</Text>
             <Heading level={3}>Named points ({points.length})</Heading>
             <List>
                 {points.map((p) => (
@@ -41,6 +43,22 @@ export function PlacesPanel({ context }: { context: Context }) {
                         name={p.name}
                         onRename={(name) => run(api.patch(session.id, p.id, { name }))}
                         detail={p.position.map((v) => v.toFixed(1)).join(", ")}
+                        extra={
+                            <TextInput
+                                size="sm"
+                                style={{ width: 64 }}
+                                placeholder="any"
+                                title="Heading on arrival, degrees counter-clockwise from +x (empty: any)"
+                                value={p.yaw == null ? "" : String(Math.round((p.yaw * 180) / Math.PI))}
+                                onCommit={(text: string) => {
+                                    const degrees = text.trim() === "" ? null : Number(text)
+                                    if (degrees === null || Number.isFinite(degrees)) {
+                                        run(api.patch(session.id, p.id, { yaw: degrees === null ? null : (degrees * Math.PI) / 180 }))
+                                    }
+                                }}
+                                data-heading={p.id}
+                            />
+                        }
                         onDelete={() => remove(p.id)}
                         data-plan-point={p.id}
                     />

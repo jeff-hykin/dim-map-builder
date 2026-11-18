@@ -807,28 +807,42 @@ provides:
                         schema:
                             type: string
                         description: session id, or `current` (the recording open in the page)
-        /api/sessions/{id}/annotations:
+        '/api/sessions/{id}/annotations':
             get:
                 description: >-
-                    Every annotation, by kind: boxes, planes, points, floors, planPoints (named plan points), areas, prisms,
-                    views (saved 2D views), the slice; each with its id.
-                x-when: you need the labelled boxes, points, areas or views on the map
+                    Every annotation, by kind: boxes, planes, points, floors, namedLocations (dimos's named
+                    locations), areas, prisms, views (saved 2D views), the slice; each with its id.
+                x-when: 'you need the labelled boxes, points, areas or views on the map'
                 parameters:
-                    -   name: id
+                    -
+                        name: id
                         in: path
                         required: true
                         schema:
                             type: string
-                        description: session id, or `current` (the recording open in the page)
+                        description: 'session id, or `current` (the recording open in the page)'
             post:
                 description: >-
-                    Add an annotation (undoable). type=box {label, box}; plane {label, center, normal, size [w, h]}; point
-                    {label, position}; planPoint {floor, name, position [x, y]} (a named spot on a floor plan); area {floor,
-                    name, kind ("no-go" = navigation avoids it, "zone", ...), polygon [[x, y], ...]}; prism {floor, label,
-                    polygon, height (default 1), base?} (a polygon standing up from the local floor); view {name, floor, zMin,
-                    zMax, center?, follow} (a saved 2D view). label and name stand in for each other. source: who made it
-                    (default user; pass "agent"). Returns { id }.
-                x-when: you want to label an object, place, area or view on the map
+                    Add an annotation (undoable). type=box {label, box}; plane {label, center, normal, size [w, h]};
+                    point {label, position}; namedLocation {name, position [x, y, z], or [x, y] with floor} (one of
+                    dimos's named locations, the premap module's: unique by name, written into the recording on
+                    Save; it stands on the top of what is at or under the point, the floor or a table, box or shelf,
+                    never in the air; shown {surfaces: [zMin, zMax], floor?} limits that to the heights a view
+                    draws; yaw: the heading to face on arrival, radians about +z, none for any; PATCH {yaw} sets or
+                    (null) clears it); planPoint {floor, name, position [x, y]} (the same, from a floor plan); area
+                    {floor, name, kind ("no-go" = navigation avoids it, "zone", ...), polygon [[x, y], ...]}; prism
+                    {floor, label, polygon, height (default 1), base?} (a polygon standing up from the local floor);
+                    view {name, floor, zMin, zMax, center?, follow} (a saved 2D view). label and name stand in for
+                    each other. source: who made it (default user; pass "agent"). Returns { id }.
+                x-when: 'you want to label an object, place, area or view on the map'
+                parameters:
+                    -
+                        name: id
+                        in: path
+                        required: true
+                        schema:
+                            type: string
+                        description: 'session id, or `current` (the recording open in the page)'
                 requestBody:
                     content:
                         application/json:
@@ -837,13 +851,13 @@ provides:
                                 properties:
                                     type:
                                         type: string
-                                        description: box | plane | point | planPoint | area | prism | view
+                                        description: box | plane | point | namedLocation | planPoint | area | prism | view
                                     label:
                                         type: string
                                         description: box / plane / point / prism label
                                     name:
                                         type: string
-                                        description: planPoint / area / view
+                                        description: namedLocation / planPoint / area / view
                                     box:
                                         type: object
                                         description: an oriented box in map-frame meters
@@ -860,7 +874,7 @@ provides:
                                                     type: number
                                                 minItems: 3
                                                 maxItems: 3
-                                                description: full extents along the box's x, y, z
+                                                description: 'full extents along the box''s x, y, z'
                                             yaw:
                                                 type: number
                                                 description: radians about +z (default 0)
@@ -886,7 +900,9 @@ provides:
                                         type: array
                                         items:
                                             type: number
-                                        description: 'point: [x, y, z]; planPoint: [x, y]'
+                                        description: >-
+                                            point: [x, y, z]; namedLocation: [x, y, z], or [x, y] with floor;
+                                            planPoint: [x, y]
                                     floor:
                                         type: integer
                                         description: storey index
@@ -906,6 +922,11 @@ provides:
                                     base:
                                         type: number
                                         description: 'prism: m over the local floor'
+                                    yaw:
+                                        type: number
+                                        description: >-
+                                            namedLocation: heading to face on arrival, radians about +z (default
+                                            none)
                                     zMin:
                                         type: number
                                         description: 'view: m (default 0.1)'
@@ -920,13 +941,6 @@ provides:
                                         description: user | agent
                                 required:
                                     - type
-                parameters:
-                    -   name: id
-                        in: path
-                        required: true
-                        schema:
-                            type: string
-                        description: session id, or `current` (the recording open in the page)
         /api/sessions/{id}/annotations/{annotation}:
             patch:
                 description: >-
@@ -1151,21 +1165,23 @@ provides:
                         schema:
                             type: string
                         description: session id, or `current` (the recording open in the page)
-        /api/sessions/{id}/plans/{floor}:
+        '/api/sessions/{id}/plans/{floor}':
             get:
                 description: >-
-                    A floor plan (images[0]: white free, black occupied, grey unknown; +y up) with its z, origin, resolution,
-                    width, height and pixelToMeters so pixels map to meters, plus that floor's named points and areas. `{floor}.png`
-                    is the bare image.
+                    A floor plan (images[0]: white free, black occupied, grey unknown; +y up) with its z, origin,
+                    resolution, width, height and pixelToMeters so pixels map to meters, plus the named locations
+                    standing on that floor and its areas. `{floor}.png` is the bare image.
                 x-when: you need to see a floor plan or map its pixels to meters
                 parameters:
-                    -   name: id
+                    -
+                        name: id
                         in: path
                         required: true
                         schema:
                             type: string
-                        description: session id, or `current` (the recording open in the page)
-                    -   name: floor
+                        description: 'session id, or `current` (the recording open in the page)'
+                    -
+                        name: floor
                         in: path
                         required: true
                         schema:

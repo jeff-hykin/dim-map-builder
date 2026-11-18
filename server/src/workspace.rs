@@ -1,6 +1,6 @@
 //! One open session's logic, independent of HTTP: the map in the map frame, every edit (undoable), the cleanup
 //! tools, floors and plans. The API and the MCP tools both call these; nothing here knows who asked.
-use crate::session::{Annotations, Area, BoxAnnotation, Floor, MapData, NamedLocation, PlaneAnnotation, PlanPoint, PointAnnotation, Prism, SavedView, Session, Transform, UndoEntry};
+use crate::session::{Annotations, Area, BoxAnnotation, Floor, MapData, NamedLocation, PlaneAnnotation, PointAnnotation, Prism, SavedView, Session, Transform, UndoEntry};
 use anyhow::{bail, Context, Result};
 use mapping::edit::{Edit, Reach, Stroke};
 use mapping::floor::{FloorModel, FloorOptions};
@@ -138,11 +138,54 @@ fn rotate(value: &Iso, n: [f32; 3]) -> [f32; 3] {
     [v.x as f32, v.y as f32, v.z as f32]
 }
 
+/// The heights a view draws at a click (map frame): its surfaces, and the floor where the view draws it apart from
+/// them (a floor plan always shows its floor; unset: the same as the surfaces).
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Shown {
+    pub surfaces: [f32; 2],
+    #[serde(default)]
+    pub floor: Option<[f32; 2]>,
+}
+
+impl Shown {
+    pub const ALL: Shown = Shown { surfaces: [f32::NEG_INFINITY, f32::INFINITY], floor: None };
+}
+
+impl Default for Shown {
+    fn default() -> Self {
+        Shown::ALL
+    }
+}
+
 impl Workspace {
     pub fn new(session: Session, map: Option<MapData>) -> Workspace {
         let mut workspace = Workspace { session, map, points: Vec::new(), normals: Vec::new(), map_version: (now_seconds() * 1000.0) as u64, discarded: false, floor_cache: None, odometry_pending: None, recorded_map: None };
         workspace.refresh_frame();
+        workspace.named_points_to_locations();
         workspace
+    }
+
+    /// A session's named points on a floor plan (before they were dimos's named locations) become named locations,
+    /// standing on the plan's storey there; a name already taken gets a number.
+    fn named_points_to_locations(&mut self) {
+        if self.session.annotations.plan_points.is_empty() || self.map.is_none() {
+            return;
+        }
+        let points = std::mem::take(&mut self.session.annotations.plan_points);
+        for point in &points {
+            let mut name = point.name.clone();
+            for n in 2.. {
+                if !self.session.annotations.named_locations.iter().any(|l| l.name == name) {
+                    break;
+                }
+                name = format!("{} {n}", point.name);
+            }
+            let frame = self.session.annotations.named_locations.first().map_or_else(|| mapping::names::frame(self.session.map()), |l| l.frame.clone());
+            let z = self.resting_z(point.floor, point.position[0], point.position[1], None, Shown::ALL).unwrap_or(0.0);
+            self.session.annotations.named_locations.push(NamedLocation { id: point.id.clone(), name, position: [point.position[0], point.position[1], z], frame, yaw: None });
+        }
+        self.session.history.push(format!("Named points on the floor plan are now named locations ({})", points.len()));
     }
 
     fn refresh_frame(&mut self) {
@@ -633,24 +676,20 @@ impl Workspace {
             if !found {
                 bail!("no annotation {id}");
             }
+            // dimos keeps named locations by name: two of one name would be one on the robot
+            let mut names: Vec<&str> = a.named_locations.iter().map(|l| l.name.as_str()).collect();
+            names.sort();
+            if let Some(twice) = names.windows(2).find(|w| w[0] == w[1]) {
+                bail!("there's already a location named \"{}\"", twice[0]);
+            }
             Ok(())
         })
     }
 
-    pub fn add_plan_point(&mut self, floor: usize, name: &str, position: [f32; 2]) -> Result<String> {
-        let floors = self.require_floor(floor)?;
-        let id = new_id("spot-");
-        let point = PlanPoint { id: id.clone(), floor, name: name.into(), position };
-        self.edit_annotations(&format!("Name point \"{name}\""), |a| {
-            a.floors = floors;
-            a.plan_points.push(point);
-            Ok(())
-        })?;
-        Ok(id)
-    }
-
-    /// A named location at `position` (map frame), in the frame the list already has (else the map's own, `map/<name>`).
-    pub fn add_named_location(&mut self, name: &str, position: [f32; 3]) -> Result<String> {
+    /// A named location (dimos's premap kind) at `position`, standing only on what `shown` says the view draws (map frame), in the frame the list already has (else the
+    /// map's own, `map/<name>`). With a map it stands where it was put down ([Workspace::resting_z]): at [x, y] on
+    /// storey `floor` (a click on the floor plan), or on what is at or under [x, y, z] (a click on the 3D map).
+    pub fn add_named_location(&mut self, name: &str, position: &[f32], floor: Option<usize>, shown: Shown, yaw: Option<f32>) -> Result<String> {
         let name = name.trim();
         if name.is_empty() {
             bail!("a named location needs a name");
@@ -658,14 +697,63 @@ impl Workspace {
         if self.session.annotations.named_locations.iter().any(|l| l.name == name) {
             bail!("there's already a location named \"{name}\"");
         }
+        let position = match (position, floor) {
+            ([x, y], Some(floor)) => [*x, *y, self.resting_z(floor, *x, *y, None, shown)?],
+            ([x, y, z], None) if self.map.is_some() => {
+                let floor = self.storey_at(*z);
+                [*x, *y, self.resting_z(floor, *x, *y, Some(*z), shown)?]
+            }
+            ([x, y, z], _) => [*x, *y, *z],
+            _ => bail!("a named location's position is [x, y] with a floor, or [x, y, z]"),
+        };
         let frame = self.session.annotations.named_locations.first().map_or_else(|| mapping::names::frame(self.session.map()), |l| l.frame.clone());
         let id = new_id("place-");
-        let location = NamedLocation { id: id.clone(), name: name.into(), position, frame };
+        let location = NamedLocation { id: id.clone(), name: name.into(), position, frame, yaw };
         self.edit_annotations(&format!("Add named location \"{name}\""), |a| {
             a.named_locations.push(location);
             Ok(())
         })?;
         Ok(id)
+    }
+
+    /// The storey whose floor is just under height z (the page's storeyAt).
+    pub fn storey_at(&self, z: f32) -> usize {
+        self.levels().iter().rposition(|level| *level <= z + 0.5).unwrap_or(0)
+    }
+
+    /// The height a named location stands at on (x, y) of storey `floor`: the top of the highest surface there (the
+    /// floor, or what stands on it: a table, a shelf, a box) that is at most `below` (a 3D click's height, else 1.5 m
+    /// over the storey's level, under the next storey) and in sight (`shown`: the heights the view draws there), never
+    /// a speck in the air (a surface is a few up-facing voxels across). With none, the storey's local floor where
+    /// `floor_shown` draws it, else the 3D click itself (what was clicked is in sight), else that floor anyway.
+    pub fn resting_z(&mut self, floor: usize, x: f32, y: f32, below: Option<f32>, shown: Shown) -> Result<f32> {
+        let voxel = self.require_map()?.voxel_size;
+        let levels = self.levels();
+        let level = *levels.get(floor).with_context(|| format!("no floor {floor} ({} floors)", levels.len()))?;
+        let band = mapping::floor::bands(&levels)[floor];
+        let (low, top) = (band[0].max(shown.surfaces[0]), below.map_or(level + 1.5, |z| z + voxel / 2.0).min(band[1]).min(shown.surfaces[1]));
+        let radius = voxel * 1.5;
+        let removed = &self.require_map()?.removed;
+        // per voxel layer: up-facing voxels within `radius` of (x, y), and their highest center
+        let mut layers: std::collections::BTreeMap<i32, (usize, f32)> = Default::default();
+        for (index, (p, n)) in self.points.iter().zip(&self.normals).enumerate() {
+            if removed[index] || n[2] < 0.8 || p[2] < low || p[2] > top || (p[0] - x).powi(2) + (p[1] - y).powi(2) > radius * radius {
+                continue;
+            }
+            let layer = layers.entry((p[2] / voxel).floor() as i32).or_insert((0, f32::MIN));
+            layer.0 += 1;
+            layer.1 = layer.1.max(p[2]);
+        }
+        if let Some((_, (_, z))) = layers.iter().rev().find(|(_, (count, _))| *count >= 3) {
+            return Ok(z + voxel / 2.0);
+        }
+        let ground = self.floor_model()?.height_at(floor, x, y).unwrap_or(level);
+        let floor_shown = shown.floor.unwrap_or(shown.surfaces);
+        Ok(match below {
+            _ if ground >= floor_shown[0] - voxel && ground <= floor_shown[1] + voxel => ground + voxel / 2.0,
+            Some(z) => z,
+            None => ground + voxel / 2.0,
+        })
     }
 
     pub fn add_area(&mut self, floor: usize, name: &str, kind: &str, polygon: Vec<[f32; 2]>) -> Result<String> {
@@ -880,6 +968,10 @@ fn move_annotations(annotations: &mut Annotations, delta: &Iso) {
         p.position = apply(delta, p.position);
     }
     for l in &mut annotations.named_locations {
+        if let Some(yaw) = l.yaw {
+            let step = rotate(delta, [yaw.cos(), yaw.sin(), 0.0]);
+            l.yaw = Some(step[1].atan2(step[0]));
+        }
         l.position = apply(delta, l.position);
     }
     for f in &mut annotations.floors {
@@ -1083,6 +1175,52 @@ pub mod tests {
     }
 
     #[test]
+    fn named_locations_stand_on_what_is_under_them() {
+        let mut ws = Workspace::new(Session { stage: "map".into(), ..Default::default() }, Some(room_map()));
+        let z = |ws: &Workspace, id: &str| ws.session.annotations.named_locations.iter().find(|l| l.id == id).unwrap().position[2];
+        // on the floor plan: the floor (its top, 5 cm), or the table's top where the table is
+        let floor = ws.add_named_location("Dock", &[1.0, 1.0], Some(0), Shown::ALL, None).unwrap();
+        assert!((z(&ws, &floor) - 0.05).abs() < 1e-4, "{}", z(&ws, &floor));
+        let table = ws.add_named_location("Table", &[2.5, 3.4], Some(0), Shown::ALL, None).unwrap();
+        assert!((z(&ws, &table) - 0.8).abs() < 1e-4, "{}", z(&ws, &table));
+        // in 3D: a click on a wall or on a speck in the air comes down to the floor under it
+        let wall = ws.add_named_location("Wall", &[0.03, 2.0, 1.0], None, Shown::ALL, None).unwrap();
+        assert!((z(&ws, &wall) - 0.05).abs() < 1e-4, "{}", z(&ws, &wall));
+        let speck = ws.add_named_location("Speck", &[3.025, 1.025, 1.625], None, Shown::ALL, None).unwrap();
+        assert!((z(&ws, &speck) - 0.05).abs() < 1e-4, "{}", z(&ws, &speck));
+        // under the table's top, its floor
+        let under = ws.add_named_location("Under", &[2.5, 3.4, 0.4], None, Shown::ALL, None).unwrap();
+        assert!((z(&ws, &under) - 0.05).abs() < 1e-4, "{}", z(&ws, &under));
+        // a table cut off by the view's max z isn't stood on: the floor under it is
+        let cut = ws.add_named_location("Cut", &[2.6, 3.4], Some(0), Shown { surfaces: [-1.0, 0.5], floor: None }, None).unwrap();
+        assert!((z(&ws, &cut) - 0.05).abs() < 1e-4, "{}", z(&ws, &cut));
+        // in 3D on that table with the floor cut off by the min z, the table it is
+        let on = ws.add_named_location("On", &[2.6, 3.5, 0.8], None, Shown { surfaces: [0.3, 2.0], floor: None }, None).unwrap();
+        assert!((z(&ws, &on) - 0.8).abs() < 1e-4, "{}", z(&ws, &on));
+        // a wall clicked with the floor below cut off: the click, not the hidden floor
+        let high = ws.add_named_location("High", &[0.03, 2.0, 1.0], None, Shown { surfaces: [0.3, 2.0], floor: None }, None).unwrap();
+        assert!((z(&ws, &high) - 1.0).abs() < 1e-4, "{}", z(&ws, &high));
+        // dimos keeps them by name
+        assert!(ws.update_annotation(&table, Some(&serde_json::json!({ "name": "Dock" }))).is_err());
+    }
+
+    #[test]
+    fn named_points_on_a_plan_become_named_locations() {
+        let mut session = Session { stage: "map".into(), ..Default::default() };
+        session.annotations.plan_points = vec![
+            crate::session::PlanPoint { id: "spot-1".into(), floor: 0, name: "Dock".into(), position: [2.5, 3.4] },
+            crate::session::PlanPoint { id: "spot-2".into(), floor: 0, name: "Dock".into(), position: [1.0, 1.0] },
+        ];
+        let ws = Workspace::new(session, Some(room_map()));
+        let a = &ws.session.annotations;
+        assert!(a.plan_points.is_empty());
+        let named: Vec<(&str, f32)> = a.named_locations.iter().map(|l| (l.name.as_str(), l.position[2])).collect();
+        assert_eq!(named.len(), 2);
+        assert_eq!((named[0].0, named[1].0), ("Dock", "Dock 2"));
+        assert!((named[0].1 - 0.8).abs() < 1e-4 && (named[1].1 - 0.05).abs() < 1e-4, "{named:?}");
+    }
+
+    #[test]
     fn plans_and_plan_annotations() {
         let mut ws = Workspace::new(Session { stage: "map".into(), ..Default::default() }, Some(room_map()));
         assert!(ws.add_area(5, "x", "no-go", vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]).is_err(), "no floor 5");
@@ -1092,7 +1230,7 @@ pub mod tests {
         let (free, occupied, _) = ws.session.plans[0].counts();
         assert!(free > 5000 && occupied > 100, "{free} {occupied}");
         ws.add_area(0, "Stairs", "no-go", vec![[4.0, 4.0], [5.0, 4.0], [5.0, 5.0], [4.0, 5.0]]).unwrap();
-        ws.add_plan_point(0, "Dock", [1.0, 1.0]).unwrap();
+        ws.add_named_location("Dock", &[1.0, 1.0], Some(0), Shown::ALL, None).unwrap();
         assert_eq!(ws.session.annotations.areas[0].kind, "no-go");
         // already level with the floor at z = 0: levelling barely moves it
         ws.level().unwrap();

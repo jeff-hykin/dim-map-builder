@@ -72,13 +72,8 @@ export interface NamedLocation {
     position: [number, number, number]
     /** the frame_id the list is written with */
     frame: string
-}
-
-export interface PlanPoint {
-    id: string
-    floor: number
-    name: string
-    position: [number, number]
+    /** the heading to face on arrival, radians about +z (map frame); null: any */
+    yaw?: number | null
 }
 
 export interface Area {
@@ -128,7 +123,6 @@ export interface Annotations {
     planes: PlaneAnnotation[]
     points: PointAnnotation[]
     floors: Floor[]
-    planPoints: PlanPoint[]
     areas: Area[]
     prisms: PrismAnnotation[]
     views: SavedView[]

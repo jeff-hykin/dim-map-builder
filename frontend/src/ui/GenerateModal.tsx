@@ -331,7 +331,7 @@ export function GenerateModal({ context, onClose }: { context: Context; onClose:
     }
     const stepsShown = stepsWanted
     const a = session.annotations
-    const annotationCount = a.boxes.length + a.planes.length + a.points.length + a.planPoints.length + a.areas.length + (a.prisms?.length ?? 0)
+    const annotationCount = a.boxes.length + a.planes.length + a.points.length + (a.namedLocations?.length ?? 0) + a.areas.length + (a.prisms?.length ?? 0)
 
     const odometry = status?.odometry
     const odometryStatus = odometry?.record
