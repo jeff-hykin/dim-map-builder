@@ -96,7 +96,7 @@
                         outputHashes = {
                             "dimos-voxel-ray-tracing-0.1.0" = "sha256-GFdIBvweICBNyEaHPcI2WS6O534NpZk6cnwrtvDDu78=";
                             "dimos-module-0.1.0" = "sha256-6ikqdS3sroOJGI4WGuSyFx2yZjtJ+4Qgt+IGlkFl+qA=";
-                            "dim_slam-0.1.0" = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+                            "dim_slam-0.1.0" = "sha256-YKQnF4/QE3j7Gp+aGoA3yx8zH2n8UbsHQ4P8bi3GV68=";
                             "lcm-msgs-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
                         };
                     };
