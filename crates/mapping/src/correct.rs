@@ -682,7 +682,7 @@ impl StitchOdometry {
 }
 
 /// icp_stitch's `--suffix` for a run on the .mcap: none, unless a topic it would write is already there and it didn't
-/// write it (a recorded `/pointlio_odometry_corrected`): icp_stitch never replaces those, so its outputs then go on
+/// write it (a recorded `/lidar_odometry_corrected`): icp_stitch never replaces those, so its outputs then go on
 /// `..._corrected_map_editor` names.
 pub fn stitch_suffix(recording: &Recording, odometry: &StitchOdometry) -> Result<String> {
     let outputs = [format!("{}_corrected", odometry.name()), "tf_corrected".into(), "pose_graph".into(), "tf_deformation_nodes_corrected".into()];
@@ -905,20 +905,20 @@ mod tests {
         for step in 0..4 {
             let ts = 1.0 + step as f64;
             messages.push(("/other_odom", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "map", "base", 0.0)));
-            messages.push(("/pointlio_odometry", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "odom", "body", step as f64)));
-            messages.push(("/pointlio_odometry_corrected", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "odom", "body_corrected", step as f64 + 0.5)));
+            messages.push(("/lidar_odometry", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "odom", "body", step as f64)));
+            messages.push(("/lidar_odometry_corrected", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "odom", "body_corrected", step as f64 + 0.5)));
             messages.push(("/tf_odometry_corrected", "lcm", lcm::ODOMETRY_TYPE, ts, odometry(ts, "odom", "lidar_corrected", step as f64 + 0.25)));
         }
         dimos_recording::mcap_io::write_fixture(&path, &messages);
         let recording = Recording::open(&path).unwrap();
         let plan = Plan { cloud_stream: "/lidar".into(), sensor_frame: "lidar".into(), parent: "odom".into(), odometry_child: "body".into(), grandparent: "world".into(), ..Default::default() };
         let options = CorrectOptions { quality: Quality::High, every: 3, ..Default::default() };
-        let topic = StitchOdometry::Topic("/pointlio_odometry".into());
+        let topic = StitchOdometry::Topic("/lidar_odometry".into());
         assert_eq!(stitch_odometry(&recording, &plan, &options).unwrap(), Some(topic.clone()));
         let tags = StitchTags { stream: "raw_april_tags", camera_info: "/cam/camera_info".into(), frame: "cam_optical" };
         let args = stitch_args_in_place(&plan, &options, &path, &topic, "", Some(&tags));
         let has = |flag: &str, value: &str| args.windows(2).any(|w| w[0] == flag && w[1] == value);
-        assert!(has("--odom", "pointlio_odometry") && has("--odom-tf", "odom:body") && has("--lidar-every", "3"));
+        assert!(has("--odom", "lidar_odometry") && has("--odom-tf", "odom:body") && has("--lidar-every", "3"));
         assert!(has("--tags", "raw_april_tags") && has("--camera-info-stream", "/cam/camera_info") && has("--tag-frame", "cam_optical") && has("--camera", ""));
         assert!(!args.contains(&"--odom-from-tf".to_string()));
         let keyframes = read_stitch_output_in_place(&recording, &TfTree::default(), &plan, &topic, "").unwrap();
@@ -936,7 +936,7 @@ mod tests {
         tree.finish();
         let keyframes = read_stitch_output_in_place(&recording, &tree, &lidar, &StitchOdometry::Tf, "").unwrap();
         assert!(keyframes.len() == 4 && keyframes.iter().all(|k| ((k.corrected * k.raw.inverse()).translation.vector.x - 0.25).abs() < 1e-9));
-        // the fixture's /pointlio_odometry_corrected wasn't written by icp_stitch: its outputs get other names
+        // the fixture's /lidar_odometry_corrected wasn't written by icp_stitch: its outputs get other names
         assert_eq!(stitch_suffix(&recording, &topic).unwrap(), "_map_editor");
         // the toggle off keeps the temporary db
         let off = CorrectOptions { stitch: StitchOptions { in_place: false, ..Default::default() }, ..options.clone() };

@@ -9,9 +9,6 @@
 //!   gives back no points: each point is moved to the scan's end along the poses interpolated between the previous
 //!   scan's end and this one's (the pose's own twist when there is no previous pose that close), by its own time.
 //!
-//! Recordings Point-LIO processed before keep working: their `/pointlio_odometry` is odometry (any Odometry stream
-//! is) and their `/pointlio_lidar` a corrected copy (its `derived_from`), whatever the names.
-//!
 //! Everything written is on the log clock (the lidar's header stamps moved by `clock::offset`), like the tf it joins.
 //! The IMU's accelerations go in as m/s²: m/s² (dimos, most drivers) is told from g (Livox's ROS driver) by their norm.
 //! The lidar → IMU extrinsic is tf's when tf connects the two frames, else a Mid-360's (its IMU inside the lidar).
@@ -45,7 +42,7 @@ const MID360_LIDAR_IN_IMU: [f64; 3] = [-0.011, -0.02329, 0.04412];
 /// the filter runs a scan once the IMU passes its end, a scan or two behind: one held this long never gets a pose
 const PENDING_SECONDS: f64 = 5.0;
 
-/// dimSLAM's settings here: its defaults (Point-LIO's) for one IMU and one lidar, whose frames `estimate` fills in.
+/// dimSLAM's settings here: its defaults for one IMU and one lidar, whose frames `estimate` fills in.
 pub fn config() -> DimSlamCoreConfig {
     DimSlamCoreConfig { imus: vec![ImuConfig::default()], lidars: vec![LidarConfig::default()], ..Default::default() }
 }

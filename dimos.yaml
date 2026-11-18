@@ -363,7 +363,7 @@ provides:
             post:
                 description: >-
                     Step 0, dimSLAM, in the background, for a lidar + IMU recording with no odometry whose lidar nothing
-                    in tf moves (GET .../generate odometry.needed): dimSLAM's filter (Point-LIO's estimator, grown) over the
+                    in tf moves (GET .../generate odometry.needed): dimSLAM's filter over the
                     lidar and the IMU (its prefix's, else the only one; accelerations in m/s² or g, told apart by their norm;
                     the lidar → IMU extrinsic from tf when it connects them, else a Mid-360's), written into the recording in
                     place: odom → <the lidar tree's root> on the tf, /dimslam_odometry, and in an .mcap the scans deskewed by
@@ -423,7 +423,7 @@ provides:
                                         description: marker ids on moving things
                                     estimateOdometry:
                                         type: boolean
-                                        description: run dimSLAM first when the recording needs it (step 0; pointLio is the old name)
+                                        description: run dimSLAM first when the recording needs it (step 0)
                 parameters:
                     -   name: id
                         in: path
@@ -472,7 +472,7 @@ provides:
                                         type: object
                                     estimateOdometry:
                                         type: boolean
-                                        description: run dimSLAM first when the recording needs it (step 0; pointLio is the old name)
+                                        description: run dimSLAM first when the recording needs it (step 0)
                 parameters:
                     -   name: id
                         in: path
@@ -507,7 +507,7 @@ provides:
                                         type: object
                                     estimateOdometry:
                                         type: boolean
-                                        description: run dimSLAM first when the recording needs it (step 0; pointLio is the old name)
+                                        description: run dimSLAM first when the recording needs it (step 0)
                 parameters:
                     -   name: id
                         in: path
